@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+from .models import (
+    AppConfig,
+    NetworkConfig,
+    ScreeningConfig,
+    StorageConfig,
+    Type1Config,
+    Type2Config,
+    Type3Config,
+    Type4Config,
+    UniverseConfig,
+)
+
+
+def load_config(config_path: str | Path) -> AppConfig:
+    path = Path(config_path)
+    with path.open("r", encoding="utf-8") as file:
+        raw = yaml.safe_load(file)
+
+    storage = raw["storage"]
+    universe = raw["universe"]
+    screening = raw["screening"]
+    strategies = raw["strategies"]
+    network = raw.get("network", {})
+
+    return AppConfig(
+        provider=raw["provider"],
+        adjustment=raw["adjustment"],
+        network=NetworkConfig(
+            http_proxy=network.get("http_proxy"),
+            https_proxy=network.get("https_proxy"),
+            no_proxy=network.get("no_proxy"),
+        ),
+        storage=StorageConfig(
+            base_dir=Path(storage["base_dir"]),
+            universe_file=storage["universe_file"],
+            signals_dir=storage["signals_dir"],
+            reports_dir=storage["reports_dir"],
+            daily_dir=storage["daily_dir"],
+        ),
+        universe=UniverseConfig(
+            exclude_st=bool(universe["exclude_st"]),
+            min_history_days=int(universe["min_history_days"]),
+            min_avg_amount_20d=float(universe["min_avg_amount_20d"]),
+        ),
+        screening=ScreeningConfig(output_limit=int(screening["output_limit"])),
+        type1=Type1Config(**strategies["type1"]),
+        type2=Type2Config(**strategies["type2"]),
+        type3=Type3Config(**strategies["type3"]),
+        type4=Type4Config(**strategies["type4"]),
+    )
