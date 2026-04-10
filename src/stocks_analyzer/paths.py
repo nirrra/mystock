@@ -12,11 +12,23 @@ class ProjectPaths:
         self.universe_path = self.base_data_dir / storage.universe_file
         self.daily_dir = self.base_data_dir / storage.daily_dir
         self.signals_dir = self.base_data_dir / storage.signals_dir
+        self.features_dir = self.base_data_dir / "features"
+        self.ml_dir = self.base_data_dir / "ml"
+        self.ml_labels_dir = self.ml_dir / "labels"
+        self.ml_datasets_dir = self.ml_dir / "datasets"
+        self.ml_models_dir = self.ml_dir / "models"
         self.reports_dir = root / storage.reports_dir
+        self.probability_reports_dir = self.reports_dir / "probability"
 
     def ensure(self) -> None:
         self.base_data_dir.mkdir(parents=True, exist_ok=True)
         self.universe_path.parent.mkdir(parents=True, exist_ok=True)
         self.daily_dir.mkdir(parents=True, exist_ok=True)
         self.signals_dir.mkdir(parents=True, exist_ok=True)
+        self.features_dir.mkdir(parents=True, exist_ok=True)
+        self.ml_dir.mkdir(parents=True, exist_ok=True)
+        self.ml_labels_dir.mkdir(parents=True, exist_ok=True)
+        self.ml_datasets_dir.mkdir(parents=True, exist_ok=True)
+        self.ml_models_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
+        self.probability_reports_dir.mkdir(parents=True, exist_ok=True)

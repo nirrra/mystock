@@ -5,14 +5,26 @@ import logging
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 
 from .config import load_config
 from .data_sources import create_data_provider
+from .features import build_feature_frame
+from .ml_dataset import build_probability_dataset, infer_split_dates, split_probability_dataset
+from .ml_evaluation import evaluate_trained_artifact
+from .ml_models import load_model_artifact, normalize_model_names, predict_with_model, train_and_save_models
 from .models import NetworkConfig
 from .paths import ProjectPaths
 from .plotting import default_start_date, filter_by_date, load_or_fetch_daily, plot_candles_and_volume
+from .probability_reporting import (
+    format_evaluation_summary,
+    format_prediction_summary,
+    format_training_summary,
+    save_evaluation_reports,
+    save_predictions_report,
+)
 from .reporting import format_multi_pattern_summary, format_report
 from .screener import Screener, parse_as_of
 from .storage import Storage
@@ -65,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  mystock update 603588 --start-date 20240101\n"
             "  mystock pattern --1 --4\n"
             "  mystock report --date 2026-04-10\n"
+            "  mystock train-prob\n"
+            "  mystock predict-prob --date 2026-04-10\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -154,6 +168,29 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--date", required=True, help="结果日期，格式 YYYY-MM-DD")
     report.add_argument("--limit", type=int, default=None, help="终端最多显示多少行")
 
+    train_prob = subparsers.add_parser(
+        "train-prob",
+        help="训练中短期上涨概率模型",
+        description="基于本地主板日线数据构建样本，并训练 XGBoost 模型。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    train_prob.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    train_prob.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    train_prob.add_argument("--train-end", default=None, help="训练集结束日期，格式 YYYY-MM-DD")
+    train_prob.add_argument("--valid-end", default=None, help="验证集结束日期，格式 YYYY-MM-DD")
+    train_prob.add_argument("--test-end", default=None, help="测试集结束日期，格式 YYYY-MM-DD")
+    train_prob.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+
+    predict_prob = subparsers.add_parser(
+        "predict-prob",
+        help="生成指定日期的全市场上涨概率排序",
+        description="读取已训练模型，对指定日期的主板股票生成概率排序结果。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    predict_prob.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
+    predict_prob.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    predict_prob.add_argument("--output", default=None, help="可选的预测结果输出路径")
+
     return parser
 
 
@@ -199,6 +236,29 @@ def main() -> None:
     if args.command == "report":
         trade_date = datetime.fromisoformat(args.date).date()
         _run_report(storage, config, trade_date, args.limit)
+        return
+
+    if args.command == "train-prob":
+        _run_train_prob(
+            storage=storage,
+            config=config,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            train_end=_parse_optional_date(args.train_end),
+            valid_end=_parse_optional_date(args.valid_end),
+            test_end=_parse_optional_date(args.test_end),
+            limit=args.limit,
+        )
+        return
+
+    if args.command == "predict-prob":
+        _run_predict_prob(
+            storage=storage,
+            config=config,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
         return
 
     parser.error(f"Unknown command: {args.command}")
@@ -336,6 +396,117 @@ def _run_report(storage: Storage, config, trade_date: date, limit: int | None) -
     raise FileNotFoundError(f"Pattern report not found for {trade_date.isoformat()}: {report_path}")
 
 
+def _run_train_prob(
+    storage: Storage,
+    config,
+    start_date: date | None,
+    end_date: date | None,
+    train_end: date | None,
+    valid_end: date | None,
+    test_end: date | None,
+    limit: int | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    started_at = perf_counter()
+    logging.info("Building probability dataset from local daily bars")
+    dataset = build_probability_dataset(
+        storage=storage,
+        config=config,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+    if dataset.empty:
+        raise RuntimeError("No probability dataset could be built from the current local data.")
+    logging.info("Built probability dataset with %s rows", len(dataset))
+
+    resolved_train_end, resolved_valid_end, resolved_test_end = _resolve_probability_split_dates(
+        dataset,
+        train_end,
+        valid_end,
+        test_end,
+    )
+    split = split_probability_dataset(
+        dataset=dataset,
+        train_end=resolved_train_end,
+        valid_end=resolved_valid_end,
+        test_end=resolved_test_end,
+    )
+    logging.info(
+        "Probability split resolved: train<=%s valid<=%s test<=%s",
+        resolved_train_end.isoformat(),
+        resolved_valid_end.isoformat(),
+        resolved_test_end.isoformat(),
+    )
+    logging.info(
+        "Probability split sizes: train=%s valid=%s test=%s features=%s",
+        len(split.train),
+        len(split.valid),
+        len(split.test),
+        len(split.feature_columns),
+    )
+    artifacts = train_and_save_models(
+        split=split,
+        model_names=["xgboost"],
+        output_dir=storage.paths.ml_models_dir,
+    )
+    print(format_training_summary(artifacts))
+    evaluation_reports = [
+        evaluate_trained_artifact(artifact, split=split, top_n_list=config.probability.top_n_list) for artifact in artifacts
+    ]
+    print()
+    print(format_evaluation_summary(evaluation_reports))
+    saved_reports = save_evaluation_reports(evaluation_reports, storage.paths.probability_reports_dir)
+    logging.info("Saved %s probability evaluation reports to %s", len(saved_reports), storage.paths.probability_reports_dir)
+    logging.info("Probability training finished in %.2fs", perf_counter() - started_at)
+
+
+def _run_predict_prob(
+    storage: Storage,
+    config,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    model_name = "xgboost"
+    model_path = storage.paths.ml_models_dir / f"{model_name}.pkl"
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    artifact = load_model_artifact(model_path)
+
+    universe = storage.load_universe()
+    rows: list[pd.DataFrame] = []
+    for instrument in universe.to_dict("records"):
+        symbol = str(instrument["symbol"])
+        try:
+            bars = storage.load_daily_bars(symbol)
+        except FileNotFoundError:
+            continue
+
+        feature_frame = build_feature_frame(bars)
+        feature_frame["trade_date"] = pd.to_datetime(feature_frame["trade_date"])
+        current = feature_frame[feature_frame["trade_date"].dt.date == trade_date].copy()
+        if current.empty:
+            continue
+        if pd.isna(current.iloc[-1]["amount_ma_20"]) or current.iloc[-1]["amount_ma_20"] < config.universe.min_avg_amount_20d:
+            continue
+
+        current["symbol"] = symbol
+        current["name"] = instrument["name"]
+        rows.append(current)
+
+    if not rows:
+        raise RuntimeError(f"No feature rows found for prediction date {trade_date.isoformat()}")
+
+    frame = pd.concat(rows, ignore_index=True)
+    predictions = predict_with_model(artifact, frame)
+    output_path = Path(output) if output else storage.paths.probability_reports_dir / f"probability_{trade_date.isoformat()}_{model_name}.csv"
+    save_predictions_report(predictions, output_path)
+    print(format_prediction_summary(predictions, limit=top_n))
+    print(f"\nSaved probability ranking to {output_path}")
+
+
 def _selected_patterns(args: argparse.Namespace) -> list[str]:
     selected = [pattern for field, pattern in PATTERN_FLAG_MAP.items() if getattr(args, field)]
     return selected or list(STRATEGY_NAMES)
@@ -404,6 +575,23 @@ def _plot_pattern_matches(storage: Storage, config, as_of: date, results: pd.Dat
         plot_candles_and_volume(filtered, normalized_symbol, output_path)
 
     return plots_dir
+
+
+def _parse_optional_date(value: str | None) -> date | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value).date()
+
+
+def _resolve_probability_split_dates(
+    dataset: pd.DataFrame,
+    train_end: date | None,
+    valid_end: date | None,
+    test_end: date | None,
+) -> tuple[date, date, date]:
+    if train_end and valid_end and test_end:
+        return train_end, valid_end, test_end
+    return infer_split_dates(dataset)
 
 
 def _configure_network(network: NetworkConfig) -> None:

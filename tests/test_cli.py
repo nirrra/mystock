@@ -31,6 +31,23 @@ def test_build_parser_accepts_plot_command() -> None:
     assert args.start_date == "20240101"
 
 
+def test_build_parser_accepts_train_prob_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["train-prob", "--train-end", "2025-12-31"])
+
+    assert args.command == "train-prob"
+    assert args.train_end == "2025-12-31"
+
+
+def test_build_parser_accepts_predict_prob_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["predict-prob", "--date", "2026-04-10", "--top-n", "15"])
+
+    assert args.command == "predict-prob"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 15
+
+
 def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
     results = pd.DataFrame(
         [

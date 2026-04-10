@@ -7,6 +7,7 @@ import yaml
 from .models import (
     AppConfig,
     NetworkConfig,
+    ProbabilityConfig,
     ScreeningConfig,
     StorageConfig,
     Type1Config,
@@ -25,6 +26,7 @@ def load_config(config_path: str | Path) -> AppConfig:
     storage = raw["storage"]
     universe = raw["universe"]
     screening = raw["screening"]
+    probability = raw.get("probability", {})
     strategies = raw["strategies"]
     network = raw.get("network", {})
 
@@ -49,6 +51,13 @@ def load_config(config_path: str | Path) -> AppConfig:
             min_avg_amount_20d=float(universe["min_avg_amount_20d"]),
         ),
         screening=ScreeningConfig(output_limit=int(screening["output_limit"])),
+        probability=ProbabilityConfig(
+            horizon_days=int(probability.get("horizon_days", 20)),
+            min_future_return=float(probability.get("min_future_return", 0.03)),
+            max_future_drawdown=float(probability.get("max_future_drawdown", 0.08)),
+            min_history_days=int(probability.get("min_history_days", 200)),
+            top_n_list=tuple(int(item) for item in probability.get("top_n_list", [10, 20, 50])),
+        ),
         type1=Type1Config(**strategies["type1"]),
         type2=Type2Config(**strategies["type2"]),
         type3=Type3Config(**strategies["type3"]),

@@ -7,6 +7,8 @@
 - 主板股票池更新
 - 日线行情抓取与本地缓存
 - 4 类日 K 趋势模式识别
+- TradingView 风格 26 指标 Technical Ratings
+- 基于日线的中短期上涨概率训练与全市场排序
 - 单股 K 线加成交量作图
 - CSV 结果导出和命令行展示
 
@@ -29,6 +31,8 @@ mystock pattern
 mystock pattern --1
 mystock pattern --2 --4
 mystock pattern --plot-all
+mystock train-prob
+mystock predict-prob --date 2026-04-10
 mystock plot 603588
 mystock report --date 2026-04-10
 ```
@@ -39,6 +43,8 @@ mystock report --date 2026-04-10
 `mystock pattern` 默认识别全部 4 个模式，也可以用 `--1 --2 --3 --4` 按需指定。
 `mystock pattern` 会生成 `reports/patterns_all_YYYY-MM-DD.csv` 或 `patterns_1_YYYY-MM-DD.csv` 这类 CSV，只包含命中模式的股票。
 `mystock pattern --plot-all` 会额外为所有命中股票生成图形，输出到 `reports/plots/YYYY-MM-DD/`。
+`mystock train-prob` 会基于本地主板日线构建样本，并训练 XGBoost 模型。
+`mystock predict-prob` 会读取已训练模型，对指定日期的主板股票生成概率排序 CSV，输出到 `reports/probability/`。
 
 ## 配置
 

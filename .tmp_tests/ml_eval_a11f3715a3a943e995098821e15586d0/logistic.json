@@ -1,0 +1,20 @@
+{
+  "model_name": "logistic",
+  "backend": "cpu",
+  "feature_columns": [
+    "feature_a",
+    "feature_b",
+    "feature_c"
+  ],
+  "metrics": {
+    "valid_roc_auc": 0.9970238095238095,
+    "valid_pr_auc": 0.9933226495726495,
+    "valid_log_loss": 0.13926308011209293,
+    "valid_brier_score": 0.04079956290746964,
+    "test_roc_auc": 1.0,
+    "test_pr_auc": 1.0,
+    "test_log_loss": 0.1268417511870166,
+    "test_brier_score": 0.03204660962803908
+  },
+  "trained_at": "2026-04-10T13:39:40+00:00"
+}

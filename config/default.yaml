@@ -21,6 +21,13 @@ universe:
 screening:
   output_limit: 50
 
+probability:
+  horizon_days: 20
+  min_future_return: 0.03
+  max_future_drawdown: 0.08
+  min_history_days: 200
+  top_n_list: [10, 20, 50]
+
 strategies:
   type1:
     min_old_high_gap_days: 50

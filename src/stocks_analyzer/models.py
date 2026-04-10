@@ -76,6 +76,15 @@ class ScreeningConfig:
 
 
 @dataclass(slots=True)
+class ProbabilityConfig:
+    horizon_days: int
+    min_future_return: float
+    max_future_drawdown: float
+    min_history_days: int
+    top_n_list: tuple[int, ...]
+
+
+@dataclass(slots=True)
 class NetworkConfig:
     http_proxy: str | None
     https_proxy: str | None
@@ -90,6 +99,7 @@ class AppConfig:
     storage: StorageConfig
     universe: UniverseConfig
     screening: ScreeningConfig
+    probability: ProbabilityConfig
     type1: Type1Config
     type2: Type2Config
     type3: Type3Config
