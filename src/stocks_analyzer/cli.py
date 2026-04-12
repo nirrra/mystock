@@ -11,6 +11,8 @@ import pandas as pd
 
 from .config import load_config
 from .data_sources import create_data_provider
+from .daily_screening import run_daily_screening
+from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .ml_dataset import build_probability_dataset, infer_split_dates, split_probability_dataset
 from .ml_evaluation import evaluate_trained_artifact
@@ -21,6 +23,7 @@ from .plotting import default_start_date, filter_by_date, load_or_fetch_daily, p
 from .probability_reporting import (
     format_evaluation_summary,
     format_prediction_summary,
+    format_tradingview_summary,
     format_training_summary,
     save_evaluation_reports,
     save_predictions_report,
@@ -30,6 +33,7 @@ from .screener import Screener, parse_as_of
 from .storage import Storage
 from .strategies import STRATEGY_NAMES
 from .universe import build_main_board_universe
+from .xueqiu_archive import archive_xueqiu_user_1155695148
 
 
 def _localize_argparse() -> None:
@@ -58,6 +62,7 @@ PATTERN_LABEL_MAP = {
     "type3": "3",
     "type4": "4",
 }
+PROGRESS_LOG_INTERVAL = 100
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,6 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  mystock update 603588 --start-date 20240101\n"
             "  mystock pattern --1 --4\n"
             "  mystock report --date 2026-04-10\n"
+            "  mystock tradingview --date 2026-04-10\n"
+            "  mystock divergence --date 2026-04-10\n"
             "  mystock train-prob\n"
             "  mystock predict-prob --date 2026-04-10\n"
         ),
@@ -168,6 +175,26 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--date", required=True, help="结果日期，格式 YYYY-MM-DD")
     report.add_argument("--limit", type=int, default=None, help="终端最多显示多少行")
 
+    tradingview = subparsers.add_parser(
+        "tradingview",
+        help="计算指定日期的全市场 TradingView 技术评分",
+        description="读取本地主板日线数据，按指定日期汇总每只股票的 TradingView 风格技术评分。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    tradingview.add_argument("--date", required=True, help="评分日期，格式 YYYY-MM-DD")
+    tradingview.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    tradingview.add_argument("--output", default=None, help="可选的 CSV 输出路径")
+
+    divergence = subparsers.add_parser(
+        "divergence",
+        help="识别指定日期最近 15 个交易日内的 MACD 顶背离/底背离",
+        description="读取本地主板日线数据，输出全市场 TradingView 评分和 MACD 背离识别汇总。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    divergence.add_argument("--date", required=True, help="识别日期，格式 YYYY-MM-DD")
+    divergence.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    divergence.add_argument("--output", default=None, help="可选的 CSV 输出路径")
+
     train_prob = subparsers.add_parser(
         "train-prob",
         help="训练中短期上涨概率模型",
@@ -190,6 +217,27 @@ def build_parser() -> argparse.ArgumentParser:
     predict_prob.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
     predict_prob.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
     predict_prob.add_argument("--output", default=None, help="可选的预测结果输出路径")
+
+    xueqiu_archive = subparsers.add_parser(
+        "xueqiu-archive",
+        help="归档雪球博主 1155695148 的公开历史帖子",
+        description="使用浏览器驱动抓取雪球博主 1155695148 的公开帖子，并导出为 Markdown。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    xueqiu_archive.add_argument("--output", default=None, help="可选的 Markdown 输出路径")
+    xueqiu_archive.add_argument("--max-posts", type=int, default=None, help="仅抓取前 N 条帖子，便于测试")
+    xueqiu_archive.add_argument("--refresh", action="store_true", help="忽略本地链接缓存并重新发现帖子")
+    xueqiu_archive.add_argument("--headed", action="store_true", help="打开可见浏览器，便于手动完成滑动验证")
+
+    daily_screening = subparsers.add_parser(
+        "daily-screening",
+        help="按交易日执行每日筛选，并把结果插入选股.md 顶部",
+        description="自动判断是否为交易日，串行执行 update/tradingview/pattern，再生成当日选股 Markdown。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    daily_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
+    daily_screening.add_argument("--start-date", default="20240101", help="更新数据的起始日期，格式 YYYYMMDD")
+    daily_screening.add_argument("--picks-file", default="选股.md", help="选股结果 Markdown 文件名")
 
     return parser
 
@@ -238,6 +286,26 @@ def main() -> None:
         _run_report(storage, config, trade_date, args.limit)
         return
 
+    if args.command == "tradingview":
+        _run_tradingview(
+            storage=storage,
+            config=config,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "divergence":
+        _run_divergence(
+            storage=storage,
+            config=config,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
     if args.command == "train-prob":
         _run_train_prob(
             storage=storage,
@@ -261,6 +329,23 @@ def main() -> None:
         )
         return
 
+    if args.command == "xueqiu-archive":
+        _run_xueqiu_archive(paths, output=args.output, max_posts=args.max_posts, refresh=args.refresh, headed=args.headed)
+        return
+
+    if args.command == "daily-screening":
+        trade_date = datetime.fromisoformat(args.date).date() if args.date else date.today()
+        result = run_daily_screening(
+            project_root=project_root,
+            trade_date=trade_date,
+            start_date=args.start_date,
+            picks_filename=args.picks_file,
+        )
+        print(result.message)
+        if result.report_path:
+            print(f"报告文件：{result.report_path}")
+        return
+
     parser.error(f"Unknown command: {args.command}")
 
 
@@ -282,7 +367,7 @@ def _run_update(
         logging.info("Cached %s rows for %s to %s", len(bars), normalized_symbol, target)
         return
 
-    universe = _refresh_universe(storage, provider, exclude_st)
+    universe = _refresh_or_load_universe(storage, provider, exclude_st)
     symbols = universe["symbol"].tolist()
     if limit is not None:
         symbols = symbols[:limit]
@@ -330,8 +415,14 @@ def _run_pattern(
     screener = Screener(storage, config)
     results = screener.run(as_of=as_of, selected_strategies=selected_patterns)
     exported = _prepare_pattern_results(results)
+    exported = _append_recent_tradingview_scores(storage, exported, as_of=as_of, lookback_days=5)
+    exported = _append_recent_macd_divergence(storage, exported, as_of=as_of)
 
-    output_path = Path(output) if output else storage.paths.reports_dir / _default_pattern_filename(as_of, selected_patterns)
+    output_path = Path(output) if output else _default_pattern_output_path(
+        storage,
+        as_of=as_of,
+        selected_patterns=selected_patterns,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     exported.to_csv(output_path, index=False, encoding="utf-8-sig")
 
@@ -380,7 +471,7 @@ def _run_plot(
 
 
 def _run_report(storage: Storage, config, trade_date: date, limit: int | None) -> None:
-    report_path = storage.paths.reports_dir / f"patterns_all_{trade_date.isoformat()}.csv"
+    report_path = _default_pattern_output_path(storage, as_of=trade_date, selected_patterns=STRATEGY_NAMES)
     if report_path.exists():
         results = pd.read_csv(report_path)
         print(format_report(results, limit=limit or config.screening.output_limit))
@@ -394,6 +485,61 @@ def _run_report(storage: Storage, config, trade_date: date, limit: int | None) -
         return
 
     raise FileNotFoundError(f"Pattern report not found for {trade_date.isoformat()}: {report_path}")
+
+
+def _run_tradingview(
+    storage: Storage,
+    config,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    summary, daily_frames = _build_tradingview_snapshots(storage, trade_date=trade_date, lookback_days=5)
+    if summary.empty:
+        raise RuntimeError(f"No TradingView ratings could be generated for {trade_date.isoformat()}")
+
+    output_path = Path(output) if output else storage.paths.reports_dir / "tradingview" / f"tradingview_avg5_{trade_date.isoformat()}.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(output_path, index=False, encoding="utf-8-sig")
+    for snapshot in daily_frames:
+        daily_path = output_path.parent / f"tradingview_{snapshot['trade_date']}.csv"
+        snapshot["data"].to_csv(daily_path, index=False, encoding="utf-8-sig")
+
+    print(format_tradingview_summary(summary, limit=top_n))
+    print(f"\nSaved TradingView 5-day summary to {output_path}")
+    print(f"Saved {len(daily_frames)} daily TradingView files to {output_path.parent}")
+
+
+def _run_divergence(
+    storage: Storage,
+    config,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    summary = _build_macd_divergence_summary(storage, trade_date=trade_date)
+    if summary.empty:
+        raise RuntimeError(f"No MACD divergence summary could be generated for {trade_date.isoformat()}")
+
+    output_path = Path(output) if output else storage.paths.reports_dir / "divergence" / f"macd_divergence_{trade_date.isoformat()}.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(output_path, index=False, encoding="utf-8-sig")
+
+    display_columns = [
+        "symbol",
+        "name",
+        "avg_all_rating_5d",
+        "all_rating_label",
+        "macd_top_divergence_15d",
+        "macd_bottom_divergence_15d",
+        "macd_top_divergence_signal_date",
+        "macd_bottom_divergence_signal_date",
+    ]
+    available = [column for column in display_columns if column in summary.columns]
+    print(summary.loc[:, available].head(top_n).to_string(index=False))
+    print(f"\nSaved MACD divergence summary to {output_path}")
 
 
 def _run_train_prob(
@@ -507,6 +653,27 @@ def _run_predict_prob(
     print(f"\nSaved probability ranking to {output_path}")
 
 
+def _run_xueqiu_archive(
+    paths: ProjectPaths,
+    *,
+    output: str | None,
+    max_posts: int | None,
+    refresh: bool,
+    headed: bool,
+) -> None:
+    started_at = perf_counter()
+    result = archive_xueqiu_user_1155695148(paths, output=output, max_posts=max_posts, refresh=refresh, headed=headed)
+    elapsed = perf_counter() - started_at
+    cache_text = "yes" if result.used_cache else "no"
+    print("雪球归档完成")
+    print(f"候选链接数：{result.candidate_count}")
+    print(f"成功归档数：{result.archived_count}")
+    print(f"失败数：{result.failed_count}")
+    print(f"使用缓存：{cache_text}")
+    print(f"输出文件：{result.output_path}")
+    print(f"耗时：{elapsed:.1f}s")
+
+
 def _selected_patterns(args: argparse.Namespace) -> list[str]:
     selected = [pattern for field, pattern in PATTERN_FLAG_MAP.items() if getattr(args, field)]
     return selected or list(STRATEGY_NAMES)
@@ -535,6 +702,104 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
     return exported.loc[:, available + remaining].sort_values(["pattern_id", "symbol"]).reset_index(drop=True)
 
 
+def _append_recent_tradingview_scores(
+    storage: Storage,
+    exported: pd.DataFrame,
+    as_of: date,
+    lookback_days: int,
+) -> pd.DataFrame:
+    if exported.empty or "symbol" not in exported.columns:
+        return exported
+
+    summary, _ = _load_or_build_tradingview_summary(storage, trade_date=as_of, lookback_days=lookback_days)
+    if summary.empty:
+        return exported
+
+    rating_date_columns = sorted(column for column in summary.columns if column.startswith("all_rating_20"))
+    if len(rating_date_columns) != lookback_days:
+        return exported
+
+    merge_columns = ["symbol", *rating_date_columns, "avg_all_rating_5d", "all_rating_label"]
+    tradingview = summary.loc[:, [column for column in merge_columns if column in summary.columns]].copy()
+    tradingview["symbol"] = tradingview["symbol"].map(_normalize_exported_symbol)
+    tradingview = tradingview.rename(
+        columns={
+            **{column: f"tradingview_{column}" for column in rating_date_columns},
+            "avg_all_rating_5d": "tradingview_avg_all_rating_5d",
+            "all_rating_label": "tradingview_all_rating_label",
+        }
+    )
+
+    enriched = exported.copy()
+    enriched["_normalized_symbol"] = enriched["symbol"].map(_normalize_exported_symbol)
+    enriched = enriched.merge(
+        tradingview,
+        how="left",
+        left_on="_normalized_symbol",
+        right_on="symbol",
+    )
+    enriched = enriched.drop(columns=["_normalized_symbol", "symbol_y"], errors="ignore")
+    enriched = enriched.rename(columns={"symbol_x": "symbol"})
+    return enriched
+
+
+def _append_recent_macd_divergence(
+    storage: Storage,
+    exported: pd.DataFrame,
+    *,
+    as_of: date,
+) -> pd.DataFrame:
+    if exported.empty or "symbol" not in exported.columns:
+        return exported
+
+    divergence = _load_or_build_macd_divergence_summary(storage, trade_date=as_of)
+    if divergence.empty:
+        return exported
+
+    merge_columns = [
+        "symbol",
+        "macd_top_divergence_15d",
+        "macd_bottom_divergence_15d",
+    ]
+    divergence = divergence.loc[:, [column for column in merge_columns if column in divergence.columns]].copy()
+    divergence["symbol"] = divergence["symbol"].map(_normalize_exported_symbol)
+
+    enriched = exported.copy()
+    enriched["_normalized_symbol"] = enriched["symbol"].map(_normalize_exported_symbol)
+    enriched = enriched.merge(
+        divergence,
+        how="left",
+        left_on="_normalized_symbol",
+        right_on="symbol",
+    )
+    enriched = enriched.drop(columns=["_normalized_symbol", "symbol_y"], errors="ignore")
+    enriched = enriched.rename(columns={"symbol_x": "symbol"})
+
+    for column in ("macd_top_divergence_15d", "macd_bottom_divergence_15d"):
+        if column in enriched.columns:
+            enriched[column] = enriched[column].fillna(False).astype(bool)
+    return enriched
+
+
+def _load_or_build_macd_divergence_summary(storage: Storage, trade_date: date) -> pd.DataFrame:
+    default_path = storage.paths.reports_dir / "divergence" / f"macd_divergence_{trade_date.isoformat()}.csv"
+    if default_path.exists():
+        return pd.read_csv(default_path)
+    return _build_macd_divergence_summary(storage, trade_date=trade_date)
+
+
+def _load_or_build_tradingview_summary(
+    storage: Storage,
+    *,
+    trade_date: date,
+    lookback_days: int,
+) -> tuple[pd.DataFrame, list[dict[str, object]]]:
+    default_path = storage.paths.reports_dir / "tradingview" / f"tradingview_avg5_{trade_date.isoformat()}.csv"
+    if lookback_days == 5 and default_path.exists():
+        return pd.read_csv(default_path), []
+    return _build_tradingview_snapshots(storage, trade_date=trade_date, lookback_days=lookback_days)
+
+
 def _default_pattern_filename(as_of: date, selected_patterns: list[str]) -> str:
     if len(selected_patterns) == len(STRATEGY_NAMES):
         label = "all"
@@ -544,9 +809,192 @@ def _default_pattern_filename(as_of: date, selected_patterns: list[str]) -> str:
     return f"patterns_{label}_{as_of.isoformat()}.csv"
 
 
+def _default_pattern_output_path(storage: Storage, *, as_of: date, selected_patterns: list[str]) -> Path:
+    return storage.paths.reports_dir / "patterns" / _default_pattern_filename(as_of, selected_patterns)
+
+
 def _format_symbol_for_excel(value: object) -> str:
     symbol = str(value).zfill(6)
     return f'="{symbol}"'
+
+
+def _normalize_exported_symbol(value: object) -> str:
+    text = str(value).strip()
+    if text.startswith('="') and text.endswith('"'):
+        text = text[2:-1]
+    return text.zfill(6)
+
+
+def _build_tradingview_snapshots(
+    storage: Storage,
+    trade_date: date,
+    lookback_days: int,
+) -> tuple[pd.DataFrame, list[dict[str, object]]]:
+    universe = storage.load_universe()
+    target_dates = _resolve_recent_trading_dates(storage, as_of=trade_date, lookback_days=lookback_days)
+    if len(target_dates) != lookback_days:
+        return pd.DataFrame(), []
+
+    summary_rows: list[dict[str, object]] = []
+    daily_rows: dict[str, list[dict[str, object]]] = {}
+    target_set = set(target_dates)
+    instruments = universe.to_dict("records")
+    total_instruments = len(instruments)
+    logging.info(
+        "TradingView scan started for %s: %s symbols, %s recent trading days",
+        trade_date.isoformat(),
+        total_instruments,
+        lookback_days,
+    )
+
+    for index, instrument in enumerate(instruments, start=1):
+        symbol = str(instrument["symbol"])
+        try:
+            bars = storage.load_daily_bars(symbol)
+        except FileNotFoundError:
+            _log_scan_progress("TradingView", index, total_instruments)
+            continue
+
+        feature_frame = build_feature_frame(bars)
+        feature_frame["trade_date"] = pd.to_datetime(feature_frame["trade_date"])
+        recent = feature_frame[feature_frame["trade_date"].dt.date.isin(target_set)].dropna(subset=["all_rating"]).copy()
+        available_dates = sorted(recent["trade_date"].dt.date.tolist())
+        if available_dates != target_dates:
+            _log_scan_progress("TradingView", index, total_instruments)
+            continue
+
+        recent = recent.sort_values("trade_date").reset_index(drop=True)
+        all_ratings = [float(value) for value in recent["all_rating"].tolist()]
+        latest = recent.iloc[-1]
+        summary_row: dict[str, object] = {
+            "trade_date": pd.Timestamp(latest["trade_date"]).date().isoformat(),
+            "symbol": _format_symbol_for_excel(symbol),
+            "name": instrument["name"],
+            "avg_all_rating_5d": sum(all_ratings) / lookback_days,
+            "ma_rating": float(latest["ma_rating"]) if pd.notna(latest.get("ma_rating")) else None,
+            "osc_rating": float(latest["osc_rating"]) if pd.notna(latest.get("osc_rating")) else None,
+            "all_rating": float(latest["all_rating"]) if pd.notna(latest.get("all_rating")) else None,
+            "ma_rating_label": latest.get("ma_rating_label"),
+            "osc_rating_label": latest.get("osc_rating_label"),
+            "all_rating_label": latest.get("all_rating_label"),
+        }
+        for _, row in recent.iterrows():
+            row_trade_date = pd.Timestamp(row["trade_date"]).date()
+            summary_row[f"all_rating_{row_trade_date.isoformat()}"] = float(row["all_rating"])
+        summary_rows.append(summary_row)
+
+        for _, row in recent.iterrows():
+            row_trade_date = pd.Timestamp(row["trade_date"]).date().isoformat()
+            daily_rows.setdefault(row_trade_date, []).append(
+                {
+                    "trade_date": row_trade_date,
+                    "symbol": _format_symbol_for_excel(symbol),
+                    "name": instrument["name"],
+                    "ma_rating": float(row["ma_rating"]) if pd.notna(row.get("ma_rating")) else None,
+                    "osc_rating": float(row["osc_rating"]) if pd.notna(row.get("osc_rating")) else None,
+                    "all_rating": float(row["all_rating"]) if pd.notna(row.get("all_rating")) else None,
+                    "ma_rating_label": row.get("ma_rating_label"),
+                    "osc_rating_label": row.get("osc_rating_label"),
+                    "all_rating_label": row.get("all_rating_label"),
+                }
+            )
+        _log_scan_progress("TradingView", index, total_instruments)
+
+    summary = pd.DataFrame(summary_rows)
+    if summary.empty:
+        return summary, []
+    summary = summary.sort_values(["avg_all_rating_5d", "all_rating", "symbol"], ascending=[False, False, True]).reset_index(drop=True)
+    rating_date_columns = sorted(column for column in summary.columns if column.startswith("all_rating_20"))
+    ordered_columns = [
+        column
+        for column in (
+            "symbol",
+            "name",
+            *rating_date_columns,
+            "avg_all_rating_5d",
+            "ma_rating",
+            "osc_rating",
+            "all_rating",
+            "ma_rating_label",
+            "osc_rating_label",
+            "all_rating_label",
+            "trade_date",
+        )
+        if column in summary.columns
+    ]
+    remaining_columns = [column for column in summary.columns if column not in ordered_columns]
+    summary = summary.loc[:, ordered_columns + remaining_columns]
+
+    ordered_daily_dates = [item_date.isoformat() for item_date in target_dates]
+    daily_frames = [
+        {
+            "trade_date": item_date,
+            "data": pd.DataFrame(daily_rows.get(item_date, [])).sort_values(["all_rating", "ma_rating", "symbol"], ascending=[False, False, True]).reset_index(drop=True),
+        }
+        for item_date in ordered_daily_dates
+        if daily_rows.get(item_date)
+    ]
+    return summary, daily_frames
+
+
+def _build_macd_divergence_summary(storage: Storage, trade_date: date) -> pd.DataFrame:
+    tradingview_summary, _ = _load_or_build_tradingview_summary(storage, trade_date=trade_date, lookback_days=5)
+    if tradingview_summary.empty:
+        return pd.DataFrame()
+
+    divergence_rows: list[dict[str, object]] = []
+    total_rows = len(tradingview_summary)
+    logging.info("MACD divergence scan started for %s: %s symbols", trade_date.isoformat(), total_rows)
+    for index, (_, row) in enumerate(tradingview_summary.iterrows(), start=1):
+        symbol = _normalize_exported_symbol(row["symbol"])
+        try:
+            bars = storage.load_daily_bars(symbol)
+        except FileNotFoundError:
+            _log_scan_progress("MACD divergence", index, total_rows)
+            continue
+
+        cutoff = bars[pd.to_datetime(bars["trade_date"]).dt.date <= trade_date].reset_index(drop=True)
+        if cutoff.empty:
+            _log_scan_progress("MACD divergence", index, total_rows)
+            continue
+
+        divergence_row = summarize_recent_macd_divergence(cutoff)
+        divergence_row["symbol"] = _format_symbol_for_excel(symbol)
+        divergence_rows.append(divergence_row)
+        _log_scan_progress("MACD divergence", index, total_rows)
+
+    if not divergence_rows:
+        return pd.DataFrame()
+
+    divergence = pd.DataFrame(divergence_rows)
+    summary = tradingview_summary.merge(divergence, how="left", on="symbol")
+    for column in ("macd_top_divergence_15d", "macd_bottom_divergence_15d"):
+        if column in summary.columns:
+            summary[column] = summary[column].fillna(False).astype(bool)
+    return summary
+
+
+def _log_scan_progress(stage_name: str, current: int, total: int) -> None:
+    if total <= 0:
+        return
+    if current == 1 or current == total or current % PROGRESS_LOG_INTERVAL == 0:
+        logging.info("%s progress: %s/%s", stage_name, current, total)
+
+
+def _resolve_recent_trading_dates(storage: Storage, as_of: date, lookback_days: int) -> list[date]:
+    universe = storage.load_universe()
+    candidate_dates: set[date] = set()
+    for instrument in universe.to_dict("records"):
+        symbol = str(instrument["symbol"])
+        try:
+            bars = storage.load_daily_bars(symbol)
+        except FileNotFoundError:
+            continue
+        trade_dates = pd.to_datetime(bars["trade_date"]).dt.date
+        recent_dates = sorted(item for item in trade_dates.unique() if item <= as_of)
+        candidate_dates.update(recent_dates[-lookback_days:])
+
+    return sorted(candidate_dates)[-lookback_days:]
 
 
 def _plot_pattern_matches(storage: Storage, config, as_of: date, results: pd.DataFrame) -> Path:
@@ -616,9 +1064,35 @@ def _configure_network(network: NetworkConfig) -> None:
 def _refresh_universe(storage: Storage, provider, exclude_st: bool) -> pd.DataFrame:
     instruments = provider.get_instruments()
     universe = build_main_board_universe(instruments, exclude_st=exclude_st)
+    if universe.empty:
+        logging.warning("Universe refresh returned no symbols; skip overwriting cached universe.")
+        return universe
     target = storage.save_universe(universe)
     logging.info("Saved %s symbols to %s", len(universe), target)
     return universe
+
+
+def _refresh_or_load_universe(storage: Storage, provider, exclude_st: bool) -> pd.DataFrame:
+    try:
+        universe = _refresh_universe(storage, provider, exclude_st)
+    except Exception as exc:
+        try:
+            cached = storage.load_universe()
+        except FileNotFoundError:
+            raise
+        logging.warning("Failed to refresh universe, fallback to cached universe: %s", exc)
+        return cached
+
+    if not universe.empty:
+        return universe
+
+    try:
+        cached = storage.load_universe()
+    except FileNotFoundError:
+        raise RuntimeError("Universe refresh returned no symbols and no cached universe is available.")
+
+    logging.warning("Universe refresh returned no symbols, fallback to cached universe.")
+    return cached
 
 
 def _ensure_universe(storage: Storage, provider_name: str, exclude_st: bool) -> None:

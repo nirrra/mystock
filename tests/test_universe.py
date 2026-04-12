@@ -15,3 +15,12 @@ def test_build_main_board_universe_filters_non_main_boards_and_st() -> None:
     result = build_main_board_universe(instruments, exclude_st=True)
 
     assert result["symbol"].tolist() == ["600000"]
+
+
+def test_build_main_board_universe_handles_empty_input() -> None:
+    instruments = pd.DataFrame(columns=["symbol", "name", "trade_status"])
+
+    result = build_main_board_universe(instruments, exclude_st=True)
+
+    assert result.empty
+    assert {"exchange", "board", "is_st", "is_suspended"}.issubset(result.columns)

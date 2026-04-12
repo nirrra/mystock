@@ -58,6 +58,31 @@ def format_prediction_summary(predictions: pd.DataFrame, limit: int) -> str:
     return display.to_string(index=False)
 
 
+def format_tradingview_summary(scores: pd.DataFrame, limit: int) -> str:
+    if scores.empty:
+        return "No TradingView ratings generated."
+    rating_date_columns = sorted(column for column in scores.columns if column.startswith("all_rating_20"))
+    columns = [
+        column
+        for column in (
+            "symbol",
+            "name",
+            *rating_date_columns,
+            "avg_all_rating_5d",
+            "ma_rating",
+            "osc_rating",
+            "all_rating",
+            "all_rating_label",
+        )
+        if column in scores.columns
+    ]
+    display = scores.loc[:, columns].head(limit).copy()
+    for column in ("ma_rating", "osc_rating", "all_rating", "avg_all_rating_5d", *rating_date_columns):
+        if column in display.columns:
+            display[column] = display[column].map(lambda value: f"{value:.4f}" if pd.notna(value) else "")
+    return display.to_string(index=False)
+
+
 def save_predictions_report(predictions: pd.DataFrame, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     predictions.to_csv(output_path, index=False, encoding="utf-8-sig")

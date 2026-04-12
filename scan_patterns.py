@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output",
-        default=str(ROOT / "reports" / "pattern_scan.csv"),
+        default=str(ROOT / "reports" / "patterns" / "pattern_scan.csv"),
         help="CSV output path.",
     )
     return parser

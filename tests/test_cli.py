@@ -1,5 +1,26 @@
-from stocks_analyzer.cli import PATTERN_LABEL_MAP, _prepare_pattern_results, build_parser
+from datetime import date
+from pathlib import Path
+from uuid import uuid4
+
 import pandas as pd
+from stocks_analyzer.cli import (
+    PATTERN_LABEL_MAP,
+    _append_recent_macd_divergence,
+    _prepare_pattern_results,
+    build_parser,
+)
+from stocks_analyzer.config import load_config
+from stocks_analyzer.paths import ProjectPaths
+from stocks_analyzer.storage import Storage
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _make_workspace_tmp_dir(name: str) -> Path:
+    path = ROOT / ".tmp_tests" / f"{name}_{uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def test_build_parser_accepts_update_with_symbol() -> None:
@@ -48,6 +69,43 @@ def test_build_parser_accepts_predict_prob_command() -> None:
     assert args.top_n == 15
 
 
+def test_build_parser_accepts_tradingview_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["tradingview", "--date", "2026-04-10", "--top-n", "30"])
+
+    assert args.command == "tradingview"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 30
+
+
+def test_build_parser_accepts_divergence_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["divergence", "--date", "2026-04-10", "--top-n", "30"])
+
+    assert args.command == "divergence"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 30
+
+
+def test_build_parser_accepts_xueqiu_archive_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["xueqiu-archive", "--max-posts", "10", "--refresh", "--headed"])
+
+    assert args.command == "xueqiu-archive"
+    assert args.max_posts == 10
+    assert args.refresh is True
+    assert args.headed is True
+
+
+def test_build_parser_accepts_daily_screening_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["daily-screening", "--date", "2026-04-10", "--start-date", "20240101"])
+
+    assert args.command == "daily-screening"
+    assert args.date == "2026-04-10"
+    assert args.start_date == "20240101"
+
+
 def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
     results = pd.DataFrame(
         [
@@ -66,3 +124,40 @@ def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
 
     assert prepared["pattern_id"].tolist() == [PATTERN_LABEL_MAP["type1"]]
     assert "strategy_name" not in prepared.columns
+
+
+def test_append_recent_macd_divergence_merges_two_flag_columns_from_saved_report() -> None:
+    tmp_path = _make_workspace_tmp_dir("macd_divergence_merge")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+
+    divergence_dir = paths.reports_dir / "divergence"
+    divergence_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "symbol": '="600000"',
+                "macd_top_divergence_15d": True,
+                "macd_bottom_divergence_15d": False,
+            }
+        ]
+    ).to_csv(divergence_dir / "macd_divergence_2026-04-10.csv", index=False, encoding="utf-8-sig")
+
+    exported = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": '="600000"',
+                "name": "测试股份",
+                "pattern_id": "1",
+                "close": 10.0,
+                "reason": "demo",
+            }
+        ]
+    )
+
+    enriched = _append_recent_macd_divergence(storage, exported, as_of=date(2026, 4, 10))
+
+    assert bool(enriched.loc[0, "macd_top_divergence_15d"]) is True
+    assert bool(enriched.loc[0, "macd_bottom_divergence_15d"]) is False

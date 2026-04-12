@@ -33,5 +33,10 @@ def add_indicators(dataframe: pd.DataFrame) -> pd.DataFrame:
     df["volume_ratio_20"] = volume.div(df["volume_ma_20"])
     df["volume_ratio_3d"] = volume.rolling(3).mean().div(df["volume_ma_20"])
     df["consolidation_range_3d"] = high.rolling(3).max().sub(low.rolling(3).min()).div(close)
+    df["ema_12"] = close.ewm(span=12, adjust=False, min_periods=12).mean()
+    df["ema_26"] = close.ewm(span=26, adjust=False, min_periods=26).mean()
+    df["macd_dif"] = df["ema_12"] - df["ema_26"]
+    df["macd_dea"] = df["macd_dif"].ewm(span=9, adjust=False, min_periods=9).mean()
+    df["macd_hist"] = (df["macd_dif"] - df["macd_dea"]) * 2
 
     return df

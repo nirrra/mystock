@@ -24,8 +24,17 @@ def _classify_market(symbol: str) -> tuple[str | None, str | None]:
 
 def build_main_board_universe(instruments: pd.DataFrame, exclude_st: bool) -> pd.DataFrame:
     dataframe = instruments.copy()
+    if dataframe.empty:
+        dataframe = dataframe.reindex(columns=list(dataframe.columns) + ["exchange", "board", "is_st", "is_suspended"])
+        return dataframe.reset_index(drop=True)
+
     dataframe["symbol"] = dataframe["symbol"].astype(str).str.zfill(6)
-    dataframe[["exchange", "board"]] = dataframe["symbol"].apply(lambda value: pd.Series(_classify_market(value)))
+    market_info = pd.DataFrame(
+        dataframe["symbol"].map(_classify_market).tolist(),
+        columns=["exchange", "board"],
+        index=dataframe.index,
+    )
+    dataframe[["exchange", "board"]] = market_info
     dataframe["is_st"] = dataframe["name"].astype(str).str.upper().str.contains("ST", regex=False)
     trade_status = dataframe["trade_status"] if "trade_status" in dataframe.columns else None
     if trade_status is not None:

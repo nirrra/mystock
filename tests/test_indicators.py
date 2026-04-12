@@ -27,3 +27,4 @@ def test_add_indicators_creates_expected_columns() -> None:
     assert latest["ma_5"] == 68
     assert latest["ma_20"] == 60.5
     assert "consolidation_range_3d" in result.columns
+    assert {"ema_12", "ema_26", "macd_dif", "macd_dea", "macd_hist"}.issubset(result.columns)
