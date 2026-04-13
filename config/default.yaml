@@ -18,6 +18,11 @@ universe:
   min_history_days: 60
   min_avg_amount_20d: 100000000
 
+history_momentum_filter:
+  lookback_days: 200
+  window_days: 5
+  min_return: 0.10
+
 screening:
   output_limit: 50
 

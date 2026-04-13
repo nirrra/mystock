@@ -71,6 +71,13 @@ class Type4Config:
 
 
 @dataclass(slots=True)
+class HistoryMomentumFilterConfig:
+    lookback_days: int
+    window_days: int
+    min_return: float
+
+
+@dataclass(slots=True)
 class ScreeningConfig:
     output_limit: int
 
@@ -98,6 +105,7 @@ class AppConfig:
     network: NetworkConfig
     storage: StorageConfig
     universe: UniverseConfig
+    history_momentum_filter: HistoryMomentumFilterConfig
     screening: ScreeningConfig
     probability: ProbabilityConfig
     type1: Type1Config

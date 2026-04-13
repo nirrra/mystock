@@ -1,233 +1,440 @@
 # A Share Analyzer
 
-面向 A 股主板的命令行技术面分析框架。V1 聚焦分析，不包含交易执行。
+面向 A 股主板的命令行技术分析工具。
 
-## 当前能力
+当前项目聚焦三件事：
 
-- 主板股票池更新
-- 日线行情抓取与本地缓存
-- 4 类日 K 趋势模式识别
-- TradingView 风格 26 指标 Technical Ratings
-- 交易日感知的每日自动筛选与 Markdown 归档
-- 基于日线的中短期上涨概率训练与全市场排序
-- 雪球博主 1155695148 公开历史帖子 Markdown 归档
-- 单股 K 线加成交量作图
-- CSV 结果导出和命令行展示
+- 更新主板股票池和本地日线缓存
+- 生成 pattern、TradingView、MACD 背离等技术结果
+- 基于技术规则生成 `watchlist`，并在次日盘中做小范围复筛
+
+项目不包含交易执行，也不会替你自动决定最终买入标的。
+
+## 当前定位
+
+当前流程里有两层结果：
+
+- 技术结果层：`pattern`、`tradingview`、`divergence`
+- 候选池层：`watchlist`
+
+其中：
+
+- `daily-screening` 负责跑完整技术链路，并生成当日 `watchlist`
+- `intraday-screening` 负责读取上一交易日或指定日期的 `watchlist`，只对候选股做盘中复筛
+- `选股.md` 不在自动命令链里更新，留给你手动整理和最终决策
 
 ## 安装
+
+环境要求：
+
+- Python `>= 3.11`
+
+推荐安装方式：
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -e .
 pip install playwright
-mystock --help
 ```
 
-## 常用命令
+安装完成后可以使用以下入口：
+
+- `python -m stocks_analyzer`
+- `mystock`
+- `stocks-analyzer`
+
+推荐统一写法：
 
 ```bash
-mystock update --start-date 20240101
-mystock update --start-date 20240101 --skip-existing
-mystock update 603588 --start-date 20240101
-mystock pattern
-mystock pattern --1
-mystock pattern --2 --4
-mystock pattern --plot-all
-mystock tradingview --date 2026-04-10
-mystock daily-screening --date 2026-04-10
-mystock train-prob
-mystock predict-prob --date 2026-04-10
-mystock xueqiu-archive --headed --refresh
-mystock plot 603588
-mystock report --date 2026-04-10
+python -m stocks_analyzer --project-root . --help
 ```
 
-兼容入口 `python main.py ...` 和 `python plot_symbol.py ...` 仍然可用，但主入口已经统一为 `mystock`。
+## 目录约定
 
-`mystock update` 在不传股票代码时会先刷新主板股票池，再批量更新日线数据；传入单只股票代码时，只更新该股票。
-`mystock pattern` 默认识别全部 4 个模式，也可以用 `--1 --2 --3 --4` 按需指定。
-`mystock pattern` 会生成 `reports/patterns/patterns_all_YYYY-MM-DD.csv` 或 `reports/patterns/patterns_1_YYYY-MM-DD.csv` 这类 CSV，只包含命中模式的股票。
-`mystock pattern --plot-all` 会额外为所有命中股票生成图形，输出到 `reports/plots/YYYY-MM-DD/`。
-`mystock tradingview` 会计算最近 5 个交易日的 TradingView 总分，按 5 日平均总分排序，并额外保存这 5 个交易日各自的评分 CSV。
-`mystock daily-screening` 会先判断指定日期是否为交易日；如果是，就串行执行 `update`、`tradingview`、`pattern`，再把最新筛选结果插入 [`选股.md`](C:\Users\wdyab\Desktop\wdy\stocks\选股.md) 顶部。
-`mystock train-prob` 会基于本地主板日线构建样本，并训练 XGBoost 模型。
-`mystock predict-prob` 会读取已训练模型，对指定日期的主板股票生成概率排序 CSV，输出到 `reports/probability/`。
-`mystock xueqiu-archive` 会尝试抓取雪球博主 `1155695148` 的公开历史帖子，并导出到 `reports/xueqiu/1155695148.md`。如果雪球触发滑动验证，建议使用 `--headed` 打开可见浏览器手动完成验证。
+常用目录和文件：
 
-## 每日筛选
+```text
+config/                      配置文件
+data/                        本地缓存数据
+reports/patterns/            模式扫描结果
+reports/tradingview/         TradingView 技术评分结果
+reports/divergence/          MACD 背离结果
+reports/watchlists/          日终 watchlist
+reports/daily_screening/     daily-screening 运行摘要
+reports/intraday_screening/  盘中复筛结果
+选股.md                      你手动维护的选股记录
+主线.md                      你手动维护的主线记录
+```
 
-`mystock daily-screening` 是给日常盘前或定时任务准备的统一入口。
-它会把原本分散的几个步骤固定下来，避免每次手工重复执行。
+## 快速开始
 
-默认执行顺序：
+第一次初始化：
 
-1. 判断指定日期是否为 A 股交易日
-2. 如果不是交易日，直接跳过，不更新数据
-3. 如果是交易日，执行 `mystock update --start-date 20240101`
-4. 执行 `mystock tradingview --date YYYY-MM-DD`
-5. 执行 `mystock pattern --as-of YYYY-MM-DD`
-6. 调用 `skills/project-stock-picker/scripts/project_stock_picker.py`
-7. 生成分梯队结果，并把最新一期插入 [`选股.md`](C:\Users\wdyab\Desktop\wdy\stocks\选股.md) 顶部
+```bash
+python -m stocks_analyzer --project-root . update --start-date 20240101
+```
+
+查看核心技术结果：
+
+```bash
+python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10
+python -m stocks_analyzer --project-root . tradingview --date 2026-04-10
+python -m stocks_analyzer --project-root . divergence --date 2026-04-10
+```
+
+执行一轮完整日终筛选并生成 `watchlist`：
+
+```bash
+python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
+```
+
+次日盘中只对 `watchlist` 做复筛：
+
+```bash
+python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11
+```
+
+## 命令说明
+
+### `update`
+
+作用：
+
+- 不传股票代码时，刷新主板股票池并批量更新日线数据
+- 传入股票代码时，只更新单只股票
 
 常用示例：
 
 ```bash
-mystock daily-screening --date 2026-04-10
-mystock daily-screening --date 2026-04-10 --start-date 20240101
-mystock daily-screening --date 2026-04-10 --picks-file 选股.md
+python -m stocks_analyzer --project-root . update --start-date 20240101
+python -m stocks_analyzer --project-root . update --start-date 20240101 --skip-existing
+python -m stocks_analyzer --project-root . update 603588 --start-date 20240101
+python -m stocks_analyzer --project-root . update --start-date 20240101 --end-date 20260413 --limit 100
 ```
 
 主要参数：
 
-- `--date`
-  - 目标日期，格式 `YYYY-MM-DD`
-  - 不传时默认使用当天日期
-- `--start-date`
-  - 更新日线数据时使用的起始日期，格式 `YYYYMMDD`
-  - 默认值是 `20240101`
-- `--picks-file`
-  - 选股结果 Markdown 文件名
-  - 默认写入项目根目录下的 `选股.md`
+- `symbol`：可选，6 位股票代码
+- `--start-date`：开始日期，格式 `YYYYMMDD`
+- `--end-date`：结束日期，格式 `YYYYMMDD`
+- `--limit`：只更新前 N 只股票
+- `--skip-existing`：跳过本地已有缓存
+
+### `pattern`
+
+作用：
+
+- 扫描本地日线缓存，识别 1 到 4 号模式
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . pattern
+python -m stocks_analyzer --project-root . pattern --1
+python -m stocks_analyzer --project-root . pattern --2 --4
+python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10 --output reports/my_patterns.csv
+python -m stocks_analyzer --project-root . pattern --plot-all
+```
+
+主要参数：
+
+- `--1 --2 --3 --4`：只识别指定模式
+- `--as-of`：分析截止日期，格式 `YYYY-MM-DD`
+- `--limit`：终端展示上限
+- `--output`：自定义 CSV 输出路径
+- `--plot-all`：为命中股票批量生成图形
 
 默认输出：
 
-- 选股 Markdown：[`选股.md`](C:\Users\wdyab\Desktop\wdy\stocks\选股.md)
-- 每次运行的简要报告：`reports/daily_screening/daily_screening_YYYY-MM-DD.json`
-- 模式文件：`reports/patterns/patterns_all_YYYY-MM-DD.csv`
-- TradingView 文件：`reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
+- `reports/patterns/patterns_all_YYYY-MM-DD.csv`
 
-当前实现说明：
+### `plot`
 
-- 当天新增结果会插入在 `选股.md` 最前面，旧记录自动后移。
-- 总结段落会结合 `选股.md` 里最近几日的历史结果，做简单趋势描述和重复入选统计。
-- `行业/主线` 当前优先复用历史 `选股.md` 中已经出现过的映射；如果是首次出现的新股票，可能暂时记为 `未分类`。
-- 交易日判断会优先使用配置里的数据源；如果数据源不可用，会退化到工作日判断。
+作用：
 
-## 雪球归档
+- 绘制单只股票 K 线和成交量图
 
-当前仅支持固定账号 `1155695148`。
-
-第一次使用建议：
+常用示例：
 
 ```bash
-pip install playwright
-mystock xueqiu-archive --headed --refresh
+python -m stocks_analyzer --project-root . plot 603588
+python -m stocks_analyzer --project-root . plot 603588 --start-date 20240101 --end-date 20260410
+python -m stocks_analyzer --project-root . plot 603588 --output reports/plots/603588_custom.png
 ```
 
-常用参数：
+### `report`
 
-- `--headed`
-  - 打开可见浏览器，便于手动完成雪球滑动验证
-- `--refresh`
-  - 忽略本地链接缓存并重新发现帖子
-- `--max-posts 20`
-  - 仅抓取前 20 条帖子，便于小范围测试
-- `--output reports/xueqiu/custom.md`
-  - 自定义 Markdown 输出路径
+作用：
 
-默认输出和缓存位置：
+- 读取已保存的 pattern 结果
 
-- 归档结果：`reports/xueqiu/1155695148.md`
-- 已发现链接缓存：`data/xueqiu/1155695148/discovered_urls.json`
-- 单帖中间结果：`data/xueqiu/1155695148/raw/`
-- 浏览器持久化资料目录：`data/xueqiu/1155695148/browser_profile/`
+常用示例：
 
-注意事项：
+```bash
+python -m stocks_analyzer --project-root . report --date 2026-04-10
+python -m stocks_analyzer --project-root . report --date 2026-04-10 --limit 30
+```
 
-- 这是基于公开页面的最佳努力抓取，不保证覆盖全部历史帖子。
-- 如果无头模式下被雪球拦截，命令会提示改用 `--headed`。
-- 当前项目中的 Python 请求仍然会按 `config/default.yaml` 里的代理配置运行，但雪球浏览器归档默认不会继承这些代理环境变量，以减少国内站点风控干扰。
+### `tradingview`
+
+作用：
+
+- 计算指定日期最近 5 个交易日的 TradingView 风格技术评分
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . tradingview --date 2026-04-10
+python -m stocks_analyzer --project-root . tradingview --date 2026-04-10 --top-n 30
+python -m stocks_analyzer --project-root . tradingview --date 2026-04-10 --output reports/tradingview/custom.csv
+```
+
+默认输出：
+
+- `reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
+- 最近 5 个交易日的逐日评分文件
+
+### `divergence`
+
+作用：
+
+- 识别指定日期最近 15 个交易日内的 MACD 顶背离和底背离
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . divergence --date 2026-04-10
+python -m stocks_analyzer --project-root . divergence --date 2026-04-10 --top-n 30
+python -m stocks_analyzer --project-root . divergence --date 2026-04-10 --output reports/divergence/custom.csv
+```
+
+默认输出：
+
+- `reports/divergence/macd_divergence_YYYY-MM-DD.csv`
+
+### `daily-screening`
+
+作用：
+
+- 判断指定日期是否为交易日
+- 串行执行 `update -> tradingview -> divergence -> pattern`
+- 基于技术规则生成当日 `watchlist`
+- 写入运行摘要
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
+python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --start-date 20240101
+```
+
+主要参数：
+
+- `--date`：目标日期，格式 `YYYY-MM-DD`
+- `--start-date`：更新数据起始日期，格式 `YYYYMMDD`
+
+当前执行顺序：
+
+1. 判断交易日
+2. `update`
+3. `tradingview`
+4. `divergence`
+5. `pattern`
+6. 生成 `watchlist`
+7. 写入 `daily_screening_YYYY-MM-DD.json`
+
+默认输出：
+
+- `reports/watchlists/watchlist_YYYY-MM-DD.json`
+- `reports/daily_screening/daily_screening_YYYY-MM-DD.json`
+- `reports/patterns/patterns_all_YYYY-MM-DD.csv`
+- `reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
+- `reports/divergence/macd_divergence_YYYY-MM-DD.csv`
+
+重要说明：
+
+- `daily-screening` **不会修改** `选股.md`
+- 同一日期重复执行时，会覆盖同日期的 `watchlist` 和运行摘要
+
+### `intraday-screening`
+
+作用：
+
+- 读取上一交易日或指定日期的 `watchlist`
+- 只更新 `watchlist` 中的股票
+- 只对这些股票执行 `tradingview / divergence / pattern`
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11
+python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 --watchlist-date 2026-04-10
+python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 --start-date 20240101 --top-n 30
+```
+
+主要参数：
+
+- `--date`：目标日期，格式 `YYYY-MM-DD`
+- `--watchlist-date`：指定使用哪一天的 `watchlist`
+- `--start-date`：更新数据起始日期，格式 `YYYYMMDD`
+- `--top-n`：终端展示前 N 行
+
+默认输出目录：
+
+- `reports/intraday_screening/YYYY-MM-DD/`
+
+典型输出文件：
+
+- `intraday_screening_YYYY-MM-DD.json`
+- `tradingview_avg5_YYYY-MM-DD.csv`
+- `macd_divergence_YYYY-MM-DD.csv`
+- `patterns_all_YYYY-MM-DD.csv`
+
+重要说明：
+
+- `intraday-screening` **不会修改** `选股.md`
+- `intraday-screening` **不会生成新的 `watchlist`**
+- 同一日期重复执行时，会覆盖同日期的盘中结果文件
+
+### `train-prob`
+
+作用：
+
+- 基于本地主板日线数据构建样本
+- 训练中短期上涨概率模型
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . train-prob
+python -m stocks_analyzer --project-root . train-prob --start-date 2023-01-01 --end-date 2025-12-31
+python -m stocks_analyzer --project-root . train-prob --limit 500
+```
+
+### `predict-prob`
+
+作用：
+
+- 读取已训练模型，对指定日期生成全市场概率排序
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . predict-prob --date 2026-04-10
+python -m stocks_analyzer --project-root . predict-prob --date 2026-04-10 --top-n 30
+```
+
+### `xueqiu-archive`
+
+作用：
+
+- 归档雪球博主 `1155695148` 的公开历史帖子
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . xueqiu-archive --headed --refresh
+python -m stocks_analyzer --project-root . xueqiu-archive --max-posts 20
+python -m stocks_analyzer --project-root . xueqiu-archive --output reports/xueqiu/custom.md
+```
+
+## watchlist 的生成规则
+
+当前 `watchlist` 仍然沿用原来的技术筛选规则，不依赖人工主线判断，也不依赖 GPT。
+
+核心规则包括：
+
+- 只保留 `TradingView` 标签为 `buy` 或 `strong_buy` 的标的
+- 不同 `pattern_id` 使用不同的 5 日均分阈值
+- 过滤指数类名称
+- 计算 `stable_score`
+- 输出 `第一梯队 / 第二梯队 / 第三梯队`
+- 最终按梯队、`stable_score`、`tradingview_avg_5d` 排序
+
+`watchlist` 适合做：
+
+- 次日盘中复筛的输入
+- 你自己手工选股时的技术候选池
+
+`watchlist` 不等于：
+
+- 最终买入名单
+- `选股.md`
+
+## 推荐的完整选股流程
+
+推荐把项目当作“技术筛选引擎”，而不是自动选股器。
+
+### 1. 初始化本地数据
+
+```bash
+python -m stocks_analyzer --project-root . update --start-date 20240101
+```
+
+### 2. 日终生成技术候选池
+
+```bash
+python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
+```
+
+这一步会得到：
+
+- 当日全市场技术结果
+- 当日 `watchlist`
+
+### 3. 次日盘中做小范围复筛
+
+```bash
+python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11
+```
+
+如果需要指定来源：
+
+```bash
+python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 --watchlist-date 2026-04-10
+```
+
+### 4. 你自己做最终决策
+
+推荐结合以下材料：
+
+- 前一日 `watchlist`
+- 当日 `intraday-screening` 结果
+- 你自己的 `主线.md`
+- 你自己的 `选股.md`
 
 ## 配置
 
-默认配置文件位于 `config/default.yaml`。4 个模式的阈值、日线复权方式、流动性门槛都可以在这里调整。
-当前默认数据源是 `baostock`；如果后面想切回 `akshare`，只需要修改 `provider` 字段。
+默认配置文件：
 
-## 四个模式分别识别什么
+- [`config/default.yaml`](/C:/Users/wdyab/Desktop/wdy/stocks/config/default.yaml)
 
-### 模式 1
+主要可调项：
 
-模式 1 用来识别“接近前高型”的股票。
-这类股票通常在过去一段时间里出现过一个比较重要的高点，后面经历了一轮明显回撤，现在又重新走强并回到老前高附近。
-它更适合拿来观察“是否会重新挑战关键压力位”。
+- 数据源 `provider`
+- 复权方式 `adjustment`
+- 流动性门槛
+- pattern 阈值
+- 网络代理配置
 
-### 模式 2
+## 注意事项
 
-模式 2 用来识别“平台突破型”的股票。
-这类股票往往已经有一定上涨基础，随后在较窄区间内横盘整理，当前价格开始接近或突破平台上沿，并伴随量能改善。
-它更像是在找趋势中的再次加速点。
+- `daily-screening` 更适合盘后或定时任务，不适合盘中全市场快速执行
+- `intraday-screening` 依赖已有 `watchlist`
+- 如果没有可用 `watchlist`，盘中复筛会报错
+- 交易日判断会优先尝试数据源接口，失败后退化到工作日判断
+- 雪球归档属于最佳努力抓取，不保证完整覆盖
 
-### 模式 3
+## 兼容入口
 
-模式 3 用来识别“趋势回踩型”的股票。
-这类股票中期趋势通常已经建立，价格在上涨后回踩到关键均线附近，但整体趋势并没有走坏，回踩过程中的量能也相对温和。
-它更适合观察“强趋势中的低风险跟随机会”。
+当前主入口建议统一使用：
 
-### 模式 4
-
-模式 4 用来识别“强势股二波型”的股票。
-这类股票前面通常已经有一段比较明显的快速上涨，随后进入短期整理或降温阶段，现在又出现再次启动的迹象。
-它更适合拿来观察“强势股是否会走出第二波”。
-
-## 模式与 TradingView 的关系
-
-基于本地快照 `reports/patterns/patterns_all_2026-04-11.csv` 和 `reports/tradingview/tradingview_avg5_2026-04-11.csv`，可以总结出一个比较稳定的经验规律：
-
-- 模式识别负责回答“形态结构是否成立”。
-- TradingView 评分负责回答“当前趋势强度和指标共振是否足够强”。
-- 两者叠加后，比单看任一侧更适合做筛选优先级排序。
-
-在 `2026-04-11` 这批数据中：
-
-- 全市场 5 日平均 `avg_all_rating_5d` 均值为 `-0.1377`，中位数为 `-0.2358`
-- 模式命中股票的 5 日平均 `tradingview_avg_all_rating_5d` 均值为 `0.3500`，中位数为 `0.3467`
-- 全市场 TradingView 标签分布以 `sell` 为主，`sell + strong_sell` 合计约 `50.63%`
-- 模式命中股票中，`buy + strong_buy` 占比为 `100%`
-
-这说明当前 4 个模式本质上都不是在全市场里随机捞股票，而是在优先识别“已经具备中短期技术共振”的标的。
-
-进一步按模式拆开看：
-
-- 模式 1
-  - 平均 `tradingview_avg_all_rating_5d` 约为 `0.3623`
-  - `strong_buy` 占比约 `66.67%`
-  - 特点是老前高附近重新转强，往往同时伴随更强的趋势确认，所以在 4 个模式里属于“结构和强度最统一”的一类
-- 模式 2
-  - 平均 `tradingview_avg_all_rating_5d` 约为 `0.3585`
-  - `buy` 占比约 `75%`，`strong_buy` 占比约 `25%`
-  - 特点是平台突破很多已经进入共振区，但未必都走到最强趋势加速，因此更常见的是稳定 `buy`，而不是极端强势
-- 模式 3
-  - 平均 `tradingview_avg_all_rating_5d` 约为 `0.2707`
-  - `buy` 占比 `100%`，没有 `strong_buy`
-  - 特点是趋势回踩型本来就更偏“顺趋势低吸/跟随”，结构成立时通常仍然偏强，但动量没有模式 1 和模式 4 那么极致
-- 模式 4
-  - 平均 `tradingview_avg_all_rating_5d` 约为 `0.3893`
-  - `strong_buy` 占比约 `40%`
-  - 特点是强势股二波本身就要求前期强势和再次启动，因此和 TradingView 强势评分的耦合度也很高
-
-实践上可以这样理解：
-
-- 如果某只股票命中模式，同时 TradingView 为 `strong_buy`，说明“结构”与“强度”同时成立，优先级可以更高
-- 如果命中模式但只到 `buy`，通常仍然值得观察，只是更偏早期确认或震荡上行
-- 模式 3 即使只有 `buy` 也不一定弱，因为它本身不是追求最强加速，而是追求强趋势中的回踩修复
-- 如果以后某次模式命中结果里出现大量 `neutral` 或 `sell`，通常意味着结构虽然勉强成立，但短期共振不足，信号质量应下调
-
-因此，当前项目里更合适的使用方式不是“模式”和 “TradingView” 二选一，而是：
-
-- 先用模式筛掉结构不清晰的股票
-- 再用 TradingView 判断这些候选股目前的趋势一致性和强弱排序
-- 在同一模式内部，优先关注 `tradingview_avg_all_rating_5d` 更高、且标签达到 `strong_buy` 的标的
-
-## 代理
-
-当前默认已在 [default.yaml](C:\Users\wdyab\Desktop\wdy\stocks\config\default.yaml) 中配置：
-
-```yaml
-network:
-  http_proxy: http://127.0.0.1:7897
-  https_proxy: http://127.0.0.1:7897
-  no_proxy: 127.0.0.1,localhost
+```bash
+python -m stocks_analyzer --project-root . <subcommand>
 ```
 
-如果你后面更换代理端口，只需要修改这三个值，不需要改 Python 代码。
+也兼容：
+
+- `mystock`
+- `stocks-analyzer`

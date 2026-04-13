@@ -21,6 +21,9 @@ def evaluate_strategies(
     symbol = str(instrument["symbol"])
     name = str(instrument["name"])
 
+    if not _has_recent_short_term_momentum_history(history_df, config):
+        return results
+
     if "type1" in selected:
         match = _apply_type1(history_df, symbol, name, config.type1)
         if match is not None:
@@ -42,7 +45,7 @@ def evaluate_strategies(
 
 
 def required_history_days(config: AppConfig, selected: Sequence[str]) -> int:
-    requirements = [config.universe.min_history_days]
+    requirements = [config.universe.min_history_days, config.history_momentum_filter.lookback_days]
     if "type1" in selected:
         requirements.append(config.type1.volume_window_max_days + config.type1.min_old_high_gap_days + 1)
     if "type2" in selected:
@@ -66,6 +69,25 @@ def required_history_days(config: AppConfig, selected: Sequence[str]) -> int:
     if "type4" in selected:
         requirements.append(max(20, config.type4.strong_lookback_days + 1, 2 * config.type4.consolidation_max_days + 1))
     return max(requirements)
+
+
+def _has_recent_short_term_momentum_history(history_df: pd.DataFrame, config: AppConfig) -> bool:
+    filter_config = config.history_momentum_filter
+    lookback_days = int(filter_config.lookback_days)
+    window_days = int(filter_config.window_days)
+    min_return = float(filter_config.min_return)
+
+    if lookback_days <= 0 or window_days <= 1 or min_return <= 0:
+        return True
+    if len(history_df) < lookback_days:
+        return False
+
+    recent = history_df["close"].astype(float).tail(lookback_days)
+    window_returns = recent / recent.shift(window_days - 1) - 1
+    window_returns = window_returns.dropna()
+    if window_returns.empty:
+        return False
+    return bool((window_returns >= min_return).any())
 
 
 def _apply_type1(history_df: pd.DataFrame, symbol: str, name: str, config: Type1Config) -> dict[str, object] | None:

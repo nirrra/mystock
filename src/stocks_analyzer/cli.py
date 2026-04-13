@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -33,6 +34,14 @@ from .screener import Screener, parse_as_of
 from .storage import Storage
 from .strategies import STRATEGY_NAMES
 from .universe import build_main_board_universe
+from .watchlist import (
+    build_watchlist_candidates_from_patterns,
+    extract_watchlist_symbols,
+    find_latest_watchlist_before,
+    load_watchlist,
+    watchlist_path as build_watchlist_path,
+    write_watchlist,
+)
 from .xueqiu_archive import archive_xueqiu_user_1155695148
 
 
@@ -231,13 +240,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     daily_screening = subparsers.add_parser(
         "daily-screening",
-        help="按交易日执行每日筛选，并把结果插入选股.md 顶部",
-        description="自动判断是否为交易日，串行执行 update/tradingview/pattern，再生成当日选股 Markdown。",
+        help="按交易日执行每日筛选，并生成当日 watchlist",
+        description="自动判断是否为交易日，串行执行 update/tradingview/divergence/pattern，再生成当日 watchlist。",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     daily_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     daily_screening.add_argument("--start-date", default="20240101", help="更新数据的起始日期，格式 YYYYMMDD")
-    daily_screening.add_argument("--picks-file", default="选股.md", help="选股结果 Markdown 文件名")
+
+    intraday_screening = subparsers.add_parser(
+        "intraday-screening",
+        help="读取 watchlist，只对候选股执行盘中复筛",
+        description="自动读取上一交易日或指定日期的 watchlist，只更新候选股并执行 tradingview/divergence/pattern。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    intraday_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
+    intraday_screening.add_argument("--watchlist-date", default=None, help="watchlist 日期，格式 YYYY-MM-DD")
+    intraday_screening.add_argument("--start-date", default="20240101", help="更新数据的起始日期，格式 YYYYMMDD")
+    intraday_screening.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
 
     return parser
 
@@ -339,11 +358,26 @@ def main() -> None:
             project_root=project_root,
             trade_date=trade_date,
             start_date=args.start_date,
-            picks_filename=args.picks_file,
         )
         print(result.message)
         if result.report_path:
             print(f"报告文件：{result.report_path}")
+        return
+
+    if args.command == "intraday-screening":
+        trade_date = datetime.fromisoformat(args.date).date() if args.date else date.today()
+        watchlist_date = datetime.fromisoformat(args.watchlist_date).date() if args.watchlist_date else None
+        result = _run_intraday_screening(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            trade_date=trade_date,
+            watchlist_date=watchlist_date,
+            start_date=args.start_date,
+            top_n=args.top_n,
+        )
+        print(result["message"])
+        print(f"报告文件：{result['report_path']}")
         return
 
     parser.error(f"Unknown command: {args.command}")
@@ -410,13 +444,14 @@ def _run_pattern(
     limit: int | None,
     output: str | None,
     plot_all: bool,
+    symbols: list[str] | None = None,
 ) -> None:
     _ensure_universe(storage, provider_name, config.universe.exclude_st)
     screener = Screener(storage, config)
-    results = screener.run(as_of=as_of, selected_strategies=selected_patterns)
+    results = screener.run(as_of=as_of, selected_strategies=selected_patterns, symbols=symbols)
     exported = _prepare_pattern_results(results)
-    exported = _append_recent_tradingview_scores(storage, exported, as_of=as_of, lookback_days=5)
-    exported = _append_recent_macd_divergence(storage, exported, as_of=as_of)
+    exported = _append_recent_tradingview_scores(storage, exported, as_of=as_of, lookback_days=5, symbols=symbols)
+    exported = _append_recent_macd_divergence(storage, exported, as_of=as_of, symbols=symbols)
 
     output_path = Path(output) if output else _default_pattern_output_path(
         storage,
@@ -425,11 +460,23 @@ def _run_pattern(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     exported.to_csv(output_path, index=False, encoding="utf-8-sig")
+    watchlist_payload = build_watchlist_candidates_from_patterns(
+        exported,
+        source_file=str(output_path),
+        limit=config.screening.output_limit,
+    )
+    watchlist_target = write_watchlist(
+        project_root=storage.paths.root,
+        trade_date=as_of,
+        picker_payload=watchlist_payload,
+    )
+    logging.info("Saved watchlist to %s", watchlist_target)
 
     if exported.empty:
         logging.info("No patterns matched for %s", as_of.isoformat())
         logging.info("Saved empty pattern report to %s", output_path)
         print(f"No patterns matched. Saved empty CSV to {output_path}")
+        print(f"Saved watchlist to {watchlist_target}")
         return
 
     multi_pattern_summary = format_multi_pattern_summary(exported)
@@ -440,6 +487,7 @@ def _run_pattern(
     if plot_all:
         plots_dir = _plot_pattern_matches(storage, config, as_of, results)
         print(f"\n已生成图形目录: {plots_dir}")
+    print(f"\nSaved watchlist to {watchlist_target}")
     logging.info("Saved %s pattern rows to %s", len(exported), output_path)
 
 
@@ -493,9 +541,15 @@ def _run_tradingview(
     trade_date: date,
     top_n: int,
     output: str | None,
+    symbols: list[str] | None = None,
 ) -> None:
     _ensure_universe(storage, config.provider, config.universe.exclude_st)
-    summary, daily_frames = _build_tradingview_snapshots(storage, trade_date=trade_date, lookback_days=5)
+    summary, daily_frames = _load_or_build_tradingview_summary(
+        storage,
+        trade_date=trade_date,
+        lookback_days=5,
+        symbols=symbols,
+    )
     if summary.empty:
         raise RuntimeError(f"No TradingView ratings could be generated for {trade_date.isoformat()}")
 
@@ -517,9 +571,10 @@ def _run_divergence(
     trade_date: date,
     top_n: int,
     output: str | None,
+    symbols: list[str] | None = None,
 ) -> None:
     _ensure_universe(storage, config.provider, config.universe.exclude_st)
-    summary = _build_macd_divergence_summary(storage, trade_date=trade_date)
+    summary = _load_or_build_macd_divergence_summary(storage, trade_date=trade_date, symbols=symbols)
     if summary.empty:
         raise RuntimeError(f"No MACD divergence summary could be generated for {trade_date.isoformat()}")
 
@@ -540,6 +595,101 @@ def _run_divergence(
     available = [column for column in display_columns if column in summary.columns]
     print(summary.loc[:, available].head(top_n).to_string(index=False))
     print(f"\nSaved MACD divergence summary to {output_path}")
+
+
+def _run_intraday_screening(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    trade_date: date,
+    watchlist_date: date | None,
+    start_date: str,
+    top_n: int,
+) -> dict[str, object]:
+    resolved_watchlist_date = watchlist_date
+    if resolved_watchlist_date is None:
+        resolved_watchlist_date, resolved_watchlist_path = find_latest_watchlist_before(
+            project_root=project_root,
+            trade_date=trade_date,
+        )
+    else:
+        resolved_watchlist_path = build_watchlist_path(project_root, resolved_watchlist_date)
+
+    watchlist_payload = load_watchlist(project_root=project_root, trade_date=resolved_watchlist_date)
+    symbols = extract_watchlist_symbols(watchlist_payload)
+    if not symbols:
+        raise RuntimeError(f"Watchlist {resolved_watchlist_date.isoformat()} contains no candidate symbols.")
+
+    intraday_dir = storage.paths.reports_dir / "intraday_screening" / trade_date.isoformat()
+    intraday_dir.mkdir(parents=True, exist_ok=True)
+
+    provider = create_data_provider(config.provider)
+    try:
+        for index, symbol in enumerate(symbols, start=1):
+            logging.info("Intraday update progress: %s/%s %s", index, len(symbols), symbol)
+            _run_update(
+                storage=storage,
+                provider=provider,
+                exclude_st=config.universe.exclude_st,
+                adjust=config.adjustment,
+                symbol=symbol,
+                start_date=start_date,
+                end_date=trade_date.strftime("%Y%m%d"),
+                limit=None,
+                skip_existing=False,
+            )
+    finally:
+        provider.close()
+
+    tradingview_path = intraday_dir / f"tradingview_avg5_{trade_date.isoformat()}.csv"
+    divergence_path = intraday_dir / f"macd_divergence_{trade_date.isoformat()}.csv"
+    pattern_path = intraday_dir / f"patterns_all_{trade_date.isoformat()}.csv"
+
+    _run_tradingview(
+        storage=storage,
+        config=config,
+        trade_date=trade_date,
+        top_n=top_n,
+        output=str(tradingview_path),
+        symbols=symbols,
+    )
+    _run_divergence(
+        storage=storage,
+        config=config,
+        trade_date=trade_date,
+        top_n=top_n,
+        output=str(divergence_path),
+        symbols=symbols,
+    )
+    _run_pattern(
+        storage=storage,
+        provider_name=config.provider,
+        config=config,
+        as_of=trade_date,
+        selected_patterns=list(STRATEGY_NAMES),
+        limit=top_n,
+        output=str(pattern_path),
+        plot_all=False,
+        symbols=symbols,
+    )
+
+    report_path = intraday_dir / f"intraday_screening_{trade_date.isoformat()}.json"
+    report = {
+        "trade_date": trade_date.isoformat(),
+        "watchlist_date": resolved_watchlist_date.isoformat(),
+        "watchlist_path": str(resolved_watchlist_path),
+        "symbol_count": len(symbols),
+        "symbols": symbols,
+        "tradingview_path": str(tradingview_path),
+        "divergence_path": str(divergence_path),
+        "pattern_path": str(pattern_path),
+    }
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "message": f"已完成 {trade_date.isoformat()} 盘中复筛，基于 {resolved_watchlist_date.isoformat()} watchlist 共处理 {len(symbols)} 只股票。",
+        "report_path": report_path,
+    }
 
 
 def _run_train_prob(
@@ -707,11 +857,17 @@ def _append_recent_tradingview_scores(
     exported: pd.DataFrame,
     as_of: date,
     lookback_days: int,
+    symbols: list[str] | None = None,
 ) -> pd.DataFrame:
     if exported.empty or "symbol" not in exported.columns:
         return exported
 
-    summary, _ = _load_or_build_tradingview_summary(storage, trade_date=as_of, lookback_days=lookback_days)
+    summary, _ = _load_or_build_tradingview_summary(
+        storage,
+        trade_date=as_of,
+        lookback_days=lookback_days,
+        symbols=symbols,
+    )
     if summary.empty:
         return exported
 
@@ -748,11 +904,12 @@ def _append_recent_macd_divergence(
     exported: pd.DataFrame,
     *,
     as_of: date,
+    symbols: list[str] | None = None,
 ) -> pd.DataFrame:
     if exported.empty or "symbol" not in exported.columns:
         return exported
 
-    divergence = _load_or_build_macd_divergence_summary(storage, trade_date=as_of)
+    divergence = _load_or_build_macd_divergence_summary(storage, trade_date=as_of, symbols=symbols)
     if divergence.empty:
         return exported
 
@@ -781,7 +938,13 @@ def _append_recent_macd_divergence(
     return enriched
 
 
-def _load_or_build_macd_divergence_summary(storage: Storage, trade_date: date) -> pd.DataFrame:
+def _load_or_build_macd_divergence_summary(
+    storage: Storage,
+    trade_date: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    if symbols:
+        return _build_macd_divergence_summary(storage, trade_date=trade_date, symbols=symbols)
     default_path = storage.paths.reports_dir / "divergence" / f"macd_divergence_{trade_date.isoformat()}.csv"
     if default_path.exists():
         return pd.read_csv(default_path)
@@ -793,7 +956,10 @@ def _load_or_build_tradingview_summary(
     *,
     trade_date: date,
     lookback_days: int,
+    symbols: list[str] | None = None,
 ) -> tuple[pd.DataFrame, list[dict[str, object]]]:
+    if symbols:
+        return _build_tradingview_snapshots(storage, trade_date=trade_date, lookback_days=lookback_days, symbols=symbols)
     default_path = storage.paths.reports_dir / "tradingview" / f"tradingview_avg5_{trade_date.isoformat()}.csv"
     if lookback_days == 5 and default_path.exists():
         return pd.read_csv(default_path), []
@@ -829,16 +995,16 @@ def _build_tradingview_snapshots(
     storage: Storage,
     trade_date: date,
     lookback_days: int,
+    symbols: list[str] | None = None,
 ) -> tuple[pd.DataFrame, list[dict[str, object]]]:
-    universe = storage.load_universe()
-    target_dates = _resolve_recent_trading_dates(storage, as_of=trade_date, lookback_days=lookback_days)
+    instruments = _load_instruments(storage, symbols=symbols)
+    target_dates = _resolve_recent_trading_dates(storage, as_of=trade_date, lookback_days=lookback_days, symbols=symbols)
     if len(target_dates) != lookback_days:
         return pd.DataFrame(), []
 
     summary_rows: list[dict[str, object]] = []
     daily_rows: dict[str, list[dict[str, object]]] = {}
     target_set = set(target_dates)
-    instruments = universe.to_dict("records")
     total_instruments = len(instruments)
     logging.info(
         "TradingView scan started for %s: %s symbols, %s recent trading days",
@@ -937,8 +1103,17 @@ def _build_tradingview_snapshots(
     return summary, daily_frames
 
 
-def _build_macd_divergence_summary(storage: Storage, trade_date: date) -> pd.DataFrame:
-    tradingview_summary, _ = _load_or_build_tradingview_summary(storage, trade_date=trade_date, lookback_days=5)
+def _build_macd_divergence_summary(
+    storage: Storage,
+    trade_date: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    tradingview_summary, _ = _load_or_build_tradingview_summary(
+        storage,
+        trade_date=trade_date,
+        lookback_days=5,
+        symbols=symbols,
+    )
     if tradingview_summary.empty:
         return pd.DataFrame()
 
@@ -981,10 +1156,14 @@ def _log_scan_progress(stage_name: str, current: int, total: int) -> None:
         logging.info("%s progress: %s/%s", stage_name, current, total)
 
 
-def _resolve_recent_trading_dates(storage: Storage, as_of: date, lookback_days: int) -> list[date]:
-    universe = storage.load_universe()
+def _resolve_recent_trading_dates(
+    storage: Storage,
+    as_of: date,
+    lookback_days: int,
+    symbols: list[str] | None = None,
+) -> list[date]:
     candidate_dates: set[date] = set()
-    for instrument in universe.to_dict("records"):
+    for instrument in _load_instruments(storage, symbols=symbols):
         symbol = str(instrument["symbol"])
         try:
             bars = storage.load_daily_bars(symbol)
@@ -995,6 +1174,15 @@ def _resolve_recent_trading_dates(storage: Storage, as_of: date, lookback_days: 
         candidate_dates.update(recent_dates[-lookback_days:])
 
     return sorted(candidate_dates)[-lookback_days:]
+
+
+def _load_instruments(storage: Storage, symbols: list[str] | None = None) -> list[dict[str, object]]:
+    universe = storage.load_universe().copy()
+    universe["symbol"] = universe["symbol"].astype(str).str.zfill(6)
+    if symbols:
+        symbol_set = {str(symbol).zfill(6) for symbol in symbols}
+        universe = universe[universe["symbol"].isin(symbol_set)].reset_index(drop=True)
+    return universe.to_dict("records")
 
 
 def _plot_pattern_matches(storage: Storage, config, as_of: date, results: pd.DataFrame) -> Path:

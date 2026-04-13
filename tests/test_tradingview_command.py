@@ -90,3 +90,33 @@ def test_run_tradingview_generates_csv() -> None:
     daily_files = sorted(output_path.parent.glob("tradingview_*.csv"))
     assert len(daily_files) == 5
     assert all("2025" in item.name for item in daily_files)
+
+
+def test_run_tradingview_can_limit_to_symbol_subset() -> None:
+    tmp_path = _make_workspace_tmp_dir("tradingview_subset")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+
+    universe = pd.DataFrame(
+        [
+            {"symbol": "600000", "name": "测试一"},
+            {"symbol": "600001", "name": "测试二"},
+        ]
+    )
+    storage.save_universe(universe)
+    storage.save_daily_bars("600000", _make_daily_bars("600000", seed=1))
+    storage.save_daily_bars("600001", _make_daily_bars("600001", seed=2))
+
+    output_path = tmp_path / "reports" / "tradingview" / "subset.csv"
+    _run_tradingview(
+        storage=storage,
+        config=config,
+        trade_date=date(2025, 10, 31),
+        top_n=10,
+        output=str(output_path),
+        symbols=["600001"],
+    )
+
+    result = pd.read_csv(output_path)
+    assert result["symbol"].tolist() == ['="600001"']

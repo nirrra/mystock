@@ -1,0 +1,691 @@
+{
+  "trade_date": "2026-04-13",
+  "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-04-13.csv",
+  "candidate_count": 36,
+  "candidates": [
+    {
+      "tier": "第一梯队",
+      "symbol": "603906",
+      "name": "龙蟠科技",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.4721,
+      "five_day_scores": [
+        0.4455,
+        0.3788,
+        0.5121,
+        0.5121,
+        0.5121
+      ],
+      "stable_score": 6.6567,
+      "reason": "near old high 24.00 from 2025-12-04, distance=6.62%, drawdown=29.00%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603387",
+      "name": "基蛋生物",
+      "pattern_id": "3",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.4642,
+      "five_day_scores": [
+        0.5364,
+        0.5364,
+        0.4455,
+        0.2,
+        0.603
+      ],
+      "stable_score": 6.5615,
+      "reason": "trend pullback near MA20: distance=1.85%, drawdown_15d=6.29%, vol_5d/20d=0.84"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "002705",
+      "name": "新宝股份",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.4188,
+      "five_day_scores": [
+        0.0879,
+        0.4242,
+        0.5576,
+        0.4667,
+        0.5576
+      ],
+      "stable_score": 6.5115,
+      "reason": "near old high 16.15 from 2025-10-27, distance=6.44%, drawdown=22.35%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "002850",
+      "name": "科达利",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.4358,
+      "five_day_scores": [
+        0.2182,
+        0.3545,
+        0.5364,
+        0.5576,
+        0.5121
+      ],
+      "stable_score": 6.5112,
+      "reason": "near old high 198.64 from 2025-10-09, distance=6.92%, drawdown=27.76%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603196",
+      "name": "璞源材料",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.54,
+      "five_day_scores": [
+        0.4,
+        0.4909,
+        0.6485,
+        0.603,
+        0.5576
+      ],
+      "stable_score": 6.4964,
+      "reason": "recent platform breakout on 2026-04-08, platform_range=14.98%, distance=7.78%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "600769",
+      "name": "祥龙电业",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.3703,
+      "five_day_scores": [
+        0.4242,
+        -0.1788,
+        0.4909,
+        0.603,
+        0.5121
+      ],
+      "stable_score": 6.2494,
+      "reason": "near old high 15.79 from 2025-10-22, distance=7.92%, drawdown=26.35%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "002579",
+      "name": "中京电子",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": true,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.44,
+      "five_day_scores": [
+        0.4667,
+        0.603,
+        0.4667,
+        0.2636,
+        0.4
+      ],
+      "stable_score": 5.96,
+      "reason": "near old high 13.52 from 2025-09-19, distance=5.84%, drawdown=21.45%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603288",
+      "name": "海天味业",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": true,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.4042,
+      "five_day_scores": [
+        0.3091,
+        0.3545,
+        0.4,
+        0.4,
+        0.5576
+      ],
+      "stable_score": 5.9533,
+      "reason": "recent platform breakout on 2026-03-31, platform_range=14.82%, distance=0.99%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603259",
+      "name": "药明康德",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4127,
+      "five_day_scores": [
+        0.2636,
+        0.3545,
+        0.4212,
+        0.5576,
+        0.4667
+      ],
+      "stable_score": 5.9509,
+      "reason": "near old high 113.97 from 2025-10-09, distance=7.25%, drawdown=23.59%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "601000",
+      "name": "唐山港",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": true,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.3861,
+      "five_day_scores": [
+        0.2636,
+        0.4,
+        0.3545,
+        0.3545,
+        0.5576
+      ],
+      "stable_score": 5.8806,
+      "reason": "recent platform breakout on 2026-04-01, platform_range=13.46%, distance=2.12%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603118",
+      "name": "共进股份",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": true,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4218,
+      "five_day_scores": [
+        0.4455,
+        0.5576,
+        0.4667,
+        0.4212,
+        0.2182
+      ],
+      "stable_score": 5.6145,
+      "reason": "near old high 14.50 from 2025-09-18, distance=2.21%, drawdown=25.79%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603222",
+      "name": "济民健康",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4539,
+      "five_day_scores": [
+        0.5576,
+        0.5576,
+        0.3091,
+        0.4,
+        0.4455
+      ],
+      "stable_score": 5.5839,
+      "reason": "recent platform breakout on 2026-04-02, platform_range=10.58%, distance=9.35%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "600428",
+      "name": "中远海特",
+      "pattern_id": "3",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3958,
+      "five_day_scores": [
+        0.3545,
+        0.3545,
+        0.4455,
+        0.5121,
+        0.3121
+      ],
+      "stable_score": 5.4512,
+      "reason": "trend pullback near MA20: distance=1.00%, drawdown_15d=7.50%, vol_5d/20d=0.83"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603259",
+      "name": "药明康德",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4127,
+      "five_day_scores": [
+        0.2636,
+        0.3545,
+        0.4212,
+        0.5576,
+        0.4667
+      ],
+      "stable_score": 5.4509,
+      "reason": "recent platform breakout on 2026-03-31, platform_range=12.47%, distance=7.92%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603202",
+      "name": "天有为",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4412,
+      "five_day_scores": [
+        0.3333,
+        0.4697,
+        0.5121,
+        0.5576,
+        0.3333
+      ],
+      "stable_score": 5.3648,
+      "reason": "recent platform breakout on 2026-04-13, platform_range=6.57%, distance=5.39%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "603826",
+      "name": "坤彩科技",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": true,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.4406,
+      "five_day_scores": [
+        0.4909,
+        0.4909,
+        0.4667,
+        0.2424,
+        0.5121
+      ],
+      "stable_score": 5.3306,
+      "reason": "second wave after 41.27% in 30d, consolidation=6d range=11.61%, vol_ratio=0.84"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "601083",
+      "name": "锦江航运",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3909,
+      "five_day_scores": [
+        0.4455,
+        0.4455,
+        0.3091,
+        0.3545,
+        0.4
+      ],
+      "stable_score": 5.2636,
+      "reason": "recent platform breakout on 2026-04-02, platform_range=14.32%, distance=1.55%"
+    },
+    {
+      "tier": "第一梯队",
+      "symbol": "605178",
+      "name": "时空科技",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3648,
+      "five_day_scores": [
+        -0.0667,
+        0.4667,
+        0.603,
+        0.5121,
+        0.3091
+      ],
+      "stable_score": 5.023,
+      "reason": "recent platform breakout on 2026-04-09, platform_range=14.83%, distance=6.23%"
+    },
+    {
+      "tier": "第三梯队",
+      "symbol": "003026",
+      "name": "中晶科技",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": true,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.2582,
+      "five_day_scores": [
+        -0.1333,
+        -0.1121,
+        0.5576,
+        0.3758,
+        0.603
+      ],
+      "stable_score": 5.9373,
+      "reason": "near old high 38.85 from 2025-09-24, distance=6.51%, drawdown=25.69%"
+    },
+    {
+      "tier": "第三梯队",
+      "symbol": "003026",
+      "name": "中晶科技",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": true,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.2582,
+      "five_day_scores": [
+        -0.1333,
+        -0.1121,
+        0.5576,
+        0.3758,
+        0.603
+      ],
+      "stable_score": 5.4373,
+      "reason": "recent platform breakout on 2026-03-30, platform_range=14.37%, distance=1.85%"
+    },
+    {
+      "tier": "第三梯队",
+      "symbol": "002132",
+      "name": "恒星科技",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.2667,
+      "five_day_scores": [
+        -0.5364,
+        0.603,
+        0.4667,
+        0.3091,
+        0.4909
+      ],
+      "stable_score": 5.403,
+      "reason": "near old high 4.46 from 2025-11-13, distance=5.61%, drawdown=25.78%"
+    },
+    {
+      "tier": "第三梯队",
+      "symbol": "002692",
+      "name": "远程股份",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": true,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.263,
+      "five_day_scores": [
+        -0.2455,
+        -0.0212,
+        0.603,
+        0.5576,
+        0.4212
+      ],
+      "stable_score": 5.2839,
+      "reason": "near old high 6.65 from 2025-09-11, distance=5.11%, drawdown=25.56%"
+    },
+    {
+      "tier": "第三梯队",
+      "symbol": "603738",
+      "name": "泰晶科技",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": true,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3103,
+      "five_day_scores": [
+        0.3333,
+        0.0424,
+        0.4667,
+        0.3091,
+        0.4
+      ],
+      "stable_score": 4.2412,
+      "reason": "second wave after 29.20% in 30d, consolidation=6d range=12.62%, vol_ratio=0.89"
+    },
+    {
+      "tier": "第三梯队",
+      "symbol": "000973",
+      "name": "佛塑科技",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3006,
+      "five_day_scores": [
+        0.1758,
+        0.3091,
+        0.4,
+        0.2424,
+        0.3758
+      ],
+      "stable_score": 4.1661,
+      "reason": "second wave after 42.98% in 30d, consolidation=8d range=13.58%, vol_ratio=0.73"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "600537",
+      "name": "亿晶光电",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.3261,
+      "five_day_scores": [
+        0.2242,
+        0.203,
+        0.4667,
+        0.1333,
+        0.603
+      ],
+      "stable_score": 6.2088,
+      "reason": "near old high 4.46 from 2026-01-07, distance=5.61%, drawdown=41.48%"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002960",
+      "name": "青鸟消防",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.3388,
+      "five_day_scores": [
+        -0.2455,
+        0.3121,
+        0.603,
+        0.4667,
+        0.5576
+      ],
+      "stable_score": 6.1915,
+      "reason": "near old high 12.49 from 2025-12-01, distance=3.20%, drawdown=20.74%"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "001367",
+      "name": "海森药业",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3412,
+      "five_day_scores": [
+        0.4455,
+        0.3091,
+        0.3091,
+        0.2879,
+        0.3545
+      ],
+      "stable_score": 5.4967,
+      "reason": "near old high 27.48 from 2025-08-26, distance=4.91%, drawdown=27.58%"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002350",
+      "name": "北京科锐",
+      "pattern_id": "3",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3236,
+      "five_day_scores": [
+        0.0424,
+        0.3121,
+        0.3758,
+        0.4667,
+        0.4212
+      ],
+      "stable_score": 5.3264,
+      "reason": "trend pullback near MA20: distance=1.49%, drawdown_15d=7.46%, vol_5d/20d=0.81"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "605016",
+      "name": "百龙创园",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3473,
+      "five_day_scores": [
+        0.2424,
+        -0.0424,
+        0.603,
+        0.5121,
+        0.4212
+      ],
+      "stable_score": 5.1209,
+      "reason": "recent platform breakout on 2026-04-08, platform_range=13.00%, distance=9.46%"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002810",
+      "name": "山东赫达",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4903,
+      "five_day_scores": [
+        0.4,
+        0.4909,
+        0.603,
+        0.5121,
+        0.4455
+      ],
+      "stable_score": 5.0294,
+      "reason": "second wave after 25.60% in 30d, consolidation=7d range=13.35%, vol_ratio=0.86"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002183",
+      "name": "怡亚通",
+      "pattern_id": "2",
+      "macd_top_divergence_15d": true,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.2927,
+      "five_day_scores": [
+        -0.3818,
+        0.603,
+        0.5121,
+        0.3758,
+        0.3545
+      ],
+      "stable_score": 4.8027,
+      "reason": "recent platform breakout on 2026-04-08, platform_range=14.68%, distance=-0.87%"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002192",
+      "name": "融捷股份",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4091,
+      "five_day_scores": [
+        0.4,
+        0.4,
+        0.4,
+        0.4,
+        0.4455
+      ],
+      "stable_score": 4.7045,
+      "reason": "second wave after 31.23% in 30d, consolidation=7d range=12.38%, vol_ratio=0.92"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002903",
+      "name": "宇环数控",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3873,
+      "five_day_scores": [
+        0.2667,
+        0.2,
+        0.5121,
+        0.4667,
+        0.4909
+      ],
+      "stable_score": 4.6855,
+      "reason": "second wave after 26.00% in 30d, consolidation=9d range=12.39%, vol_ratio=0.89"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002648",
+      "name": "卫星化学",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4,
+      "five_day_scores": [
+        0.1333,
+        0.4667,
+        0.3758,
+        0.603,
+        0.4212
+      ],
+      "stable_score": 4.6318,
+      "reason": "second wave after 29.56% in 30d, consolidation=11d range=13.71%, vol_ratio=0.66"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "003036",
+      "name": "泰坦股份",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.3285,
+      "five_day_scores": [
+        0.2667,
+        0.2667,
+        0.4,
+        0.2424,
+        0.4667
+      ],
+      "stable_score": 4.4139,
+      "reason": "second wave after 46.83% in 30d, consolidation=6d range=12.68%, vol_ratio=0.53"
+    },
+    {
+      "tier": "第二梯队",
+      "symbol": "002638",
+      "name": "勤上股份",
+      "pattern_id": "4",
+      "macd_top_divergence_15d": true,
+      "macd_bottom_divergence_15d": false,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.337,
+      "five_day_scores": [
+        0.2667,
+        0.4,
+        0.3758,
+        0.3091,
+        0.3333
+      ],
+      "stable_score": 4.2479,
+      "reason": "second wave after 41.82% in 30d, consolidation=12d range=13.86%, vol_ratio=0.60"
+    }
+  ]
+}

@@ -21,6 +21,9 @@
 - 在当前网络环境下，AKShare 的东财全市场实时分页接口容易出现代理或连接中断。
 - `stock_info_a_code_name()` 在当前环境下可成功返回股票代码和名称，更适合用于 V1 的股票池更新。
 - `baostock` 在当前环境下可成功登录、拉取全市场证券列表，并成功抓取主板日线与 5 分钟线样例。
+- 四个 `pattern` 当前最稳妥的共同约束落点是在 `evaluate_strategies()` 公共入口，而不是导出结果时做后置过滤。
+- “最近 200 日内任意 5 日涨幅达到或超过 10%” 更适合实现为独立公共配置，而不是挂在某一个 `type` 策略配置下。
+- 现有 `type1`、`type2`、`type3` 测试样本长度不足以直接承载默认 `200` 日历史门槛，因此原有形态测试需要显式缩小测试口径，避免和新门槛耦合。
 
 ## Technical Decisions
 
@@ -34,6 +37,8 @@
 | 根目录提供 `main.py` 作为直接入口 | 用户无需先安装包，也能先跑 CLI |
 | 股票池更新改用 `stock_info_a_code_name()` | 比 `stock_zh_a_spot_em()` 更轻，当前网络下更稳定 |
 | 默认 provider 切换为 `baostock` | 当前环境下 `baostock` 实测比 AKShare-东财链路更稳定 |
+| 历史连续上涨门槛作为 `history_momentum_filter` 独立配置块接入 `AppConfig` | 这是四个 pattern 的共同准入门槛，不属于某一个 type 的局部规则 |
+| 在 `evaluate_strategies()` 前统一检查历史短窗涨幅 | 能保证四个 pattern 自动共享同一规则，且不遗漏其他调用路径 |
 
 ## Issues Encountered
 

@@ -65,12 +65,21 @@
   - 本地验证 `python main.py update-daily --start-date 20240101 --limit 3 --skip-existing` 可正常跳过已有缓存
   - 新增 `BaoStockDataProvider`，并将默认 provider 切换为 `baostock`
   - 实测 `python main.py update-universe` 与 `python main.py update-daily --start-date 20240101 --limit 3` 已可经由 `baostock` 成功执行
+  - 为四个 `pattern` 新增共享的历史连续上涨门槛配置 `history_momentum_filter`
+  - 在 `evaluate_strategies()` 入口加入最近窗口动量历史检查，统一过滤掉过去一段时间内从未出现过短窗强涨的股票
+  - 补充 3 个策略回归测试，覆盖“允许通过”、“最近窗口内排除”和“更早历史达标但最近窗口不达标”的边界行为
+  - 运行 `pytest tests/test_cli.py tests/test_daily_screening.py tests/test_strategies.py -q`，24 个测试全部通过
 - Files created/modified:
   - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\data_sources\akshare_provider.py` (updated)
   - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\cli.py` (updated)
   - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\storage.py` (updated)
   - `C:\Users\wdyab\Desktop\wdy\stocks\README.md` (updated)
   - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\data_sources\baostock_provider.py` (created)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\models.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\config.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\strategies.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\config\default.yaml` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_strategies.py` (updated)
 
 ## Test Results
 
@@ -88,6 +97,7 @@
 | 断点续跑样例 | `python main.py update-daily --start-date 20240101 --limit 3 --skip-existing` | 已缓存标的被跳过 | 成功跳过 3 只 | pass |
 | BaoStock 股票池 | `python main.py update-universe` | 刷新股票池 | 成功写入 3272 条 | pass |
 | BaoStock 日线样例 | `python main.py update-daily --start-date 20240101 --limit 3` | 缓存 3 只样例日线 | 成功缓存 3 只 | pass |
+| 共享历史动量过滤回归 | `pytest tests/test_cli.py tests/test_daily_screening.py tests/test_strategies.py -q` | 配置加载、选股入口和新过滤逻辑均正常 | 24 passed | pass |
 
 ## Error Log
 

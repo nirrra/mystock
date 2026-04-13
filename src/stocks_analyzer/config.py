@@ -6,6 +6,7 @@ import yaml
 
 from .models import (
     AppConfig,
+    HistoryMomentumFilterConfig,
     NetworkConfig,
     ProbabilityConfig,
     ScreeningConfig,
@@ -29,6 +30,7 @@ def load_config(config_path: str | Path) -> AppConfig:
     probability = raw.get("probability", {})
     strategies = raw["strategies"]
     network = raw.get("network", {})
+    history_momentum_filter = raw.get("history_momentum_filter", {})
 
     return AppConfig(
         provider=raw["provider"],
@@ -49,6 +51,11 @@ def load_config(config_path: str | Path) -> AppConfig:
             exclude_st=bool(universe["exclude_st"]),
             min_history_days=int(universe["min_history_days"]),
             min_avg_amount_20d=float(universe["min_avg_amount_20d"]),
+        ),
+        history_momentum_filter=HistoryMomentumFilterConfig(
+            lookback_days=int(history_momentum_filter.get("lookback_days", 200)),
+            window_days=int(history_momentum_filter.get("window_days", 5)),
+            min_return=float(history_momentum_filter.get("min_return", 0.10)),
         ),
         screening=ScreeningConfig(output_limit=int(screening["output_limit"])),
         probability=ProbabilityConfig(

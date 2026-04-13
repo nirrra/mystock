@@ -15,9 +15,17 @@ class Screener:
         self.storage = storage
         self.config = config
 
-    def run(self, as_of: date, selected_strategies: list[str] | None = None) -> pd.DataFrame:
+    def run(
+        self,
+        as_of: date,
+        selected_strategies: list[str] | None = None,
+        symbols: list[str] | None = None,
+    ) -> pd.DataFrame:
         strategies = selected_strategies or list(STRATEGY_NAMES)
         universe = self.storage.load_universe()
+        if symbols:
+            symbol_set = {str(symbol).zfill(6) for symbol in symbols}
+            universe = universe[universe["symbol"].astype(str).isin(symbol_set)].reset_index(drop=True)
         minimum_history = required_history_days(self.config, strategies)
         results: list[dict[str, object]] = []
 
