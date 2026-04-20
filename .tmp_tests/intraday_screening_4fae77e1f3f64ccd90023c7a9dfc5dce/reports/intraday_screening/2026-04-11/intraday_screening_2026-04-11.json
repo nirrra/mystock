@@ -1,0 +1,14 @@
+{
+  "trade_date": "2026-04-11",
+  "watchlist_date": "2026-04-10",
+  "watchlist_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_4fae77e1f3f64ccd90023c7a9dfc5dce\\reports\\watchlists\\watchlist_2026-04-10.json",
+  "symbol_count": 2,
+  "symbols": [
+    "002579",
+    "603803"
+  ],
+  "tradingview_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_4fae77e1f3f64ccd90023c7a9dfc5dce\\reports\\intraday_screening\\2026-04-11\\tradingview_avg5_2026-04-11.csv",
+  "divergence_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_4fae77e1f3f64ccd90023c7a9dfc5dce\\reports\\intraday_screening\\2026-04-11\\macd_divergence_2026-04-11.csv",
+  "pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_4fae77e1f3f64ccd90023c7a9dfc5dce\\reports\\intraday_screening\\2026-04-11\\patterns_all_2026-04-11.csv",
+  "intraday_rank_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_4fae77e1f3f64ccd90023c7a9dfc5dce\\reports\\intraday_screening\\2026-04-11\\intraday_rank_2026-04-11.csv"
+}

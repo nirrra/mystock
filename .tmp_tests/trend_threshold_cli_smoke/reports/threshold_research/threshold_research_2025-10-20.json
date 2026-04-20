@@ -1,0 +1,17 @@
+{
+  "report_date": "2025-10-20",
+  "samples_rows": 40,
+  "distributions_rows": 517,
+  "candidates_rows": 363,
+  "candidate_evaluation_rows": 363,
+  "combo_candidates_rows": 66,
+  "combo_evaluation_rows": 66,
+  "default_candidates_rows": 7,
+  "samples_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\threshold_research\\threshold_samples_2025-10-20.csv",
+  "distributions_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\threshold_research\\threshold_distributions_2025-10-20.csv",
+  "candidates_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\threshold_research\\threshold_candidates_2025-10-20.csv",
+  "candidate_evaluation_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\threshold_research\\threshold_candidate_eval_2025-10-20.csv",
+  "combo_candidates_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\threshold_research\\threshold_combo_candidates_2025-10-20.csv",
+  "combo_evaluation_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\threshold_research\\threshold_combo_eval_2025-10-20.csv",
+  "default_candidates_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\threshold_research\\threshold_default_candidates_2025-10-20.csv"
+}

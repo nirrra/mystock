@@ -1,0 +1,11 @@
+{
+  "trade_date": "2026-04-11",
+  "watchlist_date": "2026-04-10",
+  "watchlist_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_91f446a8d5184c7f8a722ea73e666ef4\\reports\\watchlists\\watchlist_2026-04-10.json",
+  "symbol_count": 2,
+  "symbols": [
+    "002579",
+    "603803"
+  ],
+  "intraday_rank_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_91f446a8d5184c7f8a722ea73e666ef4\\reports\\intraday_screening\\2026-04-11\\intraday_rank_2026-04-11.csv"
+}

@@ -1,0 +1,12 @@
+{
+  "trade_date": "2026-04-17",
+  "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-04-17.csv",
+  "watchlist_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_2026-04-17.json",
+  "watchlist_pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_pattern_2026-04-17.json",
+  "watchlist_trend_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_trend_2026-04-17.json",
+  "macd_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\macd\\macd_2026-04-17.csv",
+  "pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-04-17.csv",
+  "trend_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\trend\\trend_2026-04-17.csv",
+  "trend_universe_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\trend_universe\\trend_universe_2026-04-17.csv",
+  "candidate_count": 38
+}

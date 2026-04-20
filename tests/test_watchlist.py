@@ -7,11 +7,15 @@ from uuid import uuid4
 import pandas as pd
 
 from stocks_analyzer.watchlist import (
+    apply_trend_filter_to_watchlist_payload,
     build_watchlist_candidates,
+    build_watchlist_candidates_from_trend,
     extract_watchlist_symbols,
     find_latest_watchlist_before,
     load_watchlist,
     write_watchlist,
+    watchlist_pattern_path,
+    watchlist_trend_path,
 )
 
 
@@ -43,6 +47,25 @@ def test_write_and_load_watchlist_round_trip() -> None:
     assert loaded["candidate_count"] == 2
     assert "analysis" not in loaded
     assert extract_watchlist_symbols(loaded) == ["002579", "603803"]
+
+
+def test_write_and_load_kind_specific_watchlists_round_trip() -> None:
+    tmp_path = _make_workspace_tmp_dir("watchlist_kind_round_trip")
+    payload = {
+        "source_file": "demo.csv",
+        "candidates": [{"symbol": "600000", "name": "测试股份"}],
+    }
+
+    pattern_target = write_watchlist(project_root=tmp_path, trade_date=date(2026, 4, 10), picker_payload=payload, kind="pattern")
+    trend_target = write_watchlist(project_root=tmp_path, trade_date=date(2026, 4, 10), picker_payload=payload, kind="trend")
+
+    pattern_loaded = load_watchlist(project_root=tmp_path, trade_date=date(2026, 4, 10), kind="pattern")
+    trend_loaded = load_watchlist(project_root=tmp_path, trade_date=date(2026, 4, 10), kind="trend")
+
+    assert pattern_target == watchlist_pattern_path(tmp_path, date(2026, 4, 10))
+    assert trend_target == watchlist_trend_path(tmp_path, date(2026, 4, 10))
+    assert pattern_loaded["candidate_count"] == 1
+    assert trend_loaded["candidate_count"] == 1
 
 
 def test_find_latest_watchlist_before_uses_latest_prior_file() -> None:
@@ -78,7 +101,7 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
                 "tradingview_all_rating_2026-04-10": 0.46,
                 "tradingview_all_rating_2026-04-11": 0.26,
                 "tradingview_all_rating_2026-04-12": 0.40,
-                "macd_top_divergence_15d": True,
+                "macd_top_divergence_15d": False,
                 "macd_bottom_divergence_15d": False,
                 "reason": "demo-1",
             },
@@ -96,6 +119,20 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
                 "macd_top_divergence_15d": False,
                 "macd_bottom_divergence_15d": False,
                 "reason": "demo-2",
+            },
+            {
+                "symbol": "600111",
+                "name": "风险票",
+                "pattern_id": "1",
+                "tradingview_avg_all_rating_5d": 0.46,
+                "tradingview_all_rating_label": "strong_buy",
+                "tradingview_all_rating_2026-04-08": 0.48,
+                "tradingview_all_rating_2026-04-09": 0.52,
+                "tradingview_all_rating_2026-04-10": 0.46,
+                "tradingview_all_rating_2026-04-11": 0.42,
+                "tradingview_all_rating_2026-04-12": 0.42,
+                "macd_cross_state": "dead_cross",
+                "reason": "risk",
             },
             {
                 "symbol": "000001",
@@ -137,3 +174,103 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
     stable_scores = {item["symbol"]: item["stable_score"] for item in payload["candidates"]}
     assert stable_scores["002579"] == stable_scores["603803"]
     assert payload["candidates"][0]["tier"] == "第一梯队"
+
+
+def test_build_watchlist_candidates_from_trend_applies_thresholds_and_risk_filter() -> None:
+    trend_frame = pd.DataFrame(
+        [
+            {
+                "symbol": '="600000"',
+                "name": "趋势甲",
+                "signal_type": "breakout",
+                "buy_score": 78.0,
+                "price_action_score": 61.0,
+                "trend_score": 82.0,
+                "macd_cross_state": "golden_cross",
+                "macd_divergence_state": "none",
+                "volume_price_divergence_state": "none",
+            },
+            {
+                "symbol": "600001",
+                "name": "趋势乙",
+                "signal_type": "pullback",
+                "buy_score": 76.0,
+                "price_action_score": 62.0,
+                "trend_score": 79.0,
+                "macd_cross_state": "dead_cross",
+                "macd_divergence_state": "none",
+                "volume_price_divergence_state": "none",
+            },
+            {
+                "symbol": "600002",
+                "name": "趋势丙",
+                "signal_type": "breakout",
+                "buy_score": 65.0,
+                "price_action_score": 51.0,
+                "trend_score": 81.0,
+                "macd_cross_state": "above_signal",
+                "macd_divergence_state": "none",
+                "volume_price_divergence_state": "none",
+            },
+        ]
+    )
+    thresholds = type("PickTrendWatchlist", (), {"buy_score_min": 70.0, "price_action_score_min": 55.0})()
+
+    payload = build_watchlist_candidates_from_trend(
+        trend_frame,
+        source_file="reports/trend/trend_2026-04-12.csv",
+        thresholds=thresholds,
+        limit=10,
+    )
+
+    assert payload["candidate_count"] == 1
+    assert payload["candidates"][0]["symbol"] == "600000"
+    assert payload["candidates"][0]["source"] == "trend"
+    assert payload["candidates"][0]["buy_score"] == 78.0
+
+
+def test_apply_trend_filter_to_watchlist_payload_requires_strict_intersection_with_trend_universe() -> None:
+    payload = {
+        "source_file": "reports/patterns/patterns_all_2026-04-12.csv",
+        "candidate_count": 3,
+        "candidates": [
+            {"symbol": "002579", "name": "中京电子", "tier": "第一梯队"},
+            {"symbol": "603803", "name": "瑞斯康达", "tier": "第二梯队"},
+            {"symbol": "600000", "name": "浦发银行", "tier": "第三梯队"},
+        ],
+    }
+    trend_frame = pd.DataFrame(
+        [
+            {
+                "symbol": '="002579"',
+                "in_trend_universe": True,
+                "trend_universe_score": 88.0,
+                "signal_type": "breakout",
+                "macd_cross_state": "golden_cross",
+                "macd_divergence_state": "none",
+                "volume_price_divergence_state": "bullish",
+            },
+            {
+                "symbol": "603803",
+                "in_trend_universe": False,
+                "trend_universe_score": 81.0,
+                "signal_type": "pullback",
+            },
+        ]
+    )
+    trend_filter = type(
+        "TrendFilter",
+        (),
+        {"buy_score_min": 70.0, "price_action_score_min": 55.0},
+    )()
+
+    filtered = apply_trend_filter_to_watchlist_payload(
+        payload,
+        trend_frame=trend_frame,
+        trend_filter=trend_filter,
+    )
+
+    assert filtered["candidate_count"] == 1
+    assert filtered["candidates"][0]["symbol"] == "002579"
+    assert filtered["candidates"][0]["trend_universe_score"] == 88.0
+    assert filtered["candidates"][0]["macd_cross_state"] == "golden_cross"

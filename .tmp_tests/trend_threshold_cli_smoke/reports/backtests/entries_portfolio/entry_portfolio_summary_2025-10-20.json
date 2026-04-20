@@ -1,0 +1,10 @@
+{
+  "report_date": "2025-10-20",
+  "position_rows": 96,
+  "equity_rows": 402,
+  "summary_rows": 12,
+  "positions_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\backtests\\entries_portfolio\\entry_portfolio_positions_2025-10-20.csv",
+  "equity_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\backtests\\entries_portfolio\\entry_portfolio_equity_2025-10-20.csv",
+  "summary_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\backtests\\entries_portfolio\\entry_portfolio_summary_2025-10-20.csv",
+  "entry_note": "Research entry assumption: score calculated at close and entered at the next open."
+}

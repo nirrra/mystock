@@ -233,21 +233,21 @@ CSV 至少包含以下字段：
 
 ```yaml
 watchlist_trend_filter:
-  enabled: false
+  enabled: true
   buy_score_min: 70.0
   price_action_score_min: 55.0
 ```
 
 第一版明确口径如下：
 
-- 默认 `enabled: false`
+- 默认 `enabled: true`
 - 默认全局宽松阈值使用：
   - `buy_score_min: 70.0`
   - `price_action_score_min: 55.0`
 
 这样处理的原因是：
 
-- 功能上线初期先默认关闭，避免直接改变现有 `watchlist` 结果
+- 该功能已经完成实现和回归验证，可以直接作为默认流程启用
 - 一旦启用，这组阈值明显宽于现有 `trend_entry_rules`
 - 它更适合作为 `watchlist` 的“趋势质量复核”而不是最终买入门槛
 
@@ -258,7 +258,7 @@ watchlist_trend_filter:
 
 ```yaml
 watchlist_trend_filter:
-  enabled: false
+  enabled: true
   buy_score_min: 70.0
   price_action_score_min: 55.0
   breakout: {}

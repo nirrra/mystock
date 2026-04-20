@@ -1,0 +1,10 @@
+{
+  "trade_date": "2026-04-12",
+  "source_file": "demo.csv",
+  "candidate_count": 1,
+  "candidates": [
+    {
+      "symbol": "600000"
+    }
+  ]
+}

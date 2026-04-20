@@ -12,7 +12,7 @@ from time import perf_counter
 
 from .config import load_config
 from .trading_calendar import is_trading_day
-from .watchlist import load_watchlist, watchlist_path
+from .watchlist import load_watchlist, watchlist_path, watchlist_pattern_path, watchlist_trend_path
 
 
 PICKS_FILENAME = "选股.md"
@@ -36,25 +36,45 @@ def run_daily_screening(
 ) -> ScreeningResult:
     _ = picks_filename  # kept only for backward compatibility with existing callers
     config = load_config(project_root / "config" / "default.yaml")
-    print(f"[0/4] 检查 {trade_date.isoformat()} 是否为交易日...", flush=True)
+    total_stages = 6
+    print(f"[0/{total_stages}] 检查 {trade_date.isoformat()} 是否为交易日...", flush=True)
     trading_day = is_trading_day(config.provider, trade_date)
     if not trading_day:
-        print(f"[0/4] {trade_date.isoformat()} 不是交易日，跳过每日筛选。", flush=True)
+        print(f"[0/{total_stages}] {trade_date.isoformat()} 不是交易日，跳过每日筛选。", flush=True)
         return ScreeningResult(
             trade_date=trade_date,
             skipped=True,
             message=f"{trade_date.isoformat()} 不是交易日，已跳过每日筛选。",
         )
-    print(f"[0/4] {trade_date.isoformat()} 是交易日，开始执行每日筛选。", flush=True)
+    print(f"[0/{total_stages}] {trade_date.isoformat()} 是交易日，开始执行每日筛选。", flush=True)
 
-    _run_project_stage(1, 4, "update", project_root, ["update", "--start-date", start_date])
-    _run_project_stage(2, 4, "tradingview", project_root, ["tradingview", "--date", trade_date.isoformat()])
-    _run_project_stage(3, 4, "divergence", project_root, ["divergence", "--date", trade_date.isoformat()])
-    _run_project_stage(4, 4, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
+    _run_project_stage(1, total_stages, "update", project_root, ["update", "--start-date", start_date])
+    _run_project_stage(2, total_stages, "tradingview", project_root, ["tradingview", "--date", trade_date.isoformat()])
+    _run_project_stage(3, total_stages, "macd", project_root, ["macd", "--date", trade_date.isoformat()])
+    _run_project_stage(4, total_stages, "trend-universe", project_root, ["trend-universe", "--date", trade_date.isoformat()])
+    _run_project_stage(5, total_stages, "trend", project_root, ["trend", "--date", trade_date.isoformat()])
+    _run_project_stage(6, total_stages, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
 
     generated_watchlist_path = watchlist_path(project_root, trade_date)
     watchlist_payload = load_watchlist(project_root=project_root, trade_date=trade_date)
-    report_path = _write_run_report(project_root, trade_date, watchlist_payload, generated_watchlist_path)
+    watchlist_pattern = watchlist_pattern_path(project_root, trade_date)
+    watchlist_trend = watchlist_trend_path(project_root, trade_date)
+    trend_universe_path: Path | None = _trend_universe_report_path(project_root, trade_date)
+    trend_path: Path | None = _trend_report_path(project_root, trade_date)
+    macd_path = _macd_report_path(project_root, trade_date)
+    pattern_path = _pattern_report_path(project_root, trade_date)
+    report_path = _write_run_report(
+        project_root,
+        trade_date,
+        watchlist_payload,
+        generated_watchlist_path,
+        watchlist_pattern_path=watchlist_pattern if watchlist_pattern.exists() else None,
+        watchlist_trend_path=watchlist_trend if watchlist_trend.exists() else None,
+        macd_path=macd_path if macd_path.exists() else None,
+        pattern_path=pattern_path if pattern_path.exists() else None,
+        trend_path=trend_path if trend_path is not None and trend_path.exists() else None,
+        trend_universe_path=trend_universe_path if trend_universe_path.exists() else None,
+    )
     return ScreeningResult(
         trade_date=trade_date,
         skipped=False,
@@ -93,6 +113,13 @@ def _write_run_report(
     trade_date: date,
     watchlist_payload: dict[str, object],
     watchlist_path: Path,
+    *,
+    watchlist_pattern_path: Path | None,
+    watchlist_trend_path: Path | None,
+    macd_path: Path | None,
+    pattern_path: Path | None,
+    trend_path: Path | None,
+    trend_universe_path: Path | None,
 ) -> Path:
     target = project_root / "reports" / "daily_screening"
     target.mkdir(parents=True, exist_ok=True)
@@ -101,12 +128,34 @@ def _write_run_report(
         "trade_date": trade_date.isoformat(),
         "source_file": watchlist_payload.get("source_file"),
         "watchlist_path": str(watchlist_path),
+        "watchlist_pattern_path": str(watchlist_pattern_path) if watchlist_pattern_path is not None else None,
+        "watchlist_trend_path": str(watchlist_trend_path) if watchlist_trend_path is not None else None,
+        "macd_path": str(macd_path) if macd_path is not None else None,
+        "pattern_path": str(pattern_path) if pattern_path is not None else None,
+        "trend_path": str(trend_path) if trend_path is not None else None,
+        "trend_universe_path": str(trend_universe_path) if trend_universe_path is not None else None,
         "candidate_count": len(watchlist_payload.get("candidates", []))
         if isinstance(watchlist_payload.get("candidates"), list)
         else 0,
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report_path
+
+
+def _trend_universe_report_path(project_root: Path, trade_date: date) -> Path:
+    return project_root / "reports" / "trend_universe" / f"trend_universe_{trade_date.isoformat()}.csv"
+
+
+def _trend_report_path(project_root: Path, trade_date: date) -> Path:
+    return project_root / "reports" / "trend" / f"trend_{trade_date.isoformat()}.csv"
+
+
+def _macd_report_path(project_root: Path, trade_date: date) -> Path:
+    return project_root / "reports" / "macd" / f"macd_{trade_date.isoformat()}.csv"
+
+
+def _pattern_report_path(project_root: Path, trade_date: date) -> Path:
+    return project_root / "reports" / "patterns" / f"patterns_all_{trade_date.isoformat()}.csv"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

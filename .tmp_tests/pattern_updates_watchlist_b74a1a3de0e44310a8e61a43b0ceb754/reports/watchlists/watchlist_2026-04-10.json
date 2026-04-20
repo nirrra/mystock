@@ -1,0 +1,26 @@
+{
+  "trade_date": "2026-04-10",
+  "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\pattern_updates_watchlist_b74a1a3de0e44310a8e61a43b0ceb754\\reports\\patterns\\patterns_1_2026-04-10.csv",
+  "candidate_count": 1,
+  "candidates": [
+    {
+      "tier": "第一梯队",
+      "symbol": "600000",
+      "name": "测试股份",
+      "pattern_id": "1",
+      "macd_top_divergence_15d": false,
+      "macd_bottom_divergence_15d": true,
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.4,
+      "five_day_scores": [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6
+      ],
+      "stable_score": 6.1,
+      "reason": "demo"
+    }
+  ]
+}

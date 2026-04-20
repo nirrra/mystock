@@ -1,0 +1,17 @@
+{
+  "trade_date": "2026-04-10",
+  "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\watchlist_round_trip_9f8a73a535624ef5b6daeb6812004671\\reports\\patterns\\patterns_all_2026-04-10.csv",
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "symbol": "2579",
+      "name": "中京电子",
+      "tier": "第一梯队"
+    },
+    {
+      "symbol": "603803",
+      "name": "瑞斯康达",
+      "tier": "第二梯队"
+    }
+  ]
+}

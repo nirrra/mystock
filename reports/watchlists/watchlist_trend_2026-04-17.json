@@ -1,0 +1,51 @@
+{
+  "trade_date": "2026-04-17",
+  "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\trend\\trend_2026-04-17.csv",
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "source": "trend",
+      "symbol": "600563",
+      "name": "法拉电子",
+      "signal_type": "pullback",
+      "buy_score": 75.3294,
+      "price_action_score": 63.6604,
+      "trend_score": 64.5895,
+      "entry_score": 58.8848,
+      "trend_base_score": 91.0,
+      "macd_score": 39.0,
+      "positive_indicator_count": 7,
+      "macd_cross_state": "below_signal",
+      "macd_divergence_state": "none",
+      "volume_price_divergence_state": "bullish",
+      "macd_top_divergence_flag": false,
+      "macd_bottom_divergence_flag": false,
+      "bullish_volume_price_divergence_flag": true,
+      "bearish_volume_price_divergence_flag": false,
+      "trigger_reason": "pullback drawdown=10.97% dist_ma20=1.31% dist_ma60=8.32% vol5_20=0.82",
+      "buy_reason": "pullback with boll=90.0, rsi=88.0, volume_price_divergence=85.0"
+    },
+    {
+      "source": "trend",
+      "symbol": "600428",
+      "name": "中远海特",
+      "signal_type": "pullback",
+      "buy_score": 72.4274,
+      "price_action_score": 67.2423,
+      "trend_score": 79.5315,
+      "entry_score": 67.1433,
+      "trend_base_score": 96.4,
+      "macd_score": 33.0,
+      "positive_indicator_count": 4,
+      "macd_cross_state": "below_signal",
+      "macd_divergence_state": "none",
+      "volume_price_divergence_state": "none",
+      "macd_top_divergence_flag": false,
+      "macd_bottom_divergence_flag": false,
+      "bullish_volume_price_divergence_flag": false,
+      "bearish_volume_price_divergence_flag": false,
+      "trigger_reason": "pullback drawdown=10.23% dist_ma20=1.21% dist_ma60=9.12% vol5_20=0.60",
+      "buy_reason": "pullback with boll=90.0, atr=86.0, volume=85.5"
+    }
+  ]
+}

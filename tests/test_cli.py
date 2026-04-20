@@ -1,3 +1,4 @@
+import os
 import json
 from datetime import date
 from pathlib import Path
@@ -6,12 +7,18 @@ from uuid import uuid4
 import pandas as pd
 from stocks_analyzer.cli import (
     PATTERN_LABEL_MAP,
-    _append_recent_macd_divergence,
+    _append_recent_macd_summary,
+    _append_recent_trend_universe_summary,
+    _configure_network,
+    _load_local_env,
+    _append_recent_trend_summary,
     _run_pattern,
+    _run_trend,
     _prepare_pattern_results,
     build_parser,
 )
 from stocks_analyzer.config import load_config
+from stocks_analyzer.models import NetworkConfig
 from stocks_analyzer.paths import ProjectPaths
 from stocks_analyzer.storage import Storage
 
@@ -80,11 +87,11 @@ def test_build_parser_accepts_tradingview_command() -> None:
     assert args.top_n == 30
 
 
-def test_build_parser_accepts_divergence_command() -> None:
+def test_build_parser_accepts_macd_command() -> None:
     parser = build_parser()
-    args = parser.parse_args(["divergence", "--date", "2026-04-10", "--top-n", "30"])
+    args = parser.parse_args(["macd", "--date", "2026-04-10", "--top-n", "30"])
 
-    assert args.command == "divergence"
+    assert args.command == "macd"
     assert args.date == "2026-04-10"
     assert args.top_n == 30
 
@@ -120,6 +127,222 @@ def test_build_parser_accepts_intraday_screening_command() -> None:
     assert args.top_n == 15
 
 
+def test_build_parser_accepts_trend_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["trend", "--date", "2026-04-10", "--top-n", "14"])
+
+    assert args.command == "trend"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 14
+
+
+def test_build_parser_accepts_trend_universe_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["trend-universe", "--date", "2026-04-10", "--top-n", "15"])
+
+    assert args.command == "trend-universe"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 15
+
+
+def test_build_parser_accepts_trend_signals_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["trend-signals", "--date", "2026-04-10", "--top-n", "12"])
+
+    assert args.command == "trend-signals"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 12
+
+
+def test_build_parser_accepts_trend_score_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["trend-score", "--date", "2026-04-10", "--top-n", "9"])
+
+    assert args.command == "trend-score"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 9
+
+
+def test_build_parser_accepts_trend_entries_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["trend-entries", "--date", "2026-04-10", "--top-n", "7"])
+
+    assert args.command == "trend-entries"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 7
+
+
+def test_build_parser_accepts_backtest_signals_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["backtest-signals", "--date", "2026-04-10", "--start-date", "2026-01-01"])
+
+    assert args.command == "backtest-signals"
+    assert args.date == "2026-04-10"
+    assert args.start_date == "2026-01-01"
+
+
+def test_build_parser_accepts_backtest_portfolio_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["backtest-portfolio", "--date", "2026-04-10", "--top-n", "8"])
+
+    assert args.command == "backtest-portfolio"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 8
+
+
+def test_build_parser_accepts_backtest_entries_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["backtest-entries", "--date", "2026-04-10", "--start-date", "2026-01-01"])
+
+    assert args.command == "backtest-entries"
+    assert args.date == "2026-04-10"
+    assert args.start_date == "2026-01-01"
+
+
+def test_build_parser_accepts_backtest_entries_portfolio_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["backtest-entries-portfolio", "--date", "2026-04-10", "--top-n", "6"])
+
+    assert args.command == "backtest-entries-portfolio"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 6
+
+
+def test_build_parser_accepts_research_thresholds_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "research-thresholds",
+            "--date",
+            "2026-04-10",
+            "--start-date",
+            "2025-01-01",
+            "--sample-mode",
+            "weekly",
+            "--train-end-date",
+            "2025-12-31",
+        ]
+    )
+
+    assert args.command == "research-thresholds"
+    assert args.date == "2026-04-10"
+    assert args.start_date == "2025-01-01"
+    assert args.sample_mode == "weekly"
+    assert args.train_end_date == "2025-12-31"
+
+
+def test_load_local_env_sets_missing_env_vars_only() -> None:
+    root = _make_workspace_tmp_dir("local_env")
+    env_path = root / ".env.local"
+    env_path.write_text(
+        "\n".join(
+            [
+                "# comment",
+                "ITICK_TOKEN=file-token",
+                "TUSHARE_TOKEN=file-ts-token",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    import os
+
+    previous_itick = os.environ.get("ITICK_TOKEN")
+    previous_tushare = os.environ.get("TUSHARE_TOKEN")
+    os.environ["ITICK_TOKEN"] = "existing-token"
+    os.environ.pop("TUSHARE_TOKEN", None)
+    try:
+        _load_local_env(env_path)
+        assert os.environ["ITICK_TOKEN"] == "existing-token"
+        assert os.environ["TUSHARE_TOKEN"] == "file-ts-token"
+    finally:
+        if previous_itick is None:
+            os.environ.pop("ITICK_TOKEN", None)
+        else:
+            os.environ["ITICK_TOKEN"] = previous_itick
+        if previous_tushare is None:
+            os.environ.pop("TUSHARE_TOKEN", None)
+        else:
+            os.environ["TUSHARE_TOKEN"] = previous_tushare
+
+
+def test_configure_network_prefers_existing_proxy_env(monkeypatch) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://existing-http:8000")
+    monkeypatch.setenv("HTTPS_PROXY", "http://existing-https:8443")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    _configure_network(
+        NetworkConfig(
+            http_proxy="http://127.0.0.1:7897",
+            https_proxy="http://127.0.0.1:7897",
+            no_proxy="127.0.0.1,localhost",
+        )
+    )
+
+    assert os.environ["HTTP_PROXY"] == "http://existing-http:8000"
+    assert os.environ["HTTPS_PROXY"] == "http://existing-https:8443"
+    assert os.environ["http_proxy"] == "http://existing-http:8000"
+    assert os.environ["https_proxy"] == "http://existing-https:8443"
+    assert "NO_PROXY" not in os.environ
+    assert "no_proxy" not in os.environ
+
+
+def test_configure_network_skips_unreachable_local_proxy(monkeypatch, caplog) -> None:
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    def fake_create_connection(*args, **kwargs):
+        raise OSError("refused")
+
+    monkeypatch.setattr("stocks_analyzer.cli.socket.create_connection", fake_create_connection)
+
+    with caplog.at_level("WARNING"):
+        _configure_network(
+            NetworkConfig(
+                http_proxy="http://127.0.0.1:7897",
+                https_proxy="http://localhost:7897",
+                no_proxy="127.0.0.1,localhost",
+            )
+        )
+
+    assert "HTTP_PROXY" not in os.environ
+    assert "HTTPS_PROXY" not in os.environ
+    assert "NO_PROXY" not in os.environ
+    assert "fallback to direct connection" in caplog.text
+
+
+def test_configure_network_applies_reachable_local_proxy(monkeypatch) -> None:
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    class FakeConnection:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("stocks_analyzer.cli.socket.create_connection", lambda *args, **kwargs: FakeConnection())
+
+    _configure_network(
+        NetworkConfig(
+            http_proxy="http://127.0.0.1:7897",
+            https_proxy="http://127.0.0.1:7897",
+            no_proxy="127.0.0.1,localhost",
+        )
+    )
+
+    assert os.environ["HTTP_PROXY"] == "http://127.0.0.1:7897"
+    assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:7897"
+    assert os.environ["NO_PROXY"] == "127.0.0.1,localhost"
+
+
 def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
     results = pd.DataFrame(
         [
@@ -140,23 +363,26 @@ def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
     assert "strategy_name" not in prepared.columns
 
 
-def test_append_recent_macd_divergence_merges_two_flag_columns_from_saved_report() -> None:
-    tmp_path = _make_workspace_tmp_dir("macd_divergence_merge")
+def test_append_recent_macd_summary_merges_state_columns_from_saved_report() -> None:
+    tmp_path = _make_workspace_tmp_dir("macd_summary_merge")
     config = load_config(ROOT / "config" / "default.yaml")
     paths = ProjectPaths(tmp_path, config.storage)
     storage = Storage(paths)
 
-    divergence_dir = paths.reports_dir / "divergence"
-    divergence_dir.mkdir(parents=True, exist_ok=True)
+    macd_dir = paths.reports_dir / "macd"
+    macd_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         [
             {
                 "symbol": '="600000"',
+                "macd_cross_state": "golden_cross",
+                "macd_divergence_state": "top_divergence",
+                "volume_price_divergence_state": "bullish",
                 "macd_top_divergence_15d": True,
                 "macd_bottom_divergence_15d": False,
             }
         ]
-    ).to_csv(divergence_dir / "macd_divergence_2026-04-10.csv", index=False, encoding="utf-8-sig")
+    ).to_csv(macd_dir / "macd_2026-04-10.csv", index=False, encoding="utf-8-sig")
 
     exported = pd.DataFrame(
         [
@@ -171,10 +397,83 @@ def test_append_recent_macd_divergence_merges_two_flag_columns_from_saved_report
         ]
     )
 
-    enriched = _append_recent_macd_divergence(storage, exported, as_of=date(2026, 4, 10))
+    enriched = _append_recent_macd_summary(storage, exported, as_of=date(2026, 4, 10))
 
+    assert enriched.loc[0, "macd_cross_state"] == "golden_cross"
+    assert enriched.loc[0, "macd_divergence_state"] == "top_divergence"
+    assert enriched.loc[0, "volume_price_divergence_state"] == "bullish"
     assert bool(enriched.loc[0, "macd_top_divergence_15d"]) is True
     assert bool(enriched.loc[0, "macd_bottom_divergence_15d"]) is False
+
+
+def test_append_recent_trend_summary_merges_score_columns_from_saved_report() -> None:
+    tmp_path = _make_workspace_tmp_dir("trend_summary_merge")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+
+    trend_dir = paths.reports_dir / "trend"
+    trend_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "symbol": "600000",
+                "signal_type": "breakout",
+                "buy_score": 72.5,
+                "price_action_score": 61.2,
+                "trend_base_score": 66.0,
+                "macd_score": 44.0,
+            }
+        ]
+    ).to_csv(trend_dir / "trend_2026-04-10.csv", index=False, encoding="utf-8-sig")
+
+    exported = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": '="600000"',
+                "name": "测试股份",
+                "pattern_id": "1",
+                "close": 10.0,
+            }
+        ]
+    )
+
+    enriched = _append_recent_trend_summary(storage, exported, config=config, as_of=date(2026, 4, 10))
+
+    assert enriched.loc[0, "signal_type"] == "breakout"
+    assert enriched.loc[0, "buy_score"] == 72.5
+    assert enriched.loc[0, "price_action_score"] == 61.2
+
+
+def test_append_recent_trend_universe_summary_merges_first_layer_fields() -> None:
+    exported = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": '="600000"',
+                "name": "测试股份",
+                "pattern_id": "1",
+                "close": 10.0,
+            }
+        ]
+    )
+    trend_universe = pd.DataFrame(
+        [
+            {
+                "symbol": "600000",
+                "in_trend_universe": True,
+                "trend_score": 84.0,
+                "trend_direction_score": 92.0,
+            }
+        ]
+    )
+
+    enriched = _append_recent_trend_universe_summary(exported, trend_universe)
+
+    assert bool(enriched.loc[0, "in_trend_universe"]) is True
+    assert enriched.loc[0, "trend_universe_score"] == 84.0
+    assert enriched.loc[0, "trend_direction_score"] == 92.0
 
 
 def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
@@ -209,7 +508,15 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
     monkeypatch.setattr("stocks_analyzer.cli.Screener.run", lambda self, as_of, selected_strategies, symbols=None: pd.DataFrame())
     monkeypatch.setattr("stocks_analyzer.cli._prepare_pattern_results", lambda results: exported.copy())
     monkeypatch.setattr("stocks_analyzer.cli._append_recent_tradingview_scores", lambda storage, exported, as_of, lookback_days, symbols=None: exported)
-    monkeypatch.setattr("stocks_analyzer.cli._append_recent_macd_divergence", lambda storage, exported, as_of, symbols=None: exported)
+    monkeypatch.setattr("stocks_analyzer.cli._append_recent_macd_summary", lambda storage, exported, as_of, symbols=None: exported)
+    monkeypatch.setattr(
+        "stocks_analyzer.cli._load_or_build_trend_universe_summary",
+        lambda storage, config, trade_date, symbols=None: pd.DataFrame([{"symbol": "600000", "in_trend_universe": True, "trend_score": 81.0}]),
+    )
+    monkeypatch.setattr(
+        "stocks_analyzer.cli._append_recent_trend_summary",
+        lambda storage, config, exported, as_of, symbols=None: exported,
+    )
 
     _run_pattern(
         storage=storage,
@@ -223,6 +530,50 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
     )
 
     watchlist = json.loads((tmp_path / "reports" / "watchlists" / "watchlist_2026-04-10.json").read_text(encoding="utf-8"))
+    pattern_watchlist = json.loads((tmp_path / "reports" / "watchlists" / "watchlist_pattern_2026-04-10.json").read_text(encoding="utf-8"))
     assert watchlist["trade_date"] == "2026-04-10"
     assert watchlist["candidate_count"] == 1
     assert watchlist["candidates"][0]["symbol"] == "600000"
+    assert pattern_watchlist["candidate_count"] == 1
+    assert pattern_watchlist["candidates"][0]["symbol"] == "600000"
+
+
+def test_run_trend_updates_trend_watchlist_for_same_trade_date(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("trend_updates_watchlist")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+
+    scored = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": "600000",
+                "name": "测试趋势",
+                "signal_type": "breakout",
+                "buy_score": 76.0,
+                "price_action_score": 60.0,
+                "trend_score": 83.0,
+                "trend_base_score": 70.0,
+                "macd_cross_state": "golden_cross",
+                "macd_divergence_state": "none",
+                "volume_price_divergence_state": "none",
+            }
+        ]
+    )
+
+    monkeypatch.setattr("stocks_analyzer.cli.scan_indicator_scored_entries", lambda storage, config, trade_date: scored.copy())
+
+    _run_trend(
+        storage=storage,
+        config=config,
+        paths=paths,
+        trade_date=date(2026, 4, 10),
+        top_n=20,
+        output=None,
+    )
+
+    trend_watchlist = json.loads((tmp_path / "reports" / "watchlists" / "watchlist_trend_2026-04-10.json").read_text(encoding="utf-8"))
+    assert trend_watchlist["trade_date"] == "2026-04-10"
+    assert trend_watchlist["candidate_count"] == 1
+    assert trend_watchlist["candidates"][0]["symbol"] == "600000"

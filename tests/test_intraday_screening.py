@@ -5,8 +5,6 @@ from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
-import pandas as pd
-
 from stocks_analyzer.cli import _run_intraday_screening
 from stocks_analyzer.config import load_config
 from stocks_analyzer.paths import ProjectPaths
@@ -23,25 +21,12 @@ def _make_workspace_tmp_dir(name: str) -> Path:
     return path
 
 
-class _FakeProvider:
-    def close(self) -> None:
-        return None
-
-
 def test_run_intraday_screening_uses_latest_prior_watchlist(monkeypatch) -> None:
     tmp_path = _make_workspace_tmp_dir("intraday_screening")
     config = load_config(ROOT / "config" / "default.yaml")
+    assert config.intraday_provider == "itick"
     paths = ProjectPaths(tmp_path, config.storage)
     storage = Storage(paths)
-
-    storage.save_universe(
-        pd.DataFrame(
-            [
-                {"symbol": "002579", "name": "中京电子"},
-                {"symbol": "603803", "name": "瑞斯康达"},
-            ]
-        )
-    )
 
     write_watchlist(
         project_root=tmp_path,
@@ -49,36 +34,40 @@ def test_run_intraday_screening_uses_latest_prior_watchlist(monkeypatch) -> None
         picker_payload={
             "source_file": "demo.csv",
             "candidates": [
-                {"symbol": "002579", "name": "中京电子", "tier": "第一梯队"},
-                {"symbol": "603803", "name": "瑞斯康达", "tier": "第二梯队"},
+                {"symbol": "002579", "name": "中京电子", "tier": "第一梯队", "pattern_id": "1", "tradingview_label": "buy", "tradingview_avg_5d": 0.42},
+                {"symbol": "603803", "name": "瑞斯康达", "tier": "第二梯队", "pattern_id": "2", "tradingview_label": "strong_buy", "tradingview_avg_5d": 0.50},
             ],
         },
     )
 
-    updated_symbols: list[str] = []
-    received_symbols: dict[str, list[str]] = {}
+    def should_not_run(*args, **kwargs) -> None:
+        raise AssertionError("legacy daily/incremental intraday path should not be called")
 
-    monkeypatch.setattr("stocks_analyzer.cli.create_data_provider", lambda provider_name: _FakeProvider())
+    def fake_save_intraday_rankings(
+        *,
+        trade_date,
+        intraday_provider,
+        adjust,
+        watchlist_payload,
+        output_path,
+    ) -> dict[str, object]:
+        assert intraday_provider == "itick"
+        received_symbols = [item["symbol"] for item in watchlist_payload["candidates"]]
+        assert received_symbols == ["002579", "603803"]
+        Path(output_path).write_text("代码,5分钟分数\n002579,55.0\n", encoding="utf-8")
+        return {
+            "output_path": Path(output_path),
+            "ranking": None,
+            "processed_count": 1,
+            "failed_symbols": [{"symbol": "603803", "name": "瑞斯康达", "error": "network down"}],
+            "failed_count": 1,
+        }
 
-    def fake_run_update(storage, provider, exclude_st, adjust, symbol, start_date, end_date, limit, skip_existing) -> None:
-        updated_symbols.append(symbol)
-
-    def fake_run_tradingview(*, storage, config, trade_date, top_n, output, symbols=None) -> None:
-        received_symbols["tradingview"] = list(symbols or [])
-        Path(output).write_text("symbol\n002579\n", encoding="utf-8")
-
-    def fake_run_divergence(*, storage, config, trade_date, top_n, output, symbols=None) -> None:
-        received_symbols["divergence"] = list(symbols or [])
-        Path(output).write_text("symbol\n002579\n", encoding="utf-8")
-
-    def fake_run_pattern(*, storage, provider_name, config, as_of, selected_patterns, limit, output, plot_all, symbols=None) -> None:
-        received_symbols["pattern"] = list(symbols or [])
-        Path(output).write_text("symbol\n002579\n", encoding="utf-8")
-
-    monkeypatch.setattr("stocks_analyzer.cli._run_update", fake_run_update)
-    monkeypatch.setattr("stocks_analyzer.cli._run_tradingview", fake_run_tradingview)
-    monkeypatch.setattr("stocks_analyzer.cli._run_divergence", fake_run_divergence)
-    monkeypatch.setattr("stocks_analyzer.cli._run_pattern", fake_run_pattern)
+    monkeypatch.setattr("stocks_analyzer.cli._run_update", should_not_run)
+    monkeypatch.setattr("stocks_analyzer.cli._run_tradingview", should_not_run)
+    monkeypatch.setattr("stocks_analyzer.cli._run_macd", should_not_run)
+    monkeypatch.setattr("stocks_analyzer.cli._run_pattern", should_not_run)
+    monkeypatch.setattr("stocks_analyzer.cli.save_intraday_rankings", fake_save_intraday_rankings)
 
     result = _run_intraday_screening(
         storage=storage,
@@ -91,9 +80,12 @@ def test_run_intraday_screening_uses_latest_prior_watchlist(monkeypatch) -> None
     )
 
     report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
-    assert updated_symbols == ["002579", "603803"]
-    assert received_symbols["tradingview"] == ["002579", "603803"]
-    assert received_symbols["divergence"] == ["002579", "603803"]
-    assert received_symbols["pattern"] == ["002579", "603803"]
     assert report["watchlist_date"] == "2026-04-10"
     assert report["symbol_count"] == 2
+    assert report["successful_symbol_count"] == 1
+    assert report["failed_symbol_count"] == 1
+    assert report["failed_symbols"] == [{"symbol": "603803", "name": "瑞斯康达", "error": "network down"}]
+    assert Path(report["intraday_rank_path"]).name == "intraday_rank_2026-04-11.csv"
+    assert "tradingview_path" not in report
+    assert "macd_path" not in report
+    assert "pattern_path" not in report

@@ -74,6 +74,12 @@ Phase 3
 | 数据源必须抽象成统一接口 | 后续切换付费源时不重写上层逻辑 |
 | 本地缓存优先使用 Parquet | 实现简单、读取快、适合表格型行情数据 |
 | 三类策略采用模板加参数形式 | 避免每个想法都变成一个独立脚本 |
+| `intraday-screening` 的盘中排序作为独立汇总层实现 | 保持原有日线输出链路不变，降低回归风险 |
+| `daily_score` 直接复用 `watchlist._stable_score()` | 避免盘中链路引入第二套日线评分口径 |
+| 最终盘中结果按 `intraday_5m_score` 排序 | 让本交易日 5 分钟状态成为首要排序依据 |
+| `update` 直接改为自动补全末尾缺口 | 用户明确不再需要新命令，且不允许通过更晚的 `--start-date` 制造缺口 |
+| `daily-screening` 的趋势复核通过独立 `trend` 指令接入 | 复用现有趋势评分链路，避免在 `pattern/watchlist` 内重复实现一套打分 |
+| `watchlist` 采用“旧体系通过 AND trend 宽松阈值通过” | 保留原有技术候选稳定性，同时叠加 `buy_score / price_action_score` 质量复核 |
 
 ## Errors Encountered
 
@@ -83,9 +89,11 @@ Phase 3
 | 当前目录不是 Git 仓库，无法提交 spec | 1 | 用户后续已初始化 Git，阻塞已解除 |
 | `pip install -e .` 在沙箱内无法写入用户临时目录 | 1 | 升级权限后完成依赖安装 |
 | `stock_zh_a_spot_em()` 在当前网络环境下不稳定 | 1 | 改为 `stock_info_a_code_name()` 做股票池更新 |
+| `planning-with-files` 的 catchup 脚本路径在当前机器不存在 | 1 | 直接复用仓库内已有 planning files 继续记录实现过程 |
 
 ## Notes
 
 - 实现阶段禁止把分钟线扩张为全市场主数据层
 - 优先验证“能稳定筛出合理候选股”，而不是追求指标数量
 - 若用户后续要求接入付费分钟线，应先保持当前接口不变再替换底层实现
+- 趋势复核第一版只影响 `watchlist` 准入，不改 `watchlist` 现有排序逻辑

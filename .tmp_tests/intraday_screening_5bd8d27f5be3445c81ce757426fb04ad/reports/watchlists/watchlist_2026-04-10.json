@@ -1,0 +1,17 @@
+{
+  "trade_date": "2026-04-10",
+  "source_file": "demo.csv",
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "symbol": "002579",
+      "name": "中京电子",
+      "tier": "第一梯队"
+    },
+    {
+      "symbol": "603803",
+      "name": "瑞斯康达",
+      "tier": "第二梯队"
+    }
+  ]
+}

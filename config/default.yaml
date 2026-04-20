@@ -1,4 +1,5 @@
 provider: baostock
+intraday_provider: itick
 adjustment: qfq
 
 network:
@@ -26,12 +27,81 @@ history_momentum_filter:
 screening:
   output_limit: 50
 
+watchlist_trend_filter:
+  enabled: true
+  buy_score_min: 0.0
+  price_action_score_min: 0.0
+
+pick_trend_watchlist:
+  buy_score_min: 70.0
+  price_action_score_min: 55.0
+
 probability:
   horizon_days: 20
   min_future_return: 0.03
   max_future_drawdown: 0.08
   min_history_days: 200
   top_n_list: [10, 20, 50]
+
+trend_universe:
+  min_history_days: 180
+  ma_short_window: 20
+  ma_medium_window: 60
+  ma_long_window: 120
+  slope_lookback_days: 10
+  strength_lookback_days: 60
+  quality_lookback_days: 60
+  min_return_strength_lookback: 0.15
+  max_drawdown_quality_lookback: 0.18
+  min_avg_amount_20d: 100000000
+  high_lookback_days: 120
+
+trend_signals:
+  breakout:
+    platform_min_window_days: 20
+    platform_max_window_days: 40
+    platform_range_max: 0.18
+    breakout_volume_ratio_min: 1.2
+    breakout_max_distance_pct: 0.05
+    new_high_lookback_days: 120
+    new_high_tolerance_pct: 0.02
+  pullback:
+    recent_high_lookback_days: 20
+    max_drawdown_from_recent_high: 0.12
+    proximity_to_ma20: 0.03
+    proximity_to_ma60: 0.05
+    volume_contraction_max: 0.95
+    rebound_min_return_1d: 0.0
+    lower_shadow_min: 0.2
+
+trend_indicator_weights:
+  trend_base_weight: 0.35
+  price_action_weight: 0.30
+  macd_weight: 0.18
+  volume_weight: 0.10
+  volume_price_divergence_weight: 0.10
+  boll_weight: 0.10
+  rsi_weight: 0.08
+  kdj_weight: 0.08
+  atr_weight: 0.06
+
+trend_entry_rules:
+  buy_score_min: 80.0
+  trend_base_score_min: 65.0
+  price_action_score_min: 60.0
+  macd_score_min: 35.0
+  positive_indicator_count_min: 3
+  breakout:
+    buy_score_min: 81.3308
+    price_action_score_min: 75.0373
+  pullback: {}
+
+trend_backtest:
+  holding_days: [5, 10, 20, 40]
+  portfolio_top_n: [3, 5, 10]
+  entry_score_weight: 0.6
+  trend_score_weight: 0.4
+  entry_timing: same_close
 
 strategies:
   type1:

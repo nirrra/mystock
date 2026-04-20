@@ -1,0 +1,20 @@
+{
+  "trade_date": "2026-04-11",
+  "watchlist_date": "2026-04-10",
+  "watchlist_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_4824e92676c04b7bbf6cbb1ff0d308af\\reports\\watchlists\\watchlist_2026-04-10.json",
+  "symbol_count": 2,
+  "symbols": [
+    "002579",
+    "603803"
+  ],
+  "intraday_rank_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\intraday_screening_4824e92676c04b7bbf6cbb1ff0d308af\\reports\\intraday_screening\\2026-04-11\\intraday_rank_2026-04-11.csv",
+  "successful_symbol_count": 1,
+  "failed_symbol_count": 1,
+  "failed_symbols": [
+    {
+      "symbol": "603803",
+      "name": "瑞斯康达",
+      "error": "network down"
+    }
+  ]
+}

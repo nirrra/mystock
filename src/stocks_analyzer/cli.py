@@ -4,9 +4,11 @@ import argparse
 import json
 import logging
 import os
+import socket
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -15,6 +17,8 @@ from .data_sources import create_data_provider
 from .daily_screening import run_daily_screening
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
+from .indicators import add_indicators
+from .intraday_ranking import save_intraday_rankings
 from .ml_dataset import build_probability_dataset, infer_split_dates, split_probability_dataset
 from .ml_evaluation import evaluate_trained_artifact
 from .ml_models import load_model_artifact, normalize_model_names, predict_with_model, train_and_save_models
@@ -33,9 +37,36 @@ from .reporting import format_multi_pattern_summary, format_report
 from .screener import Screener, parse_as_of
 from .storage import Storage
 from .strategies import STRATEGY_NAMES
+from .trend_backtest import backtest_portfolios, backtest_signal_returns, summarize_signal_backtest
+from .trend_indicator_scores import build_next_open_entries, scan_indicator_scored_entries, select_tradable_entries
+from .trend_reporting import (
+    save_entry_backtest_reports,
+    save_entry_portfolio_backtest_reports,
+    save_macd_report,
+    save_portfolio_backtest_reports,
+    save_signal_backtest_reports,
+    save_threshold_research_reports,
+    save_trend_report,
+    save_trend_entries_report,
+    save_trend_scores_report,
+    save_trend_signals_report,
+    save_trend_universe_report,
+)
+from .trend_signals import scan_trend_signals
+from .trend_threshold_research import (
+    build_default_threshold_candidates,
+    build_combo_threshold_candidates,
+    build_threshold_research_dataset,
+    derive_threshold_candidates,
+    evaluate_combo_thresholds,
+    evaluate_threshold_candidates,
+    summarize_indicator_distributions,
+)
+from .trend_universe import scan_trend_universe
 from .universe import build_main_board_universe
 from .watchlist import (
     build_watchlist_candidates_from_patterns,
+    build_watchlist_candidates_from_trend,
     extract_watchlist_symbols,
     find_latest_watchlist_before,
     load_watchlist,
@@ -72,6 +103,7 @@ PATTERN_LABEL_MAP = {
     "type4": "4",
 }
 PROGRESS_LOG_INTERVAL = 100
+LOCAL_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,12 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
             "  3. mystock plot 603588\n"
             "     查看单只股票近两年的 K 线和成交量图。\n\n"
             "常见示例：\n"
-            "  mystock update --start-date 20240101 --skip-existing\n"
             "  mystock update 603588 --start-date 20240101\n"
             "  mystock pattern --1 --4\n"
             "  mystock report --date 2026-04-10\n"
             "  mystock tradingview --date 2026-04-10\n"
-            "  mystock divergence --date 2026-04-10\n"
+            "  mystock macd --date 2026-04-10\n"
             "  mystock train-prob\n"
             "  mystock predict-prob --date 2026-04-10\n"
         ),
@@ -116,7 +147,6 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "常见示例：\n"
             "  mystock update --start-date 20240101\n"
-            "  mystock update --start-date 20240101 --skip-existing\n"
             "  mystock update 603588 --start-date 20240101\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
@@ -125,8 +155,6 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--start-date", default="20230101", help="开始日期，格式 YYYYMMDD")
     update.add_argument("--end-date", default=datetime.today().strftime("%Y%m%d"), help="结束日期，格式 YYYYMMDD")
     update.add_argument("--limit", type=int, default=None, help="仅更新前 N 只股票，便于小范围测试")
-    update.add_argument("--skip-existing", action="store_true", help="跳过本地已有缓存的股票")
-
     pattern = subparsers.add_parser(
         "pattern",
         help="识别本地日线数据中的 1 到 4 号模式",
@@ -194,15 +222,15 @@ def build_parser() -> argparse.ArgumentParser:
     tradingview.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
     tradingview.add_argument("--output", default=None, help="可选的 CSV 输出路径")
 
-    divergence = subparsers.add_parser(
-        "divergence",
-        help="识别指定日期最近 15 个交易日内的 MACD 顶背离/底背离",
-        description="读取本地主板日线数据，输出全市场 TradingView 评分和 MACD 背离识别汇总。",
+    macd = subparsers.add_parser(
+        "macd",
+        help="生成指定日期的 MACD/量价统一技术状态表",
+        description="读取本地主板日线数据，输出金叉死叉、MACD 背离和量价背离的统一状态表。",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    divergence.add_argument("--date", required=True, help="识别日期，格式 YYYY-MM-DD")
-    divergence.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
-    divergence.add_argument("--output", default=None, help="可选的 CSV 输出路径")
+    macd.add_argument("--date", required=True, help="识别日期，格式 YYYY-MM-DD")
+    macd.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    macd.add_argument("--output", default=None, help="可选的 CSV 输出路径")
 
     train_prob = subparsers.add_parser(
         "train-prob",
@@ -241,7 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily_screening = subparsers.add_parser(
         "daily-screening",
         help="按交易日执行每日筛选，并生成当日 watchlist",
-        description="自动判断是否为交易日，串行执行 update/tradingview/divergence/pattern，再生成当日 watchlist。",
+        description="自动判断是否为交易日，串行执行 update/tradingview/macd/trend-universe/pattern，再生成当日 watchlist。",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     daily_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
@@ -250,13 +278,123 @@ def build_parser() -> argparse.ArgumentParser:
     intraday_screening = subparsers.add_parser(
         "intraday-screening",
         help="读取 watchlist，只对候选股执行盘中复筛",
-        description="自动读取上一交易日或指定日期的 watchlist，只更新候选股并执行 tradingview/divergence/pattern。",
+        description="自动读取上一交易日或指定日期的 watchlist，只更新候选股并执行盘中复筛。",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     intraday_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     intraday_screening.add_argument("--watchlist-date", default=None, help="watchlist 日期，格式 YYYY-MM-DD")
     intraday_screening.add_argument("--start-date", default="20240101", help="更新数据的起始日期，格式 YYYYMMDD")
     intraday_screening.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+
+    trend = subparsers.add_parser(
+        "trend",
+        help="输出指定日期的全市场趋势评分结果",
+        description="扫描全市场并输出指定日期的趋势评分结果，供 daily-screening 与 watchlist 复核复用。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    trend.add_argument("--date", required=True, help="目标日期，格式 YYYY-MM-DD")
+    trend.add_argument("--top-n", type=int, default=30, help="终端展示前 N 行")
+    trend.add_argument("--output", default=None, help="可选的趋势评分 CSV 输出路径")
+
+    trend_universe = subparsers.add_parser(
+        "trend-universe",
+        help="生成指定日期的趋势股池和趋势评分",
+        description="扫描本地主板日线数据，识别趋势股池并输出趋势评分。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    trend_universe.add_argument("--date", required=True, help="目标日期，格式 YYYY-MM-DD")
+    trend_universe.add_argument("--top-n", type=int, default=30, help="终端展示前 N 行")
+    trend_universe.add_argument("--output", default=None, help="可选的趋势股池 CSV 输出路径")
+
+    trend_signals = subparsers.add_parser(
+        "trend-signals",
+        help="在趋势股池上生成 breakout 和 pullback 信号",
+        description="读取本地日线数据，先识别趋势股池，再生成 breakout 和 pullback 两类趋势信号。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    trend_signals.add_argument("--date", required=True, help="目标日期，格式 YYYY-MM-DD")
+    trend_signals.add_argument("--top-n", type=int, default=30, help="终端展示前 N 行")
+    trend_signals.add_argument("--output", default=None, help="可选的趋势信号 CSV 输出路径")
+
+    trend_score = subparsers.add_parser(
+        "trend-score",
+        help="对趋势 setup 做多指标打分",
+        description="在 breakout 和 pullback setup 上叠加 MACD/RSI/BOLL/KDJ/ATR/量价等指标，输出买入评分。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    trend_score.add_argument("--date", required=True, help="目标日期，格式 YYYY-MM-DD")
+    trend_score.add_argument("--top-n", type=int, default=30, help="终端展示前 N 行")
+    trend_score.add_argument("--output", default=None, help="可选的评分 CSV 输出路径")
+
+    trend_entries = subparsers.add_parser(
+        "trend-entries",
+        help="输出按次日开盘执行的趋势买入候选",
+        description="读取收盘后的多指标评分结果，生成 planned_entry_date 为次日开盘的趋势买入候选。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    trend_entries.add_argument("--date", required=True, help="目标日期，格式 YYYY-MM-DD")
+    trend_entries.add_argument("--top-n", type=int, default=30, help="终端展示前 N 行")
+    trend_entries.add_argument("--output", default=None, help="可选的次日开盘候选 CSV 输出路径")
+
+    backtest_signals = subparsers.add_parser(
+        "backtest-signals",
+        help="运行趋势信号的固定持有回测",
+        description="对 breakout 和 pullback 信号做 5/10/20/40 日固定持有回测。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    backtest_signals.add_argument("--date", required=True, help="回测截止日期，格式 YYYY-MM-DD")
+    backtest_signals.add_argument("--start-date", default=None, help="回测开始日期，格式 YYYY-MM-DD")
+    backtest_signals.add_argument("--output", default=None, help="可选的回测明细 CSV 输出路径")
+    backtest_signals.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+
+    backtest_portfolio = subparsers.add_parser(
+        "backtest-portfolio",
+        help="运行趋势信号的组合回测",
+        description="每天按评分选择前 N 只趋势信号，执行固定持有组合回测。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    backtest_portfolio.add_argument("--date", required=True, help="回测截止日期，格式 YYYY-MM-DD")
+    backtest_portfolio.add_argument("--start-date", default=None, help="回测开始日期，格式 YYYY-MM-DD")
+    backtest_portfolio.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+
+    backtest_entries = subparsers.add_parser(
+        "backtest-entries",
+        help="运行次日开盘入场的趋势回测",
+        description="基于收盘评分，在次日开盘买入并执行固定持有回测。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    backtest_entries.add_argument("--date", required=True, help="回测截止日期，格式 YYYY-MM-DD")
+    backtest_entries.add_argument("--start-date", default=None, help="回测开始日期，格式 YYYY-MM-DD")
+    backtest_entries.add_argument("--output", default=None, help="可选的回测明细 CSV 输出路径")
+    backtest_entries.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+
+    backtest_entries_portfolio = subparsers.add_parser(
+        "backtest-entries-portfolio",
+        help="运行次日开盘入场的组合回测",
+        description="基于收盘评分，在次日开盘执行前 N 等权组合回测。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    backtest_entries_portfolio.add_argument("--date", required=True, help="回测截止日期，格式 YYYY-MM-DD")
+    backtest_entries_portfolio.add_argument("--start-date", default=None, help="回测开始日期，格式 YYYY-MM-DD")
+    backtest_entries_portfolio.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+
+    research_thresholds = subparsers.add_parser(
+        "research-thresholds",
+        help="研究趋势买点评分阈值",
+        description="基于历史样本比较强弱组指标分布，生成阈值候选和阈值回测对比表。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    research_thresholds.add_argument("--date", required=True, help="研究截止日期，格式 YYYY-MM-DD")
+    research_thresholds.add_argument("--start-date", required=True, help="研究开始日期，格式 YYYY-MM-DD")
+    research_thresholds.add_argument(
+        "--sample-mode",
+        choices=["daily", "weekly", "monthly"],
+        default="monthly",
+        help="历史截面抽样方式，默认 monthly",
+    )
+    research_thresholds.add_argument("--train-end-date", default=None, help="可选的样本内结束日期，格式 YYYY-MM-DD")
+    research_thresholds.add_argument("--output", default=None, help="可选的样本明细 CSV 输出路径")
+    research_thresholds.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
 
     return parser
 
@@ -267,6 +405,7 @@ def main() -> None:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(levelname)s %(message)s")
 
     project_root = Path(args.project_root).resolve()
+    _load_local_env(project_root / ".env.local")
     config = load_config(project_root / args.config)
     _configure_network(config.network)
     paths = ProjectPaths(project_root, config.storage)
@@ -284,7 +423,6 @@ def main() -> None:
                 args.start_date,
                 args.end_date,
                 args.limit,
-                args.skip_existing,
             )
         finally:
             provider.close()
@@ -315,10 +453,11 @@ def main() -> None:
         )
         return
 
-    if args.command == "divergence":
-        _run_divergence(
+    if args.command == "macd":
+        _run_macd(
             storage=storage,
             config=config,
+            paths=paths,
             trade_date=datetime.fromisoformat(args.date).date(),
             top_n=args.top_n,
             output=args.output,
@@ -380,6 +519,121 @@ def main() -> None:
         print(f"报告文件：{result['report_path']}")
         return
 
+    if args.command == "trend":
+        _run_trend(
+            storage=storage,
+            config=config,
+            paths=paths,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "trend-universe":
+        _run_trend_universe(
+            storage=storage,
+            config=config,
+            paths=paths,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "trend-signals":
+        _run_trend_signals(
+            storage=storage,
+            config=config,
+            paths=paths,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "trend-score":
+        _run_trend_score(
+            storage=storage,
+            config=config,
+            paths=paths,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "trend-entries":
+        _run_trend_entries(
+            storage=storage,
+            config=config,
+            paths=paths,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "backtest-signals":
+        _run_backtest_signals(
+            storage=storage,
+            config=config,
+            paths=paths,
+            end_date=datetime.fromisoformat(args.date).date(),
+            start_date=_parse_optional_date(args.start_date),
+            output=args.output,
+            top_n=args.top_n,
+        )
+        return
+
+    if args.command == "backtest-portfolio":
+        _run_backtest_portfolio(
+            storage=storage,
+            config=config,
+            paths=paths,
+            end_date=datetime.fromisoformat(args.date).date(),
+            start_date=_parse_optional_date(args.start_date),
+            top_n=args.top_n,
+        )
+        return
+
+    if args.command == "backtest-entries":
+        _run_backtest_entries(
+            storage=storage,
+            config=config,
+            paths=paths,
+            end_date=datetime.fromisoformat(args.date).date(),
+            start_date=_parse_optional_date(args.start_date),
+            output=args.output,
+            top_n=args.top_n,
+        )
+        return
+
+    if args.command == "backtest-entries-portfolio":
+        _run_backtest_entries_portfolio(
+            storage=storage,
+            config=config,
+            paths=paths,
+            end_date=datetime.fromisoformat(args.date).date(),
+            start_date=_parse_optional_date(args.start_date),
+            top_n=args.top_n,
+        )
+        return
+
+    if args.command == "research-thresholds":
+        _run_research_thresholds(
+            storage=storage,
+            config=config,
+            paths=paths,
+            end_date=datetime.fromisoformat(args.date).date(),
+            start_date=datetime.fromisoformat(args.start_date).date(),
+            sample_mode=args.sample_mode,
+            train_end_date=_parse_optional_date(args.train_end_date),
+            output=args.output,
+            top_n=args.top_n,
+        )
+        return
+
     parser.error(f"Unknown command: {args.command}")
 
 
@@ -392,13 +646,17 @@ def _run_update(
     start_date: str,
     end_date: str,
     limit: int | None,
-    skip_existing: bool,
 ) -> None:
     if symbol:
         normalized_symbol = str(symbol).zfill(6)
-        bars = provider.get_daily_bars(normalized_symbol, start_date=start_date, end_date=end_date, adjust=adjust)
-        target = storage.save_daily_bars(normalized_symbol, bars)
-        logging.info("Cached %s rows for %s to %s", len(bars), normalized_symbol, target)
+        _update_daily_cache_for_symbol(
+            storage=storage,
+            provider=provider,
+            symbol=normalized_symbol,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
         return
 
     universe = _refresh_or_load_universe(storage, provider, exclude_st)
@@ -407,32 +665,102 @@ def _run_update(
         symbols = symbols[:limit]
 
     success_count = 0
-    skipped_count = 0
     failed_symbols: list[str] = []
 
     for index, item_symbol in enumerate(symbols, start=1):
-        if skip_existing and storage.has_daily_bars(item_symbol):
-            skipped_count += 1
-            logging.info("[%s/%s] skipped existing cache for %s", index, len(symbols), item_symbol)
-            continue
-
         try:
-            bars = provider.get_daily_bars(item_symbol, start_date=start_date, end_date=end_date, adjust=adjust)
-            storage.save_daily_bars(item_symbol, bars)
+            _update_daily_cache_for_symbol(
+                storage=storage,
+                provider=provider,
+                symbol=item_symbol,
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust,
+            )
             success_count += 1
-            logging.info("[%s/%s] cached %s rows for %s", index, len(symbols), len(bars), item_symbol)
         except Exception as exc:
             failed_symbols.append(item_symbol)
             logging.warning("[%s/%s] failed to fetch %s: %s", index, len(symbols), item_symbol, exc)
 
     logging.info(
-        "Daily update finished: success=%s skipped=%s failed=%s",
+        "Daily update finished: success=%s failed=%s",
         success_count,
-        skipped_count,
         len(failed_symbols),
     )
     if failed_symbols:
         logging.warning("Failed symbols sample: %s", ", ".join(failed_symbols[:20]))
+
+
+def _update_daily_cache_for_symbol(
+    *,
+    storage: Storage,
+    provider,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust: str,
+) -> Path:
+    try:
+        cached = storage.load_daily_bars(symbol)
+    except FileNotFoundError:
+        fresh = provider.get_daily_bars(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
+        target = storage.save_daily_bars(symbol, fresh)
+        logging.info("Initialized %s rows for %s to %s", len(fresh), symbol, target)
+        return target
+
+    cached_frame = cached.copy()
+    if cached_frame.empty:
+        fresh = provider.get_daily_bars(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
+        target = storage.save_daily_bars(symbol, fresh)
+        logging.info("Initialized %s rows for %s to %s", len(fresh), symbol, target)
+        return target
+
+    cached_frame["trade_date"] = pd.to_datetime(cached_frame["trade_date"], errors="coerce")
+    valid_dates = cached_frame["trade_date"].dropna()
+    if valid_dates.empty:
+        logging.warning("Cached daily bars for %s have no valid trade_date values; rebuilding from %s", symbol, start_date)
+        fresh = provider.get_daily_bars(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
+        target = storage.save_daily_bars(symbol, fresh)
+        logging.info("Rebuilt %s rows for %s to %s", len(fresh), symbol, target)
+        return target
+
+    last_trade_date = valid_dates.max().date()
+    requested_end_date = datetime.strptime(end_date, "%Y%m%d").date()
+    incremental_start_date = last_trade_date + timedelta(days=1)
+    target = storage.paths.daily_dir / f"{symbol}.parquet"
+    if incremental_start_date > requested_end_date:
+        logging.info(
+            "Skip %s because cached daily bars already cover %s (last=%s)",
+            symbol,
+            requested_end_date.isoformat(),
+            last_trade_date.isoformat(),
+        )
+        return target
+
+    incremental_start = incremental_start_date.strftime("%Y%m%d")
+    fresh = provider.get_daily_bars(symbol, start_date=incremental_start, end_date=end_date, adjust=adjust)
+    if fresh.empty:
+        logging.info(
+            "No new daily bars returned for %s from %s to %s",
+            symbol,
+            incremental_start_date.isoformat(),
+            requested_end_date.isoformat(),
+        )
+        return target
+
+    merged = pd.concat([cached_frame, fresh], ignore_index=True)
+    merged["trade_date"] = pd.to_datetime(merged["trade_date"], errors="coerce")
+    merged = merged.dropna(subset=["trade_date"]).drop_duplicates(subset=["trade_date"], keep="last")
+    merged = merged.sort_values("trade_date").reset_index(drop=True)
+    target = storage.save_daily_bars(symbol, merged)
+    logging.info(
+        "Appended %s rows for %s from %s to %s",
+        len(fresh),
+        symbol,
+        incremental_start,
+        target,
+    )
+    return target
 
 
 def _run_pattern(
@@ -451,7 +779,10 @@ def _run_pattern(
     results = screener.run(as_of=as_of, selected_strategies=selected_patterns, symbols=symbols)
     exported = _prepare_pattern_results(results)
     exported = _append_recent_tradingview_scores(storage, exported, as_of=as_of, lookback_days=5, symbols=symbols)
-    exported = _append_recent_macd_divergence(storage, exported, as_of=as_of, symbols=symbols)
+    exported = _append_recent_macd_summary(storage, exported, as_of=as_of, symbols=symbols)
+    trend_universe = _load_or_build_trend_universe_summary(storage, config=config, trade_date=as_of, symbols=symbols)
+    exported = _append_recent_trend_universe_summary(exported, trend_universe)
+    exported = _append_recent_trend_summary(storage, config=config, exported=exported, as_of=as_of, symbols=symbols)
 
     output_path = Path(output) if output else _default_pattern_output_path(
         storage,
@@ -465,18 +796,24 @@ def _run_pattern(
         source_file=str(output_path),
         limit=config.screening.output_limit,
     )
-    watchlist_target = write_watchlist(
+    write_watchlist(
         project_root=storage.paths.root,
         trade_date=as_of,
         picker_payload=watchlist_payload,
     )
-    logging.info("Saved watchlist to %s", watchlist_target)
+    pattern_watchlist_target = write_watchlist(
+        project_root=storage.paths.root,
+        trade_date=as_of,
+        picker_payload=watchlist_payload,
+        kind="pattern",
+    )
+    logging.info("Saved pattern watchlist to %s", pattern_watchlist_target)
 
     if exported.empty:
         logging.info("No patterns matched for %s", as_of.isoformat())
         logging.info("Saved empty pattern report to %s", output_path)
         print(f"No patterns matched. Saved empty CSV to {output_path}")
-        print(f"Saved watchlist to {watchlist_target}")
+        print(f"Saved pattern watchlist to {pattern_watchlist_target}")
         return
 
     multi_pattern_summary = format_multi_pattern_summary(exported)
@@ -487,7 +824,7 @@ def _run_pattern(
     if plot_all:
         plots_dir = _plot_pattern_matches(storage, config, as_of, results)
         print(f"\n已生成图形目录: {plots_dir}")
-    print(f"\nSaved watchlist to {watchlist_target}")
+    print(f"\nSaved pattern watchlist to {pattern_watchlist_target}")
     logging.info("Saved %s pattern rows to %s", len(exported), output_path)
 
 
@@ -565,36 +902,384 @@ def _run_tradingview(
     print(f"Saved {len(daily_frames)} daily TradingView files to {output_path.parent}")
 
 
-def _run_divergence(
+def _run_macd(
     storage: Storage,
     config,
+    paths: ProjectPaths,
     trade_date: date,
     top_n: int,
     output: str | None,
     symbols: list[str] | None = None,
 ) -> None:
     _ensure_universe(storage, config.provider, config.universe.exclude_st)
-    summary = _load_or_build_macd_divergence_summary(storage, trade_date=trade_date, symbols=symbols)
+    summary = _load_or_build_macd_summary(storage, trade_date=trade_date, symbols=symbols)
     if summary.empty:
-        raise RuntimeError(f"No MACD divergence summary could be generated for {trade_date.isoformat()}")
-
-    output_path = Path(output) if output else storage.paths.reports_dir / "divergence" / f"macd_divergence_{trade_date.isoformat()}.csv"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(output_path, index=False, encoding="utf-8-sig")
+        raise RuntimeError(f"No MACD summary could be generated for {trade_date.isoformat()}")
+    report_paths = save_macd_report(paths, trade_date=trade_date, dataframe=summary, output=output)
 
     display_columns = [
         "symbol",
         "name",
-        "avg_all_rating_5d",
-        "all_rating_label",
+        "macd_cross_state",
+        "macd_divergence_state",
+        "volume_price_divergence_state",
         "macd_top_divergence_15d",
         "macd_bottom_divergence_15d",
-        "macd_top_divergence_signal_date",
-        "macd_bottom_divergence_signal_date",
     ]
     available = [column for column in display_columns if column in summary.columns]
     print(summary.loc[:, available].head(top_n).to_string(index=False))
-    print(f"\nSaved MACD divergence summary to {output_path}")
+    print(f"\nMACD 状态文件：{report_paths['detail_path']}")
+
+
+def _run_trend_universe(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    summary = scan_trend_universe(storage, config, as_of=trade_date)
+    report_paths = save_trend_universe_report(paths, trade_date=trade_date, dataframe=summary, output=output)
+    print(
+        _format_dataframe(
+            summary,
+            ["trade_date", "symbol", "name", "trend_score", "trend_direction_score", "trend_strength_score"],
+            top_n,
+        )
+    )
+    print(f"\n趋势股池文件：{report_paths['detail_path']}")
+
+
+def _run_trend_signals(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    signals = scan_trend_signals(storage, config, trade_date=trade_date)
+    report_paths = save_trend_signals_report(paths, trade_date=trade_date, dataframe=signals, output=output)
+    print(
+        _format_dataframe(
+            signals,
+            ["trade_date", "symbol", "name", "signal_type", "trend_score", "entry_score", "trigger_reason"],
+            top_n,
+        )
+    )
+    print(f"\n趋势信号文件：{report_paths['detail_path']}")
+
+
+def _run_trend_score(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    scored = scan_indicator_scored_entries(storage, config, trade_date=trade_date)
+    report_paths = save_trend_scores_report(paths, trade_date=trade_date, dataframe=scored, output=output)
+    print(
+        _format_dataframe(
+            scored,
+            ["trade_date", "symbol", "name", "setup_type", "buy_score", "trend_base_score", "price_action_score", "macd_score"],
+            top_n,
+        )
+    )
+    print(f"\n趋势评分文件：{report_paths['detail_path']}")
+
+
+def _run_trend(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    scored = scan_indicator_scored_entries(storage, config, trade_date=trade_date)
+    report_paths = save_trend_report(paths, trade_date=trade_date, dataframe=scored, output=output)
+    watchlist_payload = build_watchlist_candidates_from_trend(
+        scored,
+        source_file=str(report_paths["detail_path"]),
+        thresholds=config.pick_trend_watchlist,
+        limit=config.screening.output_limit,
+    )
+    trend_watchlist_target = write_watchlist(
+        project_root=paths.root,
+        trade_date=trade_date,
+        picker_payload=watchlist_payload,
+        kind="trend",
+    )
+    print(
+        _format_dataframe(
+            scored,
+            [
+                "trade_date",
+                "symbol",
+                "name",
+                "signal_type",
+                "buy_score",
+                "price_action_score",
+                "macd_cross_state",
+                "macd_divergence_state",
+                "volume_price_divergence_state",
+            ],
+            top_n,
+        )
+    )
+    print(f"\n趋势复核文件：{report_paths['detail_path']}")
+    print(f"趋势候选文件：{trend_watchlist_target}")
+
+
+def _run_trend_entries(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    scored = scan_indicator_scored_entries(storage, config, trade_date=trade_date)
+    entries = select_tradable_entries(scored, config)
+    report_paths = save_trend_entries_report(paths, trade_date=trade_date, dataframe=entries, output=output)
+    print(
+        _format_dataframe(
+            entries,
+            ["trade_date", "planned_entry_date", "symbol", "name", "setup_type", "buy_score", "positive_indicator_count", "buy_reason"],
+            top_n,
+        )
+    )
+    print(f"\n次日开盘候选文件：{report_paths['detail_path']}")
+
+
+def _run_backtest_signals(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    end_date: date,
+    start_date: date | None,
+    output: str | None,
+    top_n: int,
+) -> None:
+    signals = scan_trend_signals(storage, config, start_date=start_date, end_date=end_date)
+    daily_history = _load_daily_history_map(storage, signals["symbol"].astype(str).tolist() if not signals.empty else [])
+    detail = backtest_signal_returns(signals, daily_history, config.trend_backtest)
+    summary = summarize_signal_backtest(detail)
+    report_paths = save_signal_backtest_reports(paths, report_date=end_date, detail=detail, summary=summary, output=output)
+    print(
+        _format_dataframe(
+            summary,
+            ["sample_group", "signal_type", "holding_days", "signal_count", "win_rate", "avg_return_pct", "avg_max_drawdown_pct"],
+            top_n,
+        )
+    )
+    print(f"\n信号回测明细：{report_paths['detail_path']}")
+    print(f"信号回测汇总：{report_paths['summary_path']}")
+
+
+def _run_backtest_entries(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    end_date: date,
+    start_date: date | None,
+    output: str | None,
+    top_n: int,
+) -> None:
+    scored = scan_indicator_scored_entries(storage, config, start_date=start_date, end_date=end_date)
+    entries = select_tradable_entries(scored, config)
+    daily_history = _load_daily_history_map(storage, entries["symbol"].astype(str).tolist() if not entries.empty else [])
+    detail = backtest_signal_returns(entries, daily_history, config.trend_backtest, entry_timing="next_open")
+    summary = summarize_signal_backtest(detail)
+    report_paths = save_entry_backtest_reports(paths, report_date=end_date, detail=detail, summary=summary, output=output)
+    print(
+        _format_dataframe(
+            summary,
+            ["sample_group", "signal_type", "holding_days", "signal_count", "win_rate", "avg_return_pct", "avg_buy_score"],
+            top_n,
+        )
+    )
+    print(f"\n次日开盘回测明细：{report_paths['detail_path']}")
+    print(f"次日开盘回测汇总：{report_paths['summary_path']}")
+
+
+def _run_backtest_portfolio(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    end_date: date,
+    start_date: date | None,
+    top_n: int,
+) -> None:
+    signals = scan_trend_signals(storage, config, start_date=start_date, end_date=end_date)
+    daily_history = _load_daily_history_map(storage, signals["symbol"].astype(str).tolist() if not signals.empty else [])
+    backtest_outputs = backtest_portfolios(signals, daily_history, config.trend_backtest)
+    report_paths = save_portfolio_backtest_reports(
+        paths,
+        report_date=end_date,
+        positions=backtest_outputs["positions"],
+        equity=backtest_outputs["equity"],
+        summary=backtest_outputs["summary"],
+    )
+    print(
+        _format_dataframe(
+            backtest_outputs["summary"],
+            ["portfolio_top_n", "holding_days", "position_count", "win_rate", "final_net_value", "max_drawdown"],
+            top_n,
+        )
+    )
+    print(f"\n组合回测持仓：{report_paths['positions_path']}")
+    print(f"组合回测净值：{report_paths['equity_path']}")
+    print(f"组合回测汇总：{report_paths['summary_path']}")
+
+
+def _run_backtest_entries_portfolio(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    end_date: date,
+    start_date: date | None,
+    top_n: int,
+) -> None:
+    scored = scan_indicator_scored_entries(storage, config, start_date=start_date, end_date=end_date)
+    entries = select_tradable_entries(scored, config)
+    daily_history = _load_daily_history_map(storage, entries["symbol"].astype(str).tolist() if not entries.empty else [])
+    backtest_outputs = backtest_portfolios(
+        entries,
+        daily_history,
+        config.trend_backtest,
+        entry_timing="next_open",
+        rank_column="buy_score",
+    )
+    report_paths = save_entry_portfolio_backtest_reports(
+        paths,
+        report_date=end_date,
+        positions=backtest_outputs["positions"],
+        equity=backtest_outputs["equity"],
+        summary=backtest_outputs["summary"],
+    )
+    print(
+        _format_dataframe(
+            backtest_outputs["summary"],
+            ["portfolio_top_n", "holding_days", "position_count", "win_rate", "final_net_value", "avg_buy_score"],
+            top_n,
+        )
+    )
+    print(f"\n次日开盘组合持仓：{report_paths['positions_path']}")
+    print(f"次日开盘组合净值：{report_paths['equity_path']}")
+    print(f"次日开盘组合汇总：{report_paths['summary_path']}")
+
+
+def _run_research_thresholds(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    end_date: date,
+    start_date: date,
+    sample_mode: str,
+    train_end_date: date | None,
+    output: str | None,
+    top_n: int,
+) -> None:
+    dataset = build_threshold_research_dataset(
+        storage,
+        config,
+        start_date=start_date,
+        end_date=end_date,
+        sample_mode=sample_mode,
+        train_end_date=train_end_date,
+    )
+    if dataset.empty:
+        raise RuntimeError("No threshold research samples could be generated for the requested range")
+
+    logging.info("Threshold research stage: summarizing indicator distributions")
+    distributions = summarize_indicator_distributions(dataset)
+    logging.info("Threshold research stage: deriving threshold candidates")
+    candidates = derive_threshold_candidates(distributions)
+    logging.info("Threshold research stage: evaluating single-metric thresholds")
+    candidate_evaluation = evaluate_threshold_candidates(dataset, candidates)
+    logging.info("Threshold research stage: building combo threshold candidates")
+    combo_candidates = build_combo_threshold_candidates(candidates, config)
+    logging.info("Threshold research stage: evaluating combo thresholds")
+    combo_evaluation = evaluate_combo_thresholds(dataset, combo_candidates)
+    logging.info("Threshold research stage: summarizing signal-specific default candidates")
+    default_candidates = build_default_threshold_candidates(candidates, combo_candidates, combo_evaluation)
+    logging.info("Threshold research stage: writing reports")
+    report_paths = save_threshold_research_reports(
+        paths,
+        report_date=end_date,
+        samples=dataset,
+        distributions=distributions,
+        candidates=candidates,
+        candidate_evaluation=candidate_evaluation,
+        combo_candidates=combo_candidates,
+        combo_evaluation=combo_evaluation,
+        default_candidates=default_candidates,
+        output=output,
+    )
+
+    display = candidates[
+        (candidates["dataset_split"] == "all_period") & (candidates["signal_scope"] == "all") & (candidates["candidate_type"] == "balanced")
+    ].copy()
+    if display.empty:
+        display = candidates.copy()
+    print(
+        _format_dataframe(
+            display,
+            ["dataset_split", "holding_days", "metric", "candidate_type", "threshold", "separation_gap", "strong_p20", "weak_p80"],
+            top_n,
+        )
+    )
+
+    if not combo_evaluation.empty:
+        combo_display = combo_evaluation[
+            (combo_evaluation["dataset_split"] == "all_period") & (combo_evaluation["signal_scope"] == "all")
+        ].copy()
+        if combo_display.empty:
+            combo_display = combo_evaluation.copy()
+        print(
+            "\n组合阈值对比：\n"
+            + _format_dataframe(
+                combo_display,
+                ["dataset_split", "holding_days", "combo_name", "selected_count", "coverage", "win_rate", "avg_return_pct"],
+                min(top_n, 10),
+            )
+        )
+
+    if not default_candidates.empty:
+        default_display = default_candidates[default_candidates["dataset_split"] == "all_period"].copy()
+        if default_display.empty:
+            default_display = default_candidates.copy()
+        print(
+            "\n分信号候选默认阈值：\n"
+            + _format_dataframe(
+                default_display,
+                [
+                    "signal_scope",
+                    "holding_days",
+                    "recommended_combo_name",
+                    "buy_score_min",
+                    "trend_base_score_min",
+                    "price_action_score_min",
+                    "macd_score_min",
+                    "positive_indicator_count_min",
+                    "avg_return_pct",
+                    "current_default_avg_return_pct",
+                ],
+                top_n,
+            )
+        )
+
+    print(f"\n阈值研究样本：{report_paths['samples_path']}")
+    print(f"指标分布对比：{report_paths['distributions_path']}")
+    print(f"候选阈值：{report_paths['candidates_path']}")
+    print(f"单指标阈值回测：{report_paths['candidate_evaluation_path']}")
+    print(f"组合阈值候选：{report_paths['combo_candidates_path']}")
+    print(f"组合阈值回测：{report_paths['combo_evaluation_path']}")
+    print(f"分信号默认阈值：{report_paths['default_candidates_path']}")
 
 
 def _run_intraday_screening(
@@ -623,55 +1308,13 @@ def _run_intraday_screening(
 
     intraday_dir = storage.paths.reports_dir / "intraday_screening" / trade_date.isoformat()
     intraday_dir.mkdir(parents=True, exist_ok=True)
-
-    provider = create_data_provider(config.provider)
-    try:
-        for index, symbol in enumerate(symbols, start=1):
-            logging.info("Intraday update progress: %s/%s %s", index, len(symbols), symbol)
-            _run_update(
-                storage=storage,
-                provider=provider,
-                exclude_st=config.universe.exclude_st,
-                adjust=config.adjustment,
-                symbol=symbol,
-                start_date=start_date,
-                end_date=trade_date.strftime("%Y%m%d"),
-                limit=None,
-                skip_existing=False,
-            )
-    finally:
-        provider.close()
-
-    tradingview_path = intraday_dir / f"tradingview_avg5_{trade_date.isoformat()}.csv"
-    divergence_path = intraday_dir / f"macd_divergence_{trade_date.isoformat()}.csv"
-    pattern_path = intraday_dir / f"patterns_all_{trade_date.isoformat()}.csv"
-
-    _run_tradingview(
-        storage=storage,
-        config=config,
+    intraday_rank_path = intraday_dir / f"intraday_rank_{trade_date.isoformat()}.csv"
+    ranking_result = save_intraday_rankings(
         trade_date=trade_date,
-        top_n=top_n,
-        output=str(tradingview_path),
-        symbols=symbols,
-    )
-    _run_divergence(
-        storage=storage,
-        config=config,
-        trade_date=trade_date,
-        top_n=top_n,
-        output=str(divergence_path),
-        symbols=symbols,
-    )
-    _run_pattern(
-        storage=storage,
-        provider_name=config.provider,
-        config=config,
-        as_of=trade_date,
-        selected_patterns=list(STRATEGY_NAMES),
-        limit=top_n,
-        output=str(pattern_path),
-        plot_all=False,
-        symbols=symbols,
+        intraday_provider=config.intraday_provider,
+        adjust=config.adjustment,
+        watchlist_payload=watchlist_payload,
+        output_path=intraday_rank_path,
     )
 
     report_path = intraday_dir / f"intraday_screening_{trade_date.isoformat()}.json"
@@ -681,13 +1324,19 @@ def _run_intraday_screening(
         "watchlist_path": str(resolved_watchlist_path),
         "symbol_count": len(symbols),
         "symbols": symbols,
-        "tradingview_path": str(tradingview_path),
-        "divergence_path": str(divergence_path),
-        "pattern_path": str(pattern_path),
+        "intraday_rank_path": str(intraday_rank_path),
+        "successful_symbol_count": int(ranking_result["processed_count"]),
+        "failed_symbol_count": int(ranking_result["failed_count"]),
+        "failed_symbols": ranking_result["failed_symbols"],
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    failed_count = int(ranking_result["failed_count"])
+    failure_note = f"，失败 {failed_count} 只" if failed_count else ""
     return {
-        "message": f"已完成 {trade_date.isoformat()} 盘中复筛，基于 {resolved_watchlist_date.isoformat()} watchlist 共处理 {len(symbols)} 只股票。",
+        "message": (
+            f"已完成 {trade_date.isoformat()} 盘中复筛，基于 {resolved_watchlist_date.isoformat()} watchlist "
+            f"共处理 {len(symbols)} 只股票，成功 {int(ranking_result['processed_count'])} 只{failure_note}。"
+        ),
         "report_path": report_path,
     }
 
@@ -803,6 +1452,25 @@ def _run_predict_prob(
     print(f"\nSaved probability ranking to {output_path}")
 
 
+def _load_daily_history_map(storage: Storage, symbols: list[str]) -> dict[str, pd.DataFrame]:
+    history: dict[str, pd.DataFrame] = {}
+    for symbol in {str(item).zfill(6) for item in symbols}:
+        try:
+            history[symbol] = storage.load_daily_bars(symbol)
+        except FileNotFoundError:
+            continue
+    return history
+
+
+def _format_dataframe(dataframe: pd.DataFrame, columns: list[str], top_n: int) -> str:
+    if dataframe.empty:
+        return "No rows matched."
+    available = [column for column in columns if column in dataframe.columns]
+    if not available:
+        return dataframe.head(top_n).to_string(index=False)
+    return dataframe.loc[:, available].head(top_n).to_string(index=False)
+
+
 def _run_xueqiu_archive(
     paths: ProjectPaths,
     *,
@@ -899,7 +1567,7 @@ def _append_recent_tradingview_scores(
     return enriched
 
 
-def _append_recent_macd_divergence(
+def _append_recent_macd_summary(
     storage: Storage,
     exported: pd.DataFrame,
     *,
@@ -909,46 +1577,175 @@ def _append_recent_macd_divergence(
     if exported.empty or "symbol" not in exported.columns:
         return exported
 
-    divergence = _load_or_build_macd_divergence_summary(storage, trade_date=as_of, symbols=symbols)
-    if divergence.empty:
+    summary = _load_or_build_macd_summary(storage, trade_date=as_of, symbols=symbols)
+    if summary.empty:
         return exported
 
     merge_columns = [
         "symbol",
+        "macd_cross_state",
+        "macd_divergence_state",
+        "volume_price_divergence_state",
         "macd_top_divergence_15d",
         "macd_bottom_divergence_15d",
+        "macd_top_divergence_signal_date",
+        "macd_bottom_divergence_signal_date",
+        "bullish_volume_price_divergence_flag",
+        "bearish_volume_price_divergence_flag",
+        "macd",
+        "macd_signal_line",
+        "macd_hist",
     ]
-    divergence = divergence.loc[:, [column for column in merge_columns if column in divergence.columns]].copy()
-    divergence["symbol"] = divergence["symbol"].map(_normalize_exported_symbol)
+    return _merge_symbol_report(exported, summary, merge_columns=merge_columns, bool_columns=[
+        "macd_top_divergence_15d",
+        "macd_bottom_divergence_15d",
+        "bullish_volume_price_divergence_flag",
+        "bearish_volume_price_divergence_flag",
+    ])
+
+
+def _append_recent_trend_universe_summary(
+    exported: pd.DataFrame,
+    trend_universe: pd.DataFrame,
+) -> pd.DataFrame:
+    if exported.empty or "symbol" not in exported.columns or trend_universe.empty:
+        return exported
+
+    universe = trend_universe.copy()
+    rename_map = {
+        "trend_score": "trend_universe_score",
+    }
+    universe = universe.rename(columns=rename_map)
+    merge_columns = [
+        "symbol",
+        "in_trend_universe",
+        "trend_universe_score",
+        "trend_direction_score",
+        "trend_strength_score",
+        "trend_quality_score",
+        "trend_liquidity_score",
+    ]
+    enriched = _merge_symbol_report(exported, universe, merge_columns=merge_columns, bool_columns=["in_trend_universe"])
+    if "in_trend_universe" in enriched.columns:
+        enriched["in_trend_universe"] = enriched["in_trend_universe"].fillna(False).astype(bool)
+    return enriched
+
+
+def _append_recent_trend_summary(
+    storage: Storage,
+    exported: pd.DataFrame,
+    *,
+    config,
+    as_of: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    if exported.empty or "symbol" not in exported.columns:
+        return exported
+
+    trend = _load_or_build_trend_summary(storage, config=config, trade_date=as_of, symbols=symbols)
+    if trend.empty:
+        return exported
+
+    merge_columns = [
+        "symbol",
+        "signal_type",
+        "trend_score",
+        "entry_score",
+        "trend_base_score",
+        "price_action_score",
+        "macd_score",
+        "buy_score",
+        "positive_indicator_count",
+        "trigger_reason",
+        "buy_reason",
+    ]
+    return _merge_symbol_report(exported, trend, merge_columns=merge_columns, bool_columns=[])
+
+
+def _merge_symbol_report(
+    exported: pd.DataFrame,
+    report: pd.DataFrame,
+    *,
+    merge_columns: list[str],
+    bool_columns: list[str],
+) -> pd.DataFrame:
+    columns = [column for column in merge_columns if column in report.columns]
+    if "symbol" not in columns:
+        return exported
+    summary = report.loc[:, columns].copy()
+    summary["symbol"] = summary["symbol"].map(_normalize_exported_symbol)
 
     enriched = exported.copy()
     enriched["_normalized_symbol"] = enriched["symbol"].map(_normalize_exported_symbol)
     enriched = enriched.merge(
-        divergence,
+        summary,
         how="left",
         left_on="_normalized_symbol",
         right_on="symbol",
     )
     enriched = enriched.drop(columns=["_normalized_symbol", "symbol_y"], errors="ignore")
     enriched = enriched.rename(columns={"symbol_x": "symbol"})
-
-    for column in ("macd_top_divergence_15d", "macd_bottom_divergence_15d"):
+    for column in bool_columns:
         if column in enriched.columns:
             enriched[column] = enriched[column].fillna(False).astype(bool)
     return enriched
 
 
-def _load_or_build_macd_divergence_summary(
+def _load_or_build_macd_summary(
     storage: Storage,
     trade_date: date,
     symbols: list[str] | None = None,
 ) -> pd.DataFrame:
     if symbols:
-        return _build_macd_divergence_summary(storage, trade_date=trade_date, symbols=symbols)
-    default_path = storage.paths.reports_dir / "divergence" / f"macd_divergence_{trade_date.isoformat()}.csv"
+        return _build_macd_summary(storage, trade_date=trade_date, symbols=symbols)
+    default_path = storage.paths.reports_dir / "macd" / f"macd_{trade_date.isoformat()}.csv"
     if default_path.exists():
         return pd.read_csv(default_path)
-    return _build_macd_divergence_summary(storage, trade_date=trade_date)
+    return _build_macd_summary(storage, trade_date=trade_date)
+
+
+def _load_or_build_trend_universe_summary(
+    storage: Storage,
+    config,
+    trade_date: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    default_path = storage.paths.reports_dir / "trend_universe" / f"trend_universe_{trade_date.isoformat()}.csv"
+    if default_path.exists() and not symbols:
+        return pd.read_csv(default_path)
+    trend = scan_trend_universe(storage, config, as_of=trade_date, symbols=symbols)
+    if symbols and not trend.empty:
+        symbol_set = {str(symbol).zfill(6) for symbol in symbols}
+        trend = trend[trend["symbol"].astype(str).str.zfill(6).isin(symbol_set)].reset_index(drop=True)
+    return trend
+
+
+def _load_or_build_trend_summary(
+    storage: Storage,
+    *,
+    config,
+    trade_date: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    default_path = storage.paths.reports_dir / "trend" / f"trend_{trade_date.isoformat()}.csv"
+    if default_path.exists() and not symbols:
+        return pd.read_csv(default_path)
+    trend = scan_indicator_scored_entries(storage, config, trade_date=trade_date)
+    if symbols and not trend.empty:
+        symbol_set = {str(symbol).zfill(6) for symbol in symbols}
+        trend = trend[trend["symbol"].astype(str).str.zfill(6).isin(symbol_set)].reset_index(drop=True)
+    return trend
+
+
+def _load_existing_trend_summary(
+    storage: Storage,
+    *,
+    trade_date: date,
+) -> pd.DataFrame:
+    default_path = storage.paths.reports_dir / "trend" / f"trend_{trade_date.isoformat()}.csv"
+    if default_path.exists():
+        return pd.read_csv(default_path)
+    return pd.DataFrame()
 
 
 def _load_or_build_tradingview_summary(
@@ -1103,7 +1900,7 @@ def _build_tradingview_snapshots(
     return summary, daily_frames
 
 
-def _build_macd_divergence_summary(
+def _build_macd_summary(
     storage: Storage,
     trade_date: date,
     symbols: list[str] | None = None,
@@ -1117,36 +1914,150 @@ def _build_macd_divergence_summary(
     if tradingview_summary.empty:
         return pd.DataFrame()
 
-    divergence_rows: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
     total_rows = len(tradingview_summary)
-    logging.info("MACD divergence scan started for %s: %s symbols", trade_date.isoformat(), total_rows)
+    logging.info("MACD summary scan started for %s: %s symbols", trade_date.isoformat(), total_rows)
     for index, (_, row) in enumerate(tradingview_summary.iterrows(), start=1):
         symbol = _normalize_exported_symbol(row["symbol"])
         try:
             bars = storage.load_daily_bars(symbol)
         except FileNotFoundError:
-            _log_scan_progress("MACD divergence", index, total_rows)
+            _log_scan_progress("MACD", index, total_rows)
             continue
 
         cutoff = bars[pd.to_datetime(bars["trade_date"]).dt.date <= trade_date].reset_index(drop=True)
         if cutoff.empty:
-            _log_scan_progress("MACD divergence", index, total_rows)
+            _log_scan_progress("MACD", index, total_rows)
             continue
 
-        divergence_row = summarize_recent_macd_divergence(cutoff)
-        divergence_row["symbol"] = _format_symbol_for_excel(symbol)
-        divergence_rows.append(divergence_row)
-        _log_scan_progress("MACD divergence", index, total_rows)
+        macd_frame = _prepare_daily_macd_frame(cutoff)
+        latest = macd_frame.iloc[-1]
+        divergence_row = summarize_recent_macd_divergence(macd_frame)
+        cross_state = _describe_macd_cross_state(macd_frame)
+        bullish_volume_divergence, bearish_volume_divergence = _detect_daily_volume_price_divergence(macd_frame)
+        summary_rows.append(
+            {
+                "trade_date": trade_date.isoformat(),
+                "symbol": _format_symbol_for_excel(symbol),
+                "name": row.get("name", ""),
+                "macd": _safe_float_or_none(latest.get("macd")),
+                "macd_signal_line": _safe_float_or_none(latest.get("macd_signal_line")),
+                "macd_hist": _safe_float_or_none(latest.get("macd_hist")),
+                "macd_cross_state": cross_state,
+                "macd_divergence_state": _describe_macd_divergence_state(divergence_row),
+                "volume_price_divergence_state": _describe_volume_price_divergence_state(
+                    bullish_volume_divergence,
+                    bearish_volume_divergence,
+                ),
+                "macd_top_divergence_15d": bool(divergence_row.get("macd_top_divergence_15d", False)),
+                "macd_bottom_divergence_15d": bool(divergence_row.get("macd_bottom_divergence_15d", False)),
+                "macd_top_divergence_signal_date": divergence_row.get("macd_top_divergence_signal_date"),
+                "macd_bottom_divergence_signal_date": divergence_row.get("macd_bottom_divergence_signal_date"),
+                "bullish_volume_price_divergence_flag": bool(bullish_volume_divergence),
+                "bearish_volume_price_divergence_flag": bool(bearish_volume_divergence),
+            }
+        )
+        _log_scan_progress("MACD", index, total_rows)
 
-    if not divergence_rows:
+    if not summary_rows:
         return pd.DataFrame()
 
-    divergence = pd.DataFrame(divergence_rows)
-    summary = tradingview_summary.merge(divergence, how="left", on="symbol")
-    for column in ("macd_top_divergence_15d", "macd_bottom_divergence_15d"):
+    summary = pd.DataFrame(summary_rows)
+    for column in (
+        "macd_top_divergence_15d",
+        "macd_bottom_divergence_15d",
+        "bullish_volume_price_divergence_flag",
+        "bearish_volume_price_divergence_flag",
+    ):
         if column in summary.columns:
             summary[column] = summary[column].fillna(False).astype(bool)
     return summary
+
+
+def _prepare_daily_macd_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
+    frame = dataframe.copy().sort_values("trade_date").reset_index(drop=True)
+    required = {"macd_dif", "macd_dea", "macd_hist"}
+    if not required.issubset(frame.columns):
+        frame = add_indicators(frame).sort_values("trade_date").reset_index(drop=True)
+    if "macd" not in frame.columns and "macd_dif" in frame.columns:
+        frame["macd"] = frame["macd_dif"]
+    if "macd_signal_line" not in frame.columns and "macd_dea" in frame.columns:
+        frame["macd_signal_line"] = frame["macd_dea"]
+    return frame
+
+
+def _describe_macd_cross_state(dataframe: pd.DataFrame) -> str:
+    normalized = _prepare_daily_macd_frame(dataframe)
+    if normalized.empty or "macd" not in normalized.columns or "macd_signal_line" not in normalized.columns:
+        return "unknown"
+    recent = normalized.tail(3).reset_index(drop=True)
+    recent_cross_up = False
+    recent_cross_down = False
+    for offset in range(1, len(recent)):
+        prev_row = recent.iloc[offset - 1]
+        current_row = recent.iloc[offset]
+        if pd.isna(prev_row.get("macd")) or pd.isna(prev_row.get("macd_signal_line")):
+            continue
+        if pd.isna(current_row.get("macd")) or pd.isna(current_row.get("macd_signal_line")):
+            continue
+        if float(prev_row["macd"]) <= float(prev_row["macd_signal_line"]) and float(current_row["macd"]) > float(
+            current_row["macd_signal_line"]
+        ):
+            recent_cross_up = True
+        if float(prev_row["macd"]) >= float(prev_row["macd_signal_line"]) and float(current_row["macd"]) < float(
+            current_row["macd_signal_line"]
+        ):
+            recent_cross_down = True
+    latest = recent.iloc[-1]
+    macd = _safe_float_or_none(latest.get("macd"))
+    signal_line = _safe_float_or_none(latest.get("macd_signal_line"))
+    if recent_cross_up:
+        return "golden_cross"
+    if recent_cross_down:
+        return "dead_cross"
+    if macd is None or signal_line is None:
+        return "unknown"
+    return "above_signal" if macd >= signal_line else "below_signal"
+
+
+def _describe_macd_divergence_state(macd_summary: dict[str, object]) -> str:
+    if bool(macd_summary.get("macd_bottom_divergence_15d", False)):
+        return "bottom_divergence"
+    if bool(macd_summary.get("macd_top_divergence_15d", False)):
+        return "top_divergence"
+    return "none"
+
+
+def _describe_volume_price_divergence_state(bullish: bool, bearish: bool) -> str:
+    if bullish and not bearish:
+        return "bullish"
+    if bearish and not bullish:
+        return "bearish"
+    return "none"
+
+
+def _detect_daily_volume_price_divergence(dataframe: pd.DataFrame) -> tuple[bool, bool]:
+    if dataframe.empty or len(dataframe) < 6:
+        return False, False
+    frame = dataframe.copy().sort_values("trade_date").reset_index(drop=True)
+    recent = frame.tail(5).reset_index(drop=True)
+    previous = frame.iloc[-6]
+    latest = recent.iloc[-1]
+    recent_avg_volume = pd.to_numeric(recent["volume"], errors="coerce").mean()
+    previous_volume = _safe_float_or_none(previous.get("volume"))
+    latest_close = _safe_float_or_none(latest.get("close"))
+    previous_close = _safe_float_or_none(previous.get("close"))
+    if previous_volume is None or latest_close is None or previous_close is None or pd.isna(recent_avg_volume):
+        return False, False
+    bullish = latest_close > previous_close and float(recent_avg_volume) < previous_volume * 0.9
+    bearish = latest_close < previous_close and float(recent_avg_volume) > previous_volume * 1.1
+    return bullish, bearish
+
+
+def _safe_float_or_none(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
 
 
 def _log_scan_progress(stage_name: str, current: int, total: int) -> None:
@@ -1230,23 +2141,70 @@ def _resolve_probability_split_dates(
     return infer_split_dates(dataset)
 
 
-def _configure_network(network: NetworkConfig) -> None:
-    if network.http_proxy:
-        os.environ["HTTP_PROXY"] = network.http_proxy
-        os.environ["http_proxy"] = network.http_proxy
-    if network.https_proxy:
-        os.environ["HTTPS_PROXY"] = network.https_proxy
-        os.environ["https_proxy"] = network.https_proxy
-    if network.no_proxy:
-        os.environ["NO_PROXY"] = network.no_proxy
-        os.environ["no_proxy"] = network.no_proxy
+def _proxy_env_value(name: str) -> str | None:
+    return os.environ.get(name) or os.environ.get(name.lower())
 
-    if network.http_proxy or network.https_proxy:
-        logging.info(
-            "Configured proxy: http=%s https=%s",
-            network.http_proxy or "-",
-            network.https_proxy or "-",
-        )
+
+def _set_proxy_env(name: str, value: str) -> None:
+    os.environ[name] = value
+    os.environ[name.lower()] = value
+
+
+def _is_local_proxy_url(proxy_url: str) -> bool:
+    parsed = urlparse(proxy_url)
+    return (parsed.hostname or "").lower() in LOCAL_PROXY_HOSTS
+
+
+def _is_proxy_reachable(proxy_url: str, timeout: float = 0.3) -> bool:
+    parsed = urlparse(proxy_url)
+    host = parsed.hostname
+    port = parsed.port
+    if not host or port is None:
+        return False
+    try:
+        connection = socket.create_connection((host, port), timeout=timeout)
+    except OSError:
+        return False
+    connection.close()
+    return True
+
+
+def _maybe_apply_proxy(env_name: str, configured_proxy: str | None) -> tuple[str | None, bool]:
+    existing = _proxy_env_value(env_name)
+    if existing:
+        return existing, False
+    if not configured_proxy:
+        return None, False
+    if _is_local_proxy_url(configured_proxy) and not _is_proxy_reachable(configured_proxy):
+        logging.warning("Skipping unreachable local proxy for %s: %s; fallback to direct connection", env_name, configured_proxy)
+        return None, False
+    _set_proxy_env(env_name, configured_proxy)
+    return configured_proxy, True
+
+
+def _configure_network(network: NetworkConfig) -> None:
+    http_proxy, applied_http_proxy = _maybe_apply_proxy("HTTP_PROXY", network.http_proxy)
+    https_proxy, applied_https_proxy = _maybe_apply_proxy("HTTPS_PROXY", network.https_proxy)
+
+    if network.no_proxy and not _proxy_env_value("NO_PROXY") and (applied_http_proxy or applied_https_proxy):
+        _set_proxy_env("NO_PROXY", network.no_proxy)
+
+    if http_proxy or https_proxy:
+        logging.info("Configured proxy: http=%s https=%s", http_proxy or "-", https_proxy or "-")
+
+
+def _load_local_env(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip()
 
 
 def _refresh_universe(storage: Storage, provider, exclude_st: bool) -> pd.DataFrame:

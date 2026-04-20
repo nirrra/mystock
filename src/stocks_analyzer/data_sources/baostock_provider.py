@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import io
+import logging
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from datetime import datetime
+from time import sleep
 
 import pandas as pd
 
@@ -23,15 +27,69 @@ ADJUSTMENT_MAP = {
     None: "3",
 }
 
+DEFAULT_LOGIN_ATTEMPTS = 3
+DEFAULT_LOGIN_RETRY_DELAY_SECONDS = 1.0
+
+
+def login_baostock(
+    *,
+    attempts: int = DEFAULT_LOGIN_ATTEMPTS,
+    retry_delay_seconds: float = DEFAULT_LOGIN_RETRY_DELAY_SECONDS,
+    logger: logging.Logger | None = None,
+    silence_output: bool = True,
+):
+    if bs is None:
+        raise RuntimeError("baostock is not installed. Run `pip install baostock` first.") from _IMPORT_ERROR
+
+    resolved_logger = logger or logging.getLogger(__name__)
+    attempt_count = max(1, int(attempts))
+    last_message = ""
+
+    for attempt in range(1, attempt_count + 1):
+        buffer = io.StringIO() if silence_output else None
+        context = (
+            redirect_stdout(buffer),
+            redirect_stderr(buffer),
+        ) if buffer is not None else (nullcontext(), nullcontext())
+        try:
+            with context[0], context[1]:
+                login_result = bs.login()
+        except Exception as exc:
+            last_message = str(exc)
+            if attempt >= attempt_count:
+                raise RuntimeError(f"baostock login failed after {attempt_count} attempt(s): {last_message}") from exc
+            resolved_logger.warning(
+                "BaoStock login attempt %s/%s raised %s; retrying in %.1fs",
+                attempt,
+                attempt_count,
+                last_message,
+                retry_delay_seconds,
+            )
+            sleep(retry_delay_seconds)
+            continue
+
+        if login_result.error_code == "0":
+            return login_result
+
+        last_message = f"{login_result.error_code} {login_result.error_msg}".strip()
+        if attempt >= attempt_count:
+            break
+
+        resolved_logger.warning(
+            "BaoStock login attempt %s/%s failed: %s; retrying in %.1fs",
+            attempt,
+            attempt_count,
+            last_message,
+            retry_delay_seconds,
+        )
+        sleep(retry_delay_seconds)
+
+    raise RuntimeError(f"baostock login failed after {attempt_count} attempt(s): {last_message}")
+
 
 class BaoStockDataProvider(DataProvider):
     def __init__(self) -> None:
-        if bs is None:
-            raise RuntimeError("baostock is not installed. Run `pip install baostock` first.") from _IMPORT_ERROR
-
-        login_result = bs.login()
-        if login_result.error_code != "0":
-            raise RuntimeError(f"baostock login failed: {login_result.error_code} {login_result.error_msg}")
+        login_baostock()
 
     def get_instruments(self) -> pd.DataFrame:
         result = bs.query_all_stock()

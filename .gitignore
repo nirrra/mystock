@@ -13,3 +13,5 @@ build/
 
 *.parquet
 *.csv
+.env.local
+command.txt

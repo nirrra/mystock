@@ -14,6 +14,8 @@ try:
 except ImportError:  # pragma: no cover
     bs = None
 
+from .data_sources.baostock_provider import login_baostock
+
 
 def is_trading_day(provider_name: str, trade_date: date) -> bool:
     provider = str(provider_name or "").strip().lower()
@@ -35,9 +37,10 @@ def _is_trading_day_baostock(trade_date: date) -> bool | None:
 
     silent = io.StringIO()
     with redirect_stdout(silent), redirect_stderr(silent):
-        login_result = bs.login()
-    if login_result.error_code != "0":
-        return None
+        try:
+            login_baostock(silence_output=False)
+        except RuntimeError:
+            return None
 
     try:
         with redirect_stdout(silent), redirect_stderr(silent):

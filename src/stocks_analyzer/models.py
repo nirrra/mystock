@@ -83,12 +83,110 @@ class ScreeningConfig:
 
 
 @dataclass(slots=True)
+class WatchlistTrendFilterConfig:
+    enabled: bool
+    buy_score_min: float
+    price_action_score_min: float
+
+
+@dataclass(slots=True)
+class PickTrendWatchlistConfig:
+    buy_score_min: float
+    price_action_score_min: float
+
+
+@dataclass(slots=True)
 class ProbabilityConfig:
     horizon_days: int
     min_future_return: float
     max_future_drawdown: float
     min_history_days: int
     top_n_list: tuple[int, ...]
+
+
+@dataclass(slots=True)
+class TrendUniverseConfig:
+    min_history_days: int
+    ma_short_window: int
+    ma_medium_window: int
+    ma_long_window: int
+    slope_lookback_days: int
+    strength_lookback_days: int
+    quality_lookback_days: int
+    min_return_strength_lookback: float
+    max_drawdown_quality_lookback: float
+    min_avg_amount_20d: float
+    high_lookback_days: int
+
+
+@dataclass(slots=True)
+class TrendBreakoutConfig:
+    platform_min_window_days: int
+    platform_max_window_days: int
+    platform_range_max: float
+    breakout_volume_ratio_min: float
+    breakout_max_distance_pct: float
+    new_high_lookback_days: int
+    new_high_tolerance_pct: float
+
+
+@dataclass(slots=True)
+class TrendPullbackConfig:
+    recent_high_lookback_days: int
+    max_drawdown_from_recent_high: float
+    proximity_to_ma20: float
+    proximity_to_ma60: float
+    volume_contraction_max: float
+    rebound_min_return_1d: float
+    lower_shadow_min: float
+
+
+@dataclass(slots=True)
+class TrendSignalsConfig:
+    breakout: TrendBreakoutConfig
+    pullback: TrendPullbackConfig
+
+
+@dataclass(slots=True)
+class TrendIndicatorWeightsConfig:
+    trend_base_weight: float
+    price_action_weight: float
+    macd_weight: float
+    volume_weight: float
+    volume_price_divergence_weight: float
+    boll_weight: float
+    rsi_weight: float
+    kdj_weight: float
+    atr_weight: float
+
+
+@dataclass(slots=True)
+class TrendSignalEntryRulesConfig:
+    buy_score_min: float | None
+    trend_base_score_min: float | None
+    price_action_score_min: float | None
+    macd_score_min: float | None
+    positive_indicator_count_min: int | None
+
+
+@dataclass(slots=True)
+class TrendEntryRulesConfig:
+    buy_score_min: float
+    trend_base_score_min: float
+    price_action_score_min: float
+    macd_score_min: float
+    positive_indicator_count_min: int
+    breakout: TrendSignalEntryRulesConfig
+    pullback: TrendSignalEntryRulesConfig
+
+
+@dataclass(slots=True)
+class TrendBacktestConfig:
+    holding_days: tuple[int, ...]
+    portfolio_top_n: tuple[int, ...]
+    entry_score_weight: float
+    trend_score_weight: float
+    entry_timing: str
 
 
 @dataclass(slots=True)
@@ -101,13 +199,21 @@ class NetworkConfig:
 @dataclass(slots=True)
 class AppConfig:
     provider: str
+    intraday_provider: str
     adjustment: str
     network: NetworkConfig
     storage: StorageConfig
     universe: UniverseConfig
     history_momentum_filter: HistoryMomentumFilterConfig
     screening: ScreeningConfig
+    watchlist_trend_filter: WatchlistTrendFilterConfig
+    pick_trend_watchlist: PickTrendWatchlistConfig
     probability: ProbabilityConfig
+    trend_universe: TrendUniverseConfig
+    trend_signals: TrendSignalsConfig
+    trend_indicator_weights: TrendIndicatorWeightsConfig
+    trend_entry_rules: TrendEntryRulesConfig
+    trend_backtest: TrendBacktestConfig
     type1: Type1Config
     type2: Type2Config
     type3: Type3Config
