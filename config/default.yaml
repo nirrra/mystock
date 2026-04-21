@@ -5,6 +5,7 @@ adjustment: qfq
 network:
   http_proxy: http://127.0.0.1:7897
   https_proxy: http://127.0.0.1:7897
+  socks5_proxy: socks5://127.0.0.1:7897
   no_proxy: 127.0.0.1,localhost
 
 storage:

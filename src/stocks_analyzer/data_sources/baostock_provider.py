@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import io
 import logging
+import os
+import socket
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
+from contextlib import contextmanager
 from datetime import datetime
 from time import sleep
+from urllib.parse import unquote, urlparse
 
 import pandas as pd
 
@@ -29,6 +33,7 @@ ADJUSTMENT_MAP = {
 
 DEFAULT_LOGIN_ATTEMPTS = 3
 DEFAULT_LOGIN_RETRY_DELAY_SECONDS = 1.0
+BAOSTOCK_SOCKS_PROXY_ENV = "BAOSTOCK_SOCKS_PROXY"
 
 
 def login_baostock(
@@ -52,7 +57,7 @@ def login_baostock(
             redirect_stderr(buffer),
         ) if buffer is not None else (nullcontext(), nullcontext())
         try:
-            with context[0], context[1]:
+            with _baostock_socket_proxy_context(), context[0], context[1]:
                 login_result = bs.login()
         except Exception as exc:
             last_message = str(exc)
@@ -85,6 +90,60 @@ def login_baostock(
         sleep(retry_delay_seconds)
 
     raise RuntimeError(f"baostock login failed after {attempt_count} attempt(s): {last_message}")
+
+
+@contextmanager
+def _baostock_socket_proxy_context():
+    proxy_url = (os.environ.get(BAOSTOCK_SOCKS_PROXY_ENV) or os.environ.get(BAOSTOCK_SOCKS_PROXY_ENV.lower()) or "").strip()
+    if not proxy_url:
+        yield
+        return
+
+    try:
+        import socks
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            f"{BAOSTOCK_SOCKS_PROXY_ENV} is set but the `socks` module is unavailable. Install PySocks first."
+        ) from exc
+
+    parsed = _parse_baostock_socks_proxy(proxy_url)
+    original_socket_factory = socket.socket
+
+    def _build_socks_socket(*args, **kwargs):
+        proxied_socket = socks.socksocket(*args, **kwargs)
+        proxied_socket.set_proxy(
+            socks.SOCKS5,
+            parsed["host"],
+            parsed["port"],
+            rdns=parsed["rdns"],
+            username=parsed["username"],
+            password=parsed["password"],
+        )
+        return proxied_socket
+
+    socket.socket = _build_socks_socket
+    try:
+        yield
+    finally:
+        socket.socket = original_socket_factory
+
+
+def _parse_baostock_socks_proxy(proxy_url: str) -> dict[str, object]:
+    parsed = urlparse(proxy_url)
+    if parsed.scheme.lower() not in {"socks5", "socks5h"}:
+        raise RuntimeError(
+            f"Unsupported {BAOSTOCK_SOCKS_PROXY_ENV} scheme: {parsed.scheme or '<empty>'}. Use socks5:// or socks5h://."
+        )
+    if not parsed.hostname or parsed.port is None:
+        raise RuntimeError(f"Invalid {BAOSTOCK_SOCKS_PROXY_ENV}: {proxy_url}")
+
+    return {
+        "host": parsed.hostname,
+        "port": parsed.port,
+        "username": unquote(parsed.username) if parsed.username else None,
+        "password": unquote(parsed.password) if parsed.password else None,
+        "rdns": parsed.scheme.lower() == "socks5h",
+    }
 
 
 class BaoStockDataProvider(DataProvider):

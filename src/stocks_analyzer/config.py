@@ -62,6 +62,7 @@ def load_config(config_path: str | Path) -> AppConfig:
         network=NetworkConfig(
             http_proxy=network.get("http_proxy"),
             https_proxy=network.get("https_proxy"),
+            socks5_proxy=network.get("socks5_proxy"),
             no_proxy=network.get("no_proxy"),
         ),
         storage=StorageConfig(

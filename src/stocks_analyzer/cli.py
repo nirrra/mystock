@@ -2348,12 +2348,15 @@ def _maybe_apply_proxy(env_name: str, configured_proxy: str | None) -> tuple[str
 def _configure_network(network: NetworkConfig) -> None:
     http_proxy, applied_http_proxy = _maybe_apply_proxy("HTTP_PROXY", network.http_proxy)
     https_proxy, applied_https_proxy = _maybe_apply_proxy("HTTPS_PROXY", network.https_proxy)
+    baostock_socks_proxy, _ = _maybe_apply_proxy("BAOSTOCK_SOCKS_PROXY", network.socks5_proxy)
 
     if network.no_proxy and not _proxy_env_value("NO_PROXY") and (applied_http_proxy or applied_https_proxy):
         _set_proxy_env("NO_PROXY", network.no_proxy)
 
     if http_proxy or https_proxy:
         logging.info("Configured proxy: http=%s https=%s", http_proxy or "-", https_proxy or "-")
+    if baostock_socks_proxy:
+        logging.info("Configured BaoStock SOCKS proxy: %s", baostock_socks_proxy)
 
 
 def _load_local_env(path: Path) -> None:

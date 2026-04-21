@@ -211,6 +211,7 @@ class TrendBacktestConfig:
 class NetworkConfig:
     http_proxy: str | None
     https_proxy: str | None
+    socks5_proxy: str | None
     no_proxy: str | None
 
 
