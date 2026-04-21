@@ -23,20 +23,38 @@ class UniverseConfig:
 @dataclass(slots=True)
 class Type1Config:
     min_old_high_gap_days: int
-    max_old_high_gap_days: int
     min_drawdown_pct: float
-    near_high_threshold_pct: float
-    breakout_lookback_days: int
-    breakout_pullback_min_distance_pct: float
-    breakout_pullback_max_distance_pct: float
     peak_window_days: int
-    volume_window_min_days: int
-    volume_window_max_days: int
-    volume_median_multiplier: float
+    breakout_volume_lookback_days: int
+    breakout_volume_multiplier: float
+    near_high_threshold_pct: float
+    require_break_below_ma60: bool = True
 
 
 @dataclass(slots=True)
 class Type2Config:
+    min_old_high_gap_days: int
+    min_drawdown_pct: float
+    peak_window_days: int
+    breakout_volume_lookback_days: int
+    breakout_volume_multiplier: float
+    require_break_below_ma60: bool = True
+
+
+@dataclass(slots=True)
+class Type3Config:
+    min_old_high_gap_days: int
+    min_drawdown_pct: float
+    peak_window_days: int
+    breakout_volume_lookback_days: int
+    breakout_volume_multiplier: float
+    post_breakout_max_days: int
+    post_breakout_max_extension_pct: float
+    require_break_below_ma60: bool = True
+
+
+@dataclass(slots=True)
+class Type4Config:
     trend_lookback_days: int
     min_return_trend_lookback: float
     ma60_rising_lookback: int
@@ -50,7 +68,7 @@ class Type2Config:
 
 
 @dataclass(slots=True)
-class Type3Config:
+class Type5Config:
     trend_lookback_days: int
     min_return_trend_lookback: float
     ma_rising_lookback: int
@@ -60,7 +78,7 @@ class Type3Config:
 
 
 @dataclass(slots=True)
-class Type4Config:
+class Type6Config:
     strong_lookback_days: int
     min_return_strong_lookback: float
     strong_day_return_min: float
@@ -218,3 +236,5 @@ class AppConfig:
     type2: Type2Config
     type3: Type3Config
     type4: Type4Config
+    type5: Type5Config
+    type6: Type6Config

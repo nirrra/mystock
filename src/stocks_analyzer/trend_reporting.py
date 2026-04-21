@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .atr import build_atr_export_frame
 from .paths import ProjectPaths
 
 
@@ -156,6 +157,32 @@ def save_macd_report(
     dataframe.to_csv(detail_path, index=False, encoding="utf-8-sig")
 
     summary_path = target_dir / f"macd_{trade_date.isoformat()}.json"
+    payload = {
+        "trade_date": trade_date.isoformat(),
+        "row_count": int(len(dataframe)),
+        "symbols": dataframe["symbol"].astype(str).tolist() if "symbol" in dataframe.columns else [],
+        "report_path": str(detail_path),
+    }
+    summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "detail_path": detail_path,
+        "summary_path": summary_path,
+    }
+
+
+def save_atr_report(
+    paths: ProjectPaths,
+    *,
+    trade_date: date,
+    dataframe: pd.DataFrame,
+    output: str | None = None,
+) -> dict[str, Path]:
+    target_dir = paths.reports_dir / "atr"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    detail_path = Path(output) if output else target_dir / f"atr_{trade_date.isoformat()}.csv"
+    build_atr_export_frame(dataframe).to_csv(detail_path, index=False, encoding="utf-8-sig")
+
+    summary_path = target_dir / f"atr_{trade_date.isoformat()}.json"
     payload = {
         "trade_date": trade_date.isoformat(),
         "row_count": int(len(dataframe)),

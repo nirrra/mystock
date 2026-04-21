@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import pandas as pd
 
+from .atr import build_atr_export_frame, build_atr_snapshot_row, normalize_atr_summary_frame
 from .config import load_config
 from .data_sources import create_data_provider
 from .daily_screening import run_daily_screening
@@ -40,6 +41,7 @@ from .strategies import STRATEGY_NAMES
 from .trend_backtest import backtest_portfolios, backtest_signal_returns, summarize_signal_backtest
 from .trend_indicator_scores import build_next_open_entries, scan_indicator_scored_entries, select_tradable_entries
 from .trend_reporting import (
+    save_atr_report,
     save_entry_backtest_reports,
     save_entry_portfolio_backtest_reports,
     save_macd_report,
@@ -91,16 +93,20 @@ def _localize_argparse() -> None:
 
 
 PATTERN_FLAG_MAP = {
-    "pattern1": "type1",
-    "pattern2": "type2",
-    "pattern3": "type3",
-    "pattern4": "type4",
+    "pattern1": "volume_top_pre_breakout",
+    "pattern2": "volume_top_breakout",
+    "pattern3": "volume_top_follow_through",
+    "pattern4": "platform_breakout",
+    "pattern5": "trend_pullback",
+    "pattern6": "second_wave",
 }
 PATTERN_LABEL_MAP = {
-    "type1": "1",
-    "type2": "2",
-    "type3": "3",
-    "type4": "4",
+    "volume_top_pre_breakout": "1",
+    "volume_top_breakout": "2",
+    "volume_top_follow_through": "3",
+    "platform_breakout": "4",
+    "trend_pullback": "5",
+    "second_wave": "6",
 }
 PROGRESS_LOG_INTERVAL = 100
 LOCAL_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -115,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  1. mystock update --start-date 20240101\n"
             "     更新主板股票池并拉取本地日线数据。\n"
             "  2. mystock pattern\n"
-            "     扫描本地全部股票，识别 1 到 4 号模式并生成 CSV。\n"
+            "     扫描本地全部股票，识别 1 到 6 号模式并生成 CSV。\n"
             "  3. mystock plot 603588\n"
             "     查看单只股票近两年的 K 线和成交量图。\n\n"
             "常见示例：\n"
@@ -124,6 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  mystock report --date 2026-04-10\n"
             "  mystock tradingview --date 2026-04-10\n"
             "  mystock macd --date 2026-04-10\n"
+            "  mystock atr --date 2026-04-10\n"
             "  mystock train-prob\n"
             "  mystock predict-prob --date 2026-04-10\n"
         ),
@@ -157,16 +164,16 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--limit", type=int, default=None, help="仅更新前 N 只股票，便于小范围测试")
     pattern = subparsers.add_parser(
         "pattern",
-        help="识别本地日线数据中的 1 到 4 号模式",
+        help="识别本地日线数据中的 1 到 6 号模式",
         description=(
-            "扫描本地缓存的全部股票日线数据，识别模式 1 到 4。\n"
-            "默认识别全部模式；如果传入 --1 --2 --3 --4 中的任意组合，则只识别指定模式。"
+            "扫描本地缓存的全部股票日线数据，识别模式 1 到 6。\n"
+            "默认识别全部模式；如果传入 --1 --2 --3 --4 --5 --6 中的任意组合，则只识别指定模式。"
         ),
         epilog=(
             "常见示例：\n"
             "  mystock pattern\n"
             "  mystock pattern --1\n"
-            "  mystock pattern --2 --4\n"
+            "  mystock pattern --2 --5\n"
             "  mystock pattern --as-of 2026-04-10 --output reports/my_patterns.csv\n"
             "  mystock pattern --plot-all\n"
         ),
@@ -176,6 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
     pattern.add_argument("--2", dest="pattern2", action="store_true", help="只识别模式 2")
     pattern.add_argument("--3", dest="pattern3", action="store_true", help="只识别模式 3")
     pattern.add_argument("--4", dest="pattern4", action="store_true", help="只识别模式 4")
+    pattern.add_argument("--5", dest="pattern5", action="store_true", help="只识别模式 5")
+    pattern.add_argument("--6", dest="pattern6", action="store_true", help="只识别模式 6")
     pattern.add_argument("--as-of", default=None, help="分析截止日期，格式 YYYY-MM-DD")
     pattern.add_argument("--limit", type=int, default=None, help="终端最多显示多少行")
     pattern.add_argument("--output", default=None, help="可选的 CSV 输出路径")
@@ -231,6 +240,16 @@ def build_parser() -> argparse.ArgumentParser:
     macd.add_argument("--date", required=True, help="识别日期，格式 YYYY-MM-DD")
     macd.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
     macd.add_argument("--output", default=None, help="可选的 CSV 输出路径")
+
+    atr = subparsers.add_parser(
+        "atr",
+        help="生成指定日期的 ATR 风险辅助表",
+        description="读取本地主板日线数据，输出 ATR14、ATR% 和止损止盈参考价。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    atr.add_argument("--date", required=True, help="识别日期，格式 YYYY-MM-DD")
+    atr.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    atr.add_argument("--output", default=None, help="可选的 CSV 输出路径")
 
     train_prob = subparsers.add_parser(
         "train-prob",
@@ -455,6 +474,17 @@ def main() -> None:
 
     if args.command == "macd":
         _run_macd(
+            storage=storage,
+            config=config,
+            paths=paths,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "atr":
+        _run_atr(
             storage=storage,
             config=config,
             paths=paths,
@@ -780,6 +810,7 @@ def _run_pattern(
     exported = _prepare_pattern_results(results)
     exported = _append_recent_tradingview_scores(storage, exported, as_of=as_of, lookback_days=5, symbols=symbols)
     exported = _append_recent_macd_summary(storage, exported, as_of=as_of, symbols=symbols)
+    exported = _append_recent_atr_summary(storage, exported, as_of=as_of, symbols=symbols)
     trend_universe = _load_or_build_trend_universe_summary(storage, config=config, trade_date=as_of, symbols=symbols)
     exported = _append_recent_trend_universe_summary(exported, trend_universe)
     exported = _append_recent_trend_summary(storage, config=config, exported=exported, as_of=as_of, symbols=symbols)
@@ -929,6 +960,26 @@ def _run_macd(
     available = [column for column in display_columns if column in summary.columns]
     print(summary.loc[:, available].head(top_n).to_string(index=False))
     print(f"\nMACD 状态文件：{report_paths['detail_path']}")
+
+
+def _run_atr(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+    symbols: list[str] | None = None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    summary = _load_or_build_atr_summary(storage, trade_date=trade_date, symbols=symbols)
+    if summary.empty:
+        raise RuntimeError(f"No ATR summary could be generated for {trade_date.isoformat()}")
+    report_paths = save_atr_report(paths, trade_date=trade_date, dataframe=summary, output=output)
+
+    display = build_atr_export_frame(summary).head(top_n)
+    print(display.to_string(index=False))
+    print(f"\nATR 风险辅助文件：{report_paths['detail_path']}")
 
 
 def _run_trend_universe(
@@ -1505,6 +1556,9 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
     exported["symbol"] = exported["symbol"].map(_format_symbol_for_excel)
     exported["pattern_id"] = exported["strategy_name"].map(PATTERN_LABEL_MAP)
     exported = exported.drop(columns=["strategy_name"], errors="ignore")
+    dedupe_keys = [column for column in ("trade_date", "symbol", "pattern_id") if column in exported.columns]
+    if dedupe_keys:
+        exported = exported.drop_duplicates(subset=dedupe_keys, keep="first")
     preferred_order = [
         "trade_date",
         "symbol",
@@ -1512,7 +1566,23 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
         "pattern_id",
         "close",
         "old_high_date",
+        "old_high_price",
+        "days_since_old_high",
+        "max_drawdown_since_old_high",
         "distance_to_old_high_pct",
+        "extension_above_old_high_pct",
+        "breakout_date",
+        "breakout_volume_ratio",
+        "days_after_breakout",
+        "platform_window_days",
+        "platform_range_pct",
+        "distance_to_platform_high_pct",
+        "distance_to_ma20",
+        "drawdown_15d",
+        "consolidation_days",
+        "consolidation_range_pct",
+        "consolidation_volume_ratio",
+        "volume_ratio_20",
         "reason",
     ]
     available = [column for column in preferred_order if column in exported.columns]
@@ -1545,7 +1615,7 @@ def _append_recent_tradingview_scores(
 
     merge_columns = ["symbol", *rating_date_columns, "avg_all_rating_5d", "all_rating_label"]
     tradingview = summary.loc[:, [column for column in merge_columns if column in summary.columns]].copy()
-    tradingview["symbol"] = tradingview["symbol"].map(_normalize_exported_symbol)
+    tradingview = _dedupe_symbol_report_rows(tradingview)
     tradingview = tradingview.rename(
         columns={
             **{column: f"tradingview_{column}" for column in rating_date_columns},
@@ -1602,6 +1672,33 @@ def _append_recent_macd_summary(
         "bullish_volume_price_divergence_flag",
         "bearish_volume_price_divergence_flag",
     ])
+
+
+def _append_recent_atr_summary(
+    storage: Storage,
+    exported: pd.DataFrame,
+    *,
+    as_of: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    if exported.empty or "symbol" not in exported.columns:
+        return exported
+
+    summary = _load_or_build_atr_summary(storage, trade_date=as_of, symbols=symbols)
+    if summary.empty:
+        return exported
+
+    merge_columns = [
+        "symbol",
+        "atr_14",
+        "atr_pct_14",
+        "atr_stop_loss_1x",
+        "atr_stop_loss_2x",
+        "atr_take_profit_2x",
+        "atr_take_profit_3x",
+        "atr_volatility_regime",
+    ]
+    return _merge_symbol_report(exported, summary, merge_columns=merge_columns, bool_columns=[])
 
 
 def _append_recent_trend_universe_summary(
@@ -1672,8 +1769,7 @@ def _merge_symbol_report(
     columns = [column for column in merge_columns if column in report.columns]
     if "symbol" not in columns:
         return exported
-    summary = report.loc[:, columns].copy()
-    summary["symbol"] = summary["symbol"].map(_normalize_exported_symbol)
+    summary = _dedupe_symbol_report_rows(report.loc[:, columns].copy())
 
     enriched = exported.copy()
     enriched["_normalized_symbol"] = enriched["symbol"].map(_normalize_exported_symbol)
@@ -1691,6 +1787,15 @@ def _merge_symbol_report(
     return enriched
 
 
+def _dedupe_symbol_report_rows(report: pd.DataFrame) -> pd.DataFrame:
+    if report.empty or "symbol" not in report.columns:
+        return report
+
+    deduped = report.copy()
+    deduped["symbol"] = deduped["symbol"].map(_normalize_exported_symbol)
+    return deduped.drop_duplicates(subset=["symbol"], keep="first").reset_index(drop=True)
+
+
 def _load_or_build_macd_summary(
     storage: Storage,
     trade_date: date,
@@ -1702,6 +1807,19 @@ def _load_or_build_macd_summary(
     if default_path.exists():
         return pd.read_csv(default_path)
     return _build_macd_summary(storage, trade_date=trade_date)
+
+
+def _load_or_build_atr_summary(
+    storage: Storage,
+    trade_date: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    if symbols:
+        return _build_atr_summary(storage, trade_date=trade_date, symbols=symbols)
+    default_path = storage.paths.reports_dir / "atr" / f"atr_{trade_date.isoformat()}.csv"
+    if default_path.exists():
+        return normalize_atr_summary_frame(pd.read_csv(default_path))
+    return _build_atr_summary(storage, trade_date=trade_date)
 
 
 def _load_or_build_trend_universe_summary(
@@ -1972,6 +2090,51 @@ def _build_macd_summary(
         if column in summary.columns:
             summary[column] = summary[column].fillna(False).astype(bool)
     return summary
+
+
+def _build_atr_summary(
+    storage: Storage,
+    trade_date: date,
+    symbols: list[str] | None = None,
+) -> pd.DataFrame:
+    tradingview_summary, _ = _load_or_build_tradingview_summary(
+        storage,
+        trade_date=trade_date,
+        lookback_days=5,
+        symbols=symbols,
+    )
+    if tradingview_summary.empty:
+        return pd.DataFrame()
+
+    summary_rows: list[dict[str, object]] = []
+    total_rows = len(tradingview_summary)
+    logging.info("ATR summary scan started for %s: %s symbols", trade_date.isoformat(), total_rows)
+    for index, (_, row) in enumerate(tradingview_summary.iterrows(), start=1):
+        symbol = _normalize_exported_symbol(row["symbol"])
+        try:
+            bars = storage.load_daily_bars(symbol)
+        except FileNotFoundError:
+            _log_scan_progress("ATR", index, total_rows)
+            continue
+
+        cutoff = bars[pd.to_datetime(bars["trade_date"]).dt.date <= trade_date].reset_index(drop=True)
+        if cutoff.empty:
+            _log_scan_progress("ATR", index, total_rows)
+            continue
+
+        snapshot = build_atr_snapshot_row(
+            cutoff,
+            symbol=_format_symbol_for_excel(symbol),
+            name=str(row.get("name", "")),
+            trade_date=trade_date,
+        )
+        if snapshot is not None:
+            summary_rows.append(snapshot)
+        _log_scan_progress("ATR", index, total_rows)
+
+    if not summary_rows:
+        return pd.DataFrame()
+    return pd.DataFrame(summary_rows)
 
 
 def _prepare_daily_macd_frame(dataframe: pd.DataFrame) -> pd.DataFrame:

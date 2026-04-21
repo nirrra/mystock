@@ -8,15 +8,19 @@ from pathlib import Path
 
 import pandas as pd
 
+from .atr import ATR_WATCHLIST_FIELD_MAP
 from .models import PickTrendWatchlistConfig, WatchlistTrendFilterConfig
 
 
 WATCHLIST_FILENAME_RE = re.compile(r"watchlist_(\d{4}-\d{2}-\d{2})\.json$")
+WATCHLIST_STREAK_FIELD = "连续上榜天数"
 PATTERN_PRIORITY = {
-    "1": 3.0,
-    "3": 2.8,
-    "2": 2.5,
-    "4": 1.8,
+    "2": 3.2,
+    "3": 3.0,
+    "1": 2.8,
+    "4": 2.4,
+    "5": 2.2,
+    "6": 2.0,
 }
 LABEL_BONUS = {
     "strong_buy": 1.0,
@@ -61,6 +65,26 @@ TREND_UNIVERSE_CANDIDATE_FIELDS = (
     "trend_strength_score",
     "trend_quality_score",
     "trend_liquidity_score",
+)
+PATTERN_CANDIDATE_FIELDS = (
+    "old_high_date",
+    "old_high_price",
+    "days_since_old_high",
+    "max_drawdown_since_old_high",
+    "distance_to_old_high_pct",
+    "breakout_date",
+    "breakout_volume_ratio",
+    "extension_above_old_high_pct",
+    "days_after_breakout",
+    "platform_window_days",
+    "platform_range_pct",
+    "distance_to_platform_high_pct",
+    "distance_to_ma20",
+    "drawdown_15d",
+    "consolidation_days",
+    "consolidation_range_pct",
+    "consolidation_volume_ratio",
+    "volume_ratio_20",
 )
 
 
@@ -124,14 +148,7 @@ def build_watchlist_candidates_from_patterns(
             "stable_score": round(float(row["stable_score"]), 4),
             "reason": row.get("reason", ""),
         }
-        for field in TREND_UNIVERSE_CANDIDATE_FIELDS + TREND_CANDIDATE_FIELDS:
-            if field not in row or pd.isna(row.get(field)):
-                continue
-            value = row.get(field)
-            if isinstance(value, float):
-                candidate[field] = round(float(value), 4)
-            else:
-                candidate[field] = value
+        _append_supported_fields(candidate, row)
         candidates.append(candidate)
 
     return {
@@ -199,14 +216,7 @@ def build_watchlist_candidates_from_trend(
             "buy_score": round(float(row["buy_score"]), 4),
             "price_action_score": round(float(row["price_action_score"]), 4),
         }
-        for field in TREND_UNIVERSE_CANDIDATE_FIELDS + TREND_CANDIDATE_FIELDS:
-            if field not in row or pd.isna(row.get(field)):
-                continue
-            value = row.get(field)
-            if isinstance(value, float):
-                candidate[field] = round(float(value), 4)
-            else:
-                candidate[field] = value
+        _append_supported_fields(candidate, row)
         candidates.append(candidate)
 
     return {
@@ -274,16 +284,7 @@ def apply_trend_filter_to_watchlist_payload(
 
         enriched = deepcopy(item)
         enriched["symbol"] = symbol
-        for field in TREND_UNIVERSE_CANDIDATE_FIELDS + TREND_CANDIDATE_FIELDS:
-            if field not in trend_row:
-                continue
-            value = trend_row.get(field)
-            if pd.isna(value):
-                continue
-            if isinstance(value, float):
-                enriched[field] = round(float(value), 4)
-            else:
-                enriched[field] = value
+        _append_supported_fields(enriched, trend_row)
         filtered.append(enriched)
 
     return {
@@ -303,7 +304,9 @@ def write_watchlist(
     target = _resolve_watchlist_target(project_root, trade_date, kind=kind)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = build_watchlist_payload(trade_date=trade_date, picker_payload=picker_payload)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    if kind in {None, "pattern"}:
+        payload = _attach_main_watchlist_streaks(project_root=project_root, trade_date=trade_date, payload=payload)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
     return target
 
 
@@ -413,16 +416,16 @@ def _base_tier(row: pd.Series) -> str | None:
     if avg_score < 0.22:
         return None
 
-    if pattern_id in {"1", "3"} and avg_score >= 0.36:
+    if pattern_id in {"1", "2", "3"} and avg_score >= 0.35:
         return "第一梯队"
-    if pattern_id == "2" and avg_score >= 0.35:
+    if pattern_id in {"4", "5"} and avg_score >= 0.36:
         return "第一梯队"
-    if pattern_id == "4" and avg_score >= 0.42 and label == "strong_buy":
+    if pattern_id == "6" and avg_score >= 0.42 and label == "strong_buy":
         return "第一梯队"
 
     if pattern_id in {"1", "2", "3"} and avg_score >= 0.28:
         return "第二梯队"
-    if pattern_id == "4" and avg_score >= 0.32:
+    if pattern_id in {"4", "5", "6"} and avg_score >= 0.32:
         return "第二梯队"
 
     return "第三梯队"
@@ -439,6 +442,77 @@ def _resolve_watchlist_target(project_root: Path, trade_date: date, kind: str | 
     if kind == "trend":
         return watchlist_trend_path(project_root, trade_date)
     return watchlist_path(project_root, trade_date)
+
+
+def _append_supported_fields(candidate: dict[str, object], row: pd.Series | dict[str, object]) -> None:
+    for field in PATTERN_CANDIDATE_FIELDS:
+        value = _row_value(row, field, pd.NA)
+        if pd.isna(value):
+            continue
+        candidate[field] = _normalize_candidate_value(value)
+
+    for field in TREND_UNIVERSE_CANDIDATE_FIELDS + TREND_CANDIDATE_FIELDS:
+        value = _row_value(row, field, pd.NA)
+        if pd.isna(value):
+            continue
+        candidate[field] = _normalize_candidate_value(value)
+
+    for source_field, target_field in ATR_WATCHLIST_FIELD_MAP:
+        value = _row_value(row, source_field, pd.NA)
+        if pd.isna(value):
+            continue
+        if source_field == "atr_pct_14":
+            candidate[target_field] = round(float(value) * 100.0, 4)
+        else:
+            candidate[target_field] = _normalize_candidate_value(value)
+
+
+def _attach_main_watchlist_streaks(
+    *,
+    project_root: Path,
+    trade_date: date,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    enriched = deepcopy(payload)
+    candidates = enriched.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return enriched
+
+    previous_streaks = _load_previous_main_watchlist_streaks(project_root=project_root, trade_date=trade_date)
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        symbol = _normalize_symbol(item.get("symbol", ""))
+        if symbol == "000000":
+            continue
+        item[WATCHLIST_STREAK_FIELD] = int(previous_streaks.get(symbol, 0)) + 1
+    return enriched
+
+
+def _load_previous_main_watchlist_streaks(*, project_root: Path, trade_date: date) -> dict[str, int]:
+    try:
+        previous_date, _ = find_latest_watchlist_before(project_root=project_root, trade_date=trade_date)
+    except FileNotFoundError:
+        return {}
+
+    previous_payload = load_watchlist(project_root=project_root, trade_date=previous_date)
+    candidates = previous_payload.get("candidates")
+    if not isinstance(candidates, list):
+        return {}
+
+    streaks: dict[str, int] = {}
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        symbol = _normalize_symbol(item.get("symbol", ""))
+        if symbol == "000000":
+            continue
+        raw_value = item.get(WATCHLIST_STREAK_FIELD, 1)
+        try:
+            streaks[symbol] = int(raw_value)
+        except (TypeError, ValueError):
+            streaks[symbol] = 1
+    return streaks
 
 
 def _is_row_risk_excluded(row: pd.Series | dict[str, object]) -> bool:
@@ -469,3 +543,42 @@ def _is_truthy_flag(value: object) -> bool:
     if value is None or pd.isna(value):
         return False
     return bool(value)
+
+
+def _normalize_candidate_value(value: object) -> object:
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, pd.Timestamp):
+        return _serialize_temporal_value(value)
+    if isinstance(value, datetime):
+        return _serialize_temporal_value(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return round(float(value), 4)
+    return value
+
+
+def _json_default(value: object) -> object:
+    normalized = _normalize_candidate_value(value)
+    if normalized is value:
+        raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
+    return normalized
+
+
+def _serialize_temporal_value(value: datetime) -> str:
+    if (
+        value.hour == 0
+        and value.minute == 0
+        and value.second == 0
+        and value.microsecond == 0
+    ):
+        return value.date().isoformat()
+    return value.isoformat()

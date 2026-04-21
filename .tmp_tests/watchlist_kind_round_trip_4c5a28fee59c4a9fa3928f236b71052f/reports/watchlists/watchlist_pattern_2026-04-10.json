@@ -1,0 +1,12 @@
+{
+  "trade_date": "2026-04-10",
+  "source_file": "demo.csv",
+  "candidate_count": 1,
+  "candidates": [
+    {
+      "symbol": "600000",
+      "name": "测试股份",
+      "连续上榜天数": 1
+    }
+  ]
+}

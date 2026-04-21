@@ -105,18 +105,30 @@ trend_backtest:
 
 strategies:
   type1:
-    min_old_high_gap_days: 50
-    max_old_high_gap_days: 150
-    min_drawdown_pct: 0.20
-    near_high_threshold_pct: 0.08
-    breakout_lookback_days: 15
-    breakout_pullback_min_distance_pct: -0.15
-    breakout_pullback_max_distance_pct: 0.30
+    min_old_high_gap_days: 60
+    min_drawdown_pct: 0.10
     peak_window_days: 10
-    volume_window_min_days: 50
-    volume_window_max_days: 150
-    volume_median_multiplier: 1.5
+    breakout_volume_lookback_days: 20
+    breakout_volume_multiplier: 3.0
+    near_high_threshold_pct: 0.08
+    require_break_below_ma60: true
   type2:
+    min_old_high_gap_days: 60
+    min_drawdown_pct: 0.10
+    peak_window_days: 10
+    breakout_volume_lookback_days: 20
+    breakout_volume_multiplier: 3.0
+    require_break_below_ma60: true
+  type3:
+    min_old_high_gap_days: 60
+    min_drawdown_pct: 0.10
+    peak_window_days: 10
+    breakout_volume_lookback_days: 20
+    breakout_volume_multiplier: 3.0
+    post_breakout_max_days: 8
+    post_breakout_max_extension_pct: 0.10
+    require_break_below_ma60: true
+  type4:
     trend_lookback_days: 40
     min_return_trend_lookback: 0.05
     ma60_rising_lookback: 10
@@ -127,14 +139,14 @@ strategies:
     breakout_lookback_days: 10
     breakout_min_distance_pct: -0.05
     breakout_max_distance_pct: 0.10
-  type3:
+  type5:
     trend_lookback_days: 40
     min_return_trend_lookback: 0.15
     ma_rising_lookback: 10
     proximity_to_ma20: 0.03
     max_drawdown_15d: 0.12
     volume_contraction_max: 0.90
-  type4:
+  type6:
     strong_lookback_days: 30
     min_return_strong_lookback: 0.25
     strong_day_return_min: 0.07

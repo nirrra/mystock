@@ -5,7 +5,7 @@
 当前项目聚焦三件事：
 
 - 更新主板股票池和本地日线缓存
-- 生成 pattern、TradingView、MACD/量价状态等技术结果
+- 生成 pattern、TradingView、MACD/量价状态、ATR 风险辅助等技术结果
 - 基于技术规则生成 `watchlist`，并在次日盘中做小范围复筛和排序
 
 项目不包含交易执行，也不会替你自动决定最终买入标的。
@@ -14,12 +14,13 @@
 
 当前流程里有两层结果：
 
-- 技术结果层：`pattern`、`tradingview`、`macd`
+- 技术结果层：`pattern`、`tradingview`、`macd`、`atr`
 - 候选池层：`watchlist`、`watchlist_pattern`、`watchlist_trend`
 
 其中：
 
 - `daily-screening` 负责跑完整技术链路，并生成当日 `watchlist`、`watchlist_pattern`、`watchlist_trend`
+- 主 `watchlist` 和 `watchlist_pattern` 会补入 ATR 辅助字段，并写入 `连续上榜天数`
 - `intraday-screening` 负责读取上一交易日或指定日期的 `watchlist`，直接抓取候选股当日 5 分钟线做盘中复筛，并生成一份盘中排序 CSV
 - `选股.md` 不在自动命令链里更新，留给你手动整理和最终决策
 
@@ -75,6 +76,7 @@ data/                        本地缓存数据
 reports/patterns/            模式扫描结果
 reports/tradingview/         TradingView 技术评分结果
 reports/macd/                MACD/量价统一状态表
+reports/atr/                 ATR 风险辅助表
 reports/watchlists/          日终 watchlist
 reports/daily_screening/     daily-screening 运行摘要
 reports/intraday_screening/  盘中复筛结果
@@ -105,6 +107,7 @@ python -m stocks_analyzer --project-root . update --start-date 20240101
 python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10
 python -m stocks_analyzer --project-root . tradingview --date 2026-04-10
 python -m stocks_analyzer --project-root . macd --date 2026-04-10
+python -m stocks_analyzer --project-root . atr --date 2026-04-10
 ```
 
 执行一轮完整日终筛选并生成 `watchlist`：
@@ -173,21 +176,21 @@ python -m stocks_analyzer --project-root . update --start-date 20240101 --end-da
 
 作用：
 
-- 扫描本地日线缓存，识别 1 到 4 号模式
+- 扫描本地日线缓存，识别 1 到 6 号模式
 
 常用示例：
 
 ```bash
 python -m stocks_analyzer --project-root . pattern
 python -m stocks_analyzer --project-root . pattern --1
-python -m stocks_analyzer --project-root . pattern --2 --4
+python -m stocks_analyzer --project-root . pattern --2 --5
 python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10 --output reports/my_patterns.csv
 python -m stocks_analyzer --project-root . pattern --plot-all
 ```
 
 主要参数：
 
-- `--1 --2 --3 --4`：只识别指定模式
+- `--1 --2 --3 --4 --5 --6`：只识别指定模式
 - `--as-of`：分析截止日期，格式 `YYYY-MM-DD`
 - `--limit`：终端展示上限
 - `--output`：自定义 CSV 输出路径
@@ -196,6 +199,44 @@ python -m stocks_analyzer --project-root . pattern --plot-all
 默认输出：
 
 - `reports/patterns/patterns_all_YYYY-MM-DD.csv`
+
+#### 六个模式分别识别什么
+
+##### 模式1：量顶天立地预突破型
+
+这类股票通常在过去一段时间里出现过一个明显前高，之后经历了较长时间的回撤修复，当前仍未突破，但已经重新逼近老前高。
+
+它更适合拿来观察“第二天是否可能放量突破前高”。
+
+##### 模式2：量顶天立地突破确认型
+
+这类股票在完成底部修复后，最新一根日线已经出现放量阳线，并且最高价突破了前高。
+
+它更适合拿来观察“突破后的次日跟踪机会”。
+
+##### 模式3：量顶天立地突破后延续/回踩型
+
+这类股票已经在前几天完成了量顶天立地式突破，目前仍处在突破后 1 到 8 个交易日内，既可能直接延续，也可能回踩 `MA20` 后重新站回。
+
+它更适合拿来观察“突破后的二次上车机会”。
+
+##### 模式4：平台突破型
+
+这类股票往往已经有一定上涨基础，随后在较窄区间内横盘整理，当前价格开始接近或突破平台上沿，并伴随量能改善。
+
+它更像是在找趋势中的再次加速点。
+
+##### 模式5：趋势回踩型
+
+这类股票中期趋势通常已经建立，价格在上涨后回踩到关键均线附近，但整体趋势并没有走坏，回踩过程中的量能也相对温和。
+
+它更适合观察“强趋势中的低风险跟随机会”。
+
+##### 模式6：强势股二波型
+
+这类股票前面通常已经有一段比较明显的快速上涨，随后进入短期整理或降温阶段，现在又出现再次启动的迹象。
+
+它更适合拿来观察“强势股是否会走出第二波”。
 
 ### `plot`
 
@@ -263,12 +304,32 @@ python -m stocks_analyzer --project-root . macd --date 2026-04-10 --output repor
 - `reports/macd/macd_YYYY-MM-DD.csv`
 - `reports/macd/macd_YYYY-MM-DD.json`
 
+### `atr`
+
+作用：
+
+- 生成指定日期的 ATR 风险辅助表
+- 输出 `ATR14`、`ATR%`、止损止盈参考价和波动分层
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . atr --date 2026-04-10
+python -m stocks_analyzer --project-root . atr --date 2026-04-10 --top-n 30
+python -m stocks_analyzer --project-root . atr --date 2026-04-10 --output reports/atr/custom.csv
+```
+
+默认输出：
+
+- `reports/atr/atr_YYYY-MM-DD.csv`
+- `reports/atr/atr_YYYY-MM-DD.json`
+
 ### `daily-screening`
 
 作用：
 
 - 判断指定日期是否为交易日
-- 串行执行 `update -> tradingview -> macd -> trend-universe -> trend -> pattern`
+- 串行执行 `update -> tradingview -> macd -> atr -> trend-universe -> trend -> pattern`
 - `trend` 生成 `watchlist_trend`
 - `pattern` 生成 `watchlist_pattern`
 - 兼容保留一份通用 `watchlist`，当前与 `watchlist_pattern` 同步
@@ -292,11 +353,12 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --s
 2. `update`
 3. `tradingview`
 4. `macd`
-5. `trend-universe`
-6. `trend`
-7. `pattern`
-8. 生成 `watchlist_pattern`、`watchlist_trend` 和兼容用 `watchlist`
-9. 写入 `daily_screening_YYYY-MM-DD.json`
+5. `atr`
+6. `trend-universe`
+7. `trend`
+8. `pattern`
+9. 生成 `watchlist_pattern`、`watchlist_trend` 和兼容用 `watchlist`
+10. 写入 `daily_screening_YYYY-MM-DD.json`
 
 默认输出：
 
@@ -307,6 +369,7 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --s
 - `reports/patterns/patterns_all_YYYY-MM-DD.csv`
 - `reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
 - `reports/macd/macd_YYYY-MM-DD.csv`
+- `reports/atr/atr_YYYY-MM-DD.csv`
 - `reports/trend/trend_YYYY-MM-DD.csv`
 - `reports/trend_universe/trend_universe_YYYY-MM-DD.csv`
 
@@ -317,6 +380,8 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --s
 - `watchlist_pattern` 不再强制要求 `trend-universe` 交集
 - `watchlist_pattern` 和 `watchlist_trend` 都会先剔除 `MACD顶背离 / 量价看空 / dead_cross`
 - `watchlist_trend` 只保留 `buy_score / price_action_score` 高于 `pick_trend_watchlist` 阈值的票
+- 主 `watchlist` 和 `watchlist_pattern` 会补入 `ATR14`、`ATR%`、止损止盈参考、`波动分层`
+- 主 `watchlist` 和 `watchlist_pattern` 会补入 `连续上榜天数`，按主 `watchlist_YYYY-MM-DD.json` 连续出现天数累计
 - `patterns_all_YYYY-MM-DD.csv` 会同时补入第一层趋势字段和 `trend` 评分字段，方便后续 `pick`
 
 ### `trend`

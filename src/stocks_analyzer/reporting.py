@@ -11,7 +11,11 @@ DISPLAY_COLUMNS = [
     "strategy_name",
     "close",
     "old_high_date",
+    "old_high_price",
     "distance_to_old_high_pct",
+    "extension_above_old_high_pct",
+    "breakout_date",
+    "breakout_volume_ratio",
     "volume_ratio_20",
     "reason",
 ]
@@ -24,10 +28,10 @@ def format_report(dataframe: pd.DataFrame, limit: int) -> str:
     display = dataframe.copy()
     if "symbol" in display.columns:
         display["symbol"] = display["symbol"].map(_display_symbol)
-    for column in ("return_15d", "distance_to_old_high_pct"):
+    for column in ("return_15d", "distance_to_old_high_pct", "extension_above_old_high_pct"):
         if column in display.columns:
             display[column] = display[column].map(lambda value: f"{value:.2%}" if pd.notna(value) else "nan")
-    for column in ("close", "volume_ratio_20"):
+    for column in ("close", "old_high_price", "volume_ratio_20", "breakout_volume_ratio"):
         if column in display.columns:
             display[column] = display[column].map(lambda value: f"{value:.2f}" if pd.notna(value) else "nan")
 

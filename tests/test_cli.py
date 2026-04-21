@@ -7,6 +7,7 @@ from uuid import uuid4
 import pandas as pd
 from stocks_analyzer.cli import (
     PATTERN_LABEL_MAP,
+    _append_recent_atr_summary,
     _append_recent_macd_summary,
     _append_recent_trend_universe_summary,
     _configure_network,
@@ -43,11 +44,11 @@ def test_build_parser_accepts_update_with_symbol() -> None:
 
 def test_build_parser_accepts_pattern_flags() -> None:
     parser = build_parser()
-    args = parser.parse_args(["pattern", "--1", "--4", "--plot-all", "--as-of", "2026-04-10"])
+    args = parser.parse_args(["pattern", "--1", "--6", "--plot-all", "--as-of", "2026-04-10"])
 
     assert args.command == "pattern"
     assert args.pattern1 is True
-    assert args.pattern4 is True
+    assert args.pattern6 is True
     assert args.plot_all is True
     assert args.as_of == "2026-04-10"
 
@@ -94,6 +95,15 @@ def test_build_parser_accepts_macd_command() -> None:
     assert args.command == "macd"
     assert args.date == "2026-04-10"
     assert args.top_n == 30
+
+
+def test_build_parser_accepts_atr_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["atr", "--date", "2026-04-10", "--top-n", "18"])
+
+    assert args.command == "atr"
+    assert args.date == "2026-04-10"
+    assert args.top_n == 18
 
 
 def test_build_parser_accepts_xueqiu_archive_command() -> None:
@@ -350,8 +360,12 @@ def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
                 "trade_date": "2026-04-10",
                 "symbol": "600000",
                 "name": "测试股份",
-                "strategy_name": "type1",
+                "strategy_name": "volume_top_pre_breakout",
                 "close": 10.0,
+                "old_high_date": "2026-03-01",
+                "old_high_price": 10.8,
+                "days_since_old_high": 28,
+                "distance_to_old_high_pct": 0.0741,
                 "reason": "demo",
             }
         ]
@@ -359,8 +373,55 @@ def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
 
     prepared = _prepare_pattern_results(results)
 
-    assert prepared["pattern_id"].tolist() == [PATTERN_LABEL_MAP["type1"]]
+    assert prepared["pattern_id"].tolist() == [PATTERN_LABEL_MAP["volume_top_pre_breakout"]]
     assert "strategy_name" not in prepared.columns
+    assert prepared.columns[:9].tolist() == [
+        "trade_date",
+        "symbol",
+        "name",
+        "pattern_id",
+        "close",
+        "old_high_date",
+        "old_high_price",
+        "days_since_old_high",
+        "distance_to_old_high_pct",
+    ]
+
+
+def test_prepare_pattern_results_deduplicates_same_symbol_and_pattern() -> None:
+    results = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": "600000",
+                "name": "测试股份",
+                "strategy_name": "volume_top_pre_breakout",
+                "close": 10.0,
+                "reason": "demo-a",
+            },
+            {
+                "trade_date": "2026-04-10",
+                "symbol": "600000",
+                "name": "测试股份",
+                "strategy_name": "volume_top_pre_breakout",
+                "close": 10.0,
+                "reason": "demo-b",
+            },
+            {
+                "trade_date": "2026-04-10",
+                "symbol": "600000",
+                "name": "测试股份",
+                "strategy_name": "trend_pullback",
+                "close": 10.0,
+                "reason": "demo-c",
+            },
+        ]
+    )
+
+    prepared = _prepare_pattern_results(results)
+
+    assert len(prepared) == 2
+    assert prepared["pattern_id"].tolist() == ["1", "5"]
 
 
 def test_append_recent_macd_summary_merges_state_columns_from_saved_report() -> None:
@@ -406,6 +467,52 @@ def test_append_recent_macd_summary_merges_state_columns_from_saved_report() -> 
     assert bool(enriched.loc[0, "macd_bottom_divergence_15d"]) is False
 
 
+def test_append_recent_atr_summary_merges_columns_from_saved_report() -> None:
+    tmp_path = _make_workspace_tmp_dir("atr_summary_merge")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+
+    atr_dir = paths.reports_dir / "atr"
+    atr_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "代码": '="600000"',
+                "名称": "测试股份",
+                "交易日期": "2026-04-10",
+                "收盘价": 10.0,
+                "ATR14": 0.8,
+                "ATR%": 8.0,
+                "1ATR止损参考": 9.2,
+                "2ATR止损参考": 8.4,
+                "2ATR止盈参考": 11.6,
+                "3ATR止盈参考": 12.4,
+                "波动分层": "高波动",
+            }
+        ]
+    ).to_csv(atr_dir / "atr_2026-04-10.csv", index=False, encoding="utf-8-sig")
+
+    exported = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": '="600000"',
+                "name": "测试股份",
+                "pattern_id": "1",
+                "close": 10.0,
+            }
+        ]
+    )
+
+    enriched = _append_recent_atr_summary(storage, exported, as_of=date(2026, 4, 10))
+
+    assert enriched.loc[0, "atr_14"] == 0.8
+    assert enriched.loc[0, "atr_pct_14"] == 0.08
+    assert enriched.loc[0, "atr_stop_loss_2x"] == 8.4
+    assert enriched.loc[0, "atr_volatility_regime"] == "高波动"
+
+
 def test_append_recent_trend_summary_merges_score_columns_from_saved_report() -> None:
     tmp_path = _make_workspace_tmp_dir("trend_summary_merge")
     config = load_config(ROOT / "config" / "default.yaml")
@@ -444,6 +551,50 @@ def test_append_recent_trend_summary_merges_score_columns_from_saved_report() ->
     assert enriched.loc[0, "signal_type"] == "breakout"
     assert enriched.loc[0, "buy_score"] == 72.5
     assert enriched.loc[0, "price_action_score"] == 61.2
+
+
+def test_append_recent_trend_summary_deduplicates_saved_report_rows_before_merge() -> None:
+    tmp_path = _make_workspace_tmp_dir("trend_summary_merge_dedup")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+
+    trend_dir = paths.reports_dir / "trend"
+    trend_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "symbol": "600000",
+                "signal_type": "breakout",
+                "buy_score": 72.5,
+                "price_action_score": 61.2,
+            },
+            {
+                "symbol": '="600000"',
+                "signal_type": "breakout",
+                "buy_score": 72.5,
+                "price_action_score": 61.2,
+            },
+        ]
+    ).to_csv(trend_dir / "trend_2026-04-10.csv", index=False, encoding="utf-8-sig")
+
+    exported = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": '="600000"',
+                "name": "测试股份",
+                "pattern_id": "1",
+                "close": 10.0,
+            }
+        ]
+    )
+
+    enriched = _append_recent_trend_summary(storage, exported, config=config, as_of=date(2026, 4, 10))
+
+    assert len(enriched) == 1
+    assert enriched.loc[0, "signal_type"] == "breakout"
+    assert enriched.loc[0, "buy_score"] == 72.5
 
 
 def test_append_recent_trend_universe_summary_merges_first_layer_fields() -> None:
@@ -509,6 +660,7 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
     monkeypatch.setattr("stocks_analyzer.cli._prepare_pattern_results", lambda results: exported.copy())
     monkeypatch.setattr("stocks_analyzer.cli._append_recent_tradingview_scores", lambda storage, exported, as_of, lookback_days, symbols=None: exported)
     monkeypatch.setattr("stocks_analyzer.cli._append_recent_macd_summary", lambda storage, exported, as_of, symbols=None: exported)
+    monkeypatch.setattr("stocks_analyzer.cli._append_recent_atr_summary", lambda storage, exported, as_of, symbols=None: exported)
     monkeypatch.setattr(
         "stocks_analyzer.cli._load_or_build_trend_universe_summary",
         lambda storage, config, trade_date, symbols=None: pd.DataFrame([{"symbol": "600000", "in_trend_universe": True, "trend_score": 81.0}]),
@@ -523,7 +675,7 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
         provider_name=config.provider,
         config=config,
         as_of=date(2026, 4, 10),
-        selected_patterns=["type1"],
+        selected_patterns=["volume_top_pre_breakout"],
         limit=20,
         output=None,
         plot_all=False,

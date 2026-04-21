@@ -47,6 +47,8 @@ def test_write_and_load_watchlist_round_trip() -> None:
     assert loaded["candidate_count"] == 2
     assert "analysis" not in loaded
     assert extract_watchlist_symbols(loaded) == ["002579", "603803"]
+    assert loaded["candidates"][0]["连续上榜天数"] == 1
+    assert loaded["candidates"][1]["连续上榜天数"] == 1
 
 
 def test_write_and_load_kind_specific_watchlists_round_trip() -> None:
@@ -66,6 +68,63 @@ def test_write_and_load_kind_specific_watchlists_round_trip() -> None:
     assert trend_target == watchlist_trend_path(tmp_path, date(2026, 4, 10))
     assert pattern_loaded["candidate_count"] == 1
     assert trend_loaded["candidate_count"] == 1
+    assert pattern_loaded["candidates"][0]["连续上榜天数"] == 1
+    assert "连续上榜天数" not in trend_loaded["candidates"][0]
+
+
+def test_write_watchlist_serializes_temporal_candidate_fields() -> None:
+    tmp_path = _make_workspace_tmp_dir("watchlist_temporal_fields")
+    payload = {
+        "source_file": "demo.csv",
+        "candidates": [
+            {
+                "symbol": "600000",
+                "name": "测试股份",
+                "trade_date": pd.Timestamp("2026-04-21"),
+                "planned_entry_date": pd.Timestamp("2026-04-22 09:30:00"),
+            }
+        ],
+    }
+
+    write_watchlist(project_root=tmp_path, trade_date=date(2026, 4, 21), picker_payload=payload, kind="trend")
+    loaded = load_watchlist(project_root=tmp_path, trade_date=date(2026, 4, 21), kind="trend")
+
+    assert loaded["candidates"][0]["trade_date"] == "2026-04-21"
+    assert loaded["candidates"][0]["planned_entry_date"] == "2026-04-22T09:30:00"
+
+
+def test_write_watchlist_increments_main_watchlist_streaks_from_previous_day() -> None:
+    tmp_path = _make_workspace_tmp_dir("watchlist_streaks")
+
+    write_watchlist(
+        project_root=tmp_path,
+        trade_date=date(2026, 4, 10),
+        picker_payload={
+            "source_file": "day1.csv",
+            "candidates": [
+                {"symbol": "600000", "name": "测试甲"},
+                {"symbol": "600001", "name": "测试乙"},
+            ],
+        },
+    )
+
+    write_watchlist(
+        project_root=tmp_path,
+        trade_date=date(2026, 4, 11),
+        picker_payload={
+            "source_file": "day2.csv",
+            "candidates": [
+                {"symbol": "600000", "name": "测试甲"},
+                {"symbol": "600002", "name": "测试丙"},
+            ],
+        },
+    )
+
+    loaded = load_watchlist(project_root=tmp_path, trade_date=date(2026, 4, 11))
+    streaks = {item["symbol"]: item["连续上榜天数"] for item in loaded["candidates"]}
+
+    assert streaks["600000"] == 2
+    assert streaks["600002"] == 1
 
 
 def test_find_latest_watchlist_before_uses_latest_prior_file() -> None:
@@ -103,6 +162,10 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
                 "tradingview_all_rating_2026-04-12": 0.40,
                 "macd_top_divergence_15d": False,
                 "macd_bottom_divergence_15d": False,
+                "old_high_date": "2026-02-18",
+                "old_high_price": 13.2,
+                "days_since_old_high": 36,
+                "distance_to_old_high_pct": 0.051,
                 "reason": "demo-1",
             },
             {
@@ -118,6 +181,9 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
                 "tradingview_all_rating_2026-04-12": 0.40,
                 "macd_top_divergence_15d": False,
                 "macd_bottom_divergence_15d": False,
+                "breakout_date": "2026-04-12",
+                "breakout_volume_ratio": 3.2,
+                "days_after_breakout": 2,
                 "reason": "demo-2",
             },
             {
@@ -174,6 +240,12 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
     stable_scores = {item["symbol"]: item["stable_score"] for item in payload["candidates"]}
     assert stable_scores["002579"] == stable_scores["603803"]
     assert payload["candidates"][0]["tier"] == "第一梯队"
+    assert payload["candidates"][0]["old_high_date"] == "2026-02-18"
+    assert payload["candidates"][0]["old_high_price"] == 13.2
+    assert payload["candidates"][0]["distance_to_old_high_pct"] == 0.051
+    assert payload["candidates"][1]["breakout_date"] == "2026-04-12"
+    assert payload["candidates"][1]["breakout_volume_ratio"] == 3.2
+    assert payload["candidates"][1]["days_after_breakout"] == 2
 
 
 def test_build_watchlist_candidates_from_trend_applies_thresholds_and_risk_filter() -> None:
@@ -189,6 +261,15 @@ def test_build_watchlist_candidates_from_trend_applies_thresholds_and_risk_filte
                 "macd_cross_state": "golden_cross",
                 "macd_divergence_state": "none",
                 "volume_price_divergence_state": "none",
+                "trade_date": "2026-04-12",
+                "close": 10.0,
+                "atr_14": 0.8,
+                "atr_pct_14": 0.08,
+                "atr_stop_loss_1x": 9.2,
+                "atr_stop_loss_2x": 8.4,
+                "atr_take_profit_2x": 11.6,
+                "atr_take_profit_3x": 12.4,
+                "atr_volatility_regime": "高波动",
             },
             {
                 "symbol": "600001",
@@ -227,6 +308,9 @@ def test_build_watchlist_candidates_from_trend_applies_thresholds_and_risk_filte
     assert payload["candidates"][0]["symbol"] == "600000"
     assert payload["candidates"][0]["source"] == "trend"
     assert payload["candidates"][0]["buy_score"] == 78.0
+    assert payload["candidates"][0]["ATR14"] == 0.8
+    assert payload["candidates"][0]["ATR%"] == 8.0
+    assert payload["candidates"][0]["波动分层"] == "高波动"
 
 
 def test_apply_trend_filter_to_watchlist_payload_requires_strict_intersection_with_trend_universe() -> None:

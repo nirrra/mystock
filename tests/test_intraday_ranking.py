@@ -105,8 +105,8 @@ def test_build_daily_summary_frame_reuses_watchlist_stable_score() -> None:
         pattern_path=pattern_path,
     )
 
-    assert result.loc[0, "pattern_ids"] == "1,3"
-    assert result.loc[0, "pattern_id"] == "1"
+    assert result.loc[0, "pattern_ids"] == "3,1"
+    assert result.loc[0, "pattern_id"] == "3"
     expected = round(
         float(
             _stable_score(
@@ -232,7 +232,7 @@ def test_build_watchlist_summary_frame_merges_duplicate_symbols() -> None:
 
     assert len(result) == 1
     assert result.loc[0, "symbol"] == "603259"
-    assert result.loc[0, "pattern_ids"] == "1,2"
+    assert result.loc[0, "pattern_ids"] == "2,1"
     assert bool(result.loc[0, "daily_macd_top_divergence_15d"]) is True
     assert float(result.loc[0, "tradingview_avg_all_rating_5d"]) == 0.42
 

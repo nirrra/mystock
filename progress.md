@@ -198,3 +198,45 @@
 | 趋势评分回归 | `pytest tests/test_trend_trading.py -q` | 新状态字段不破坏既有趋势评分链路 | 13 passed | pass |
 | 盘中链路回归 | `pytest tests/test_intraday_screening.py -q` | 新配置模型未破坏盘中链路 | 1 passed | pass |
 | update 回归 | `pytest tests/test_update_fallback.py -q` | 新配置模型未破坏 update 链路 | 5 passed | pass |
+
+## Session: 2026-04-21
+
+### Feature: Volume Top Breakout Pattern Redesign
+
+- **Status:** complete
+- Actions taken:
+  - 新增 `docs/superpowers/specs/2026-04-21-volume-top-breakout-design.md`，固化 `量顶天立地` 母形态与新 `pattern1/2/3`
+  - 扩展配置模型为 `type1~type6`，并将旧 `pattern2/3/4` 顺延为新 `pattern4/5/6`
+  - 新增 `src/stocks_analyzer/volume_top_breakout.py`，统一实现老前高选择与首次有效突破事件识别
+  - 重写 `src/stocks_analyzer/strategies.py`，将新 `pattern1/2/3` 改为共享检测器驱动，并保留旧平台突破、趋势回踩、二波逻辑为 `pattern4/5/6`
+  - 更新 `cli.py` 的模式映射、标签映射、`pattern` 命令帮助与导出列顺序
+  - 更新 `watchlist.py` 的 pattern 优先级与分层规则，使其兼容 `1~6` 编号
+  - 更新 `README.md` 与 `四个模式.md`，同步六模式口径
+  - 重写并扩展 `tests/test_strategies.py`，覆盖新 `pattern1/2/3` 与顺延后的 `4/5/6`
+  - 调整 `tests/test_cli.py`、`tests/test_intraday_ranking.py` 以适配新策略名与 pattern 优先级
+- Files created/modified:
+  - `C:\Users\wdyab\Desktop\wdy\stocks\docs\superpowers\specs\2026-04-21-volume-top-breakout-design.md` (created)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\volume_top_breakout.py` (created)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\models.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\config.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\config\default.yaml` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\strategies.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\cli.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\reporting.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\watchlist.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_strategies.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_cli.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_intraday_ranking.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\README.md` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\四个模式.md` (updated)
+
+## Test Results (2026-04-21)
+
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| 语法检查 | `python -m compileall src tests` | 新增六模式与共享检测器源码均可编译 | 通过 | pass |
+| 策略回归 | `pytest tests/test_strategies.py -q` | 新 `pattern1/2/3` 与顺延后 `4/5/6` 均可命中 | 9 passed | pass |
+| watchlist / 盘中排序回归 | `pytest tests/test_watchlist.py tests/test_intraday_ranking.py -q` | 新优先级与多模式聚合正常 | 17 passed | pass |
+| 日常筛选链路回归 | `pytest tests/test_daily_screening.py tests/test_intraday_screening.py -q` | 新模式映射未破坏 daily / intraday screening | 3 passed | pass |
+| CLI 相关子集回归 | `pytest tests/test_cli.py -k 'pattern or watchlist or daily_screening or intraday_screening or build_parser_accepts_pattern_flags or trend_summary or atr_summary or macd_summary or trend_universe_summary' -q` | 新 `pattern` 映射、导出和 watchlist 更新正常 | 8 passed | pass |
+| 组合子集回归 | `pytest tests/test_strategies.py tests/test_watchlist.py tests/test_intraday_ranking.py tests/test_daily_screening.py tests/test_intraday_screening.py tests/test_cli.py -k 'pattern or watchlist or daily_screening or intraday_screening or build_parser_accepts_pattern_flags or trend_summary or atr_summary or macd_summary or trend_universe_summary' -q` | 相关链路组合运行正常 | 23 passed, 38 deselected | pass |
