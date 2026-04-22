@@ -44,11 +44,11 @@ def test_build_parser_accepts_update_with_symbol() -> None:
 
 def test_build_parser_accepts_pattern_flags() -> None:
     parser = build_parser()
-    args = parser.parse_args(["pattern", "--1", "--6", "--plot-all", "--as-of", "2026-04-10"])
+    args = parser.parse_args(["pattern", "--1", "--5", "--plot-all", "--as-of", "2026-04-10"])
 
     assert args.command == "pattern"
     assert args.pattern1 is True
-    assert args.pattern6 is True
+    assert args.pattern5 is True
     assert args.plot_all is True
     assert args.as_of == "2026-04-10"
 

@@ -25,7 +25,6 @@ from .models import (
     Type3Config,
     Type4Config,
     Type5Config,
-    Type6Config,
     UniverseConfig,
     WatchlistTrendFilterConfig,
 )
@@ -176,7 +175,6 @@ def load_config(config_path: str | Path) -> AppConfig:
         type3=Type3Config(**strategies["type3"]),
         type4=Type4Config(**strategies["type4"]),
         type5=Type5Config(**strategies["type5"]),
-        type6=Type6Config(**strategies["type6"]),
     )
 
 

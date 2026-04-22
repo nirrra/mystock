@@ -173,7 +173,7 @@
   - `模式1 + 顶背离`
   - `模式3 + MACD底背离 + 量价看多`
 
-### 模式 1-6 的具体写法要求
+### 模式 1-5 的具体写法要求
 
 不能只写“模式1 / 模式2 / 模式3 ...”，必须尽量解释成具体价格结构。优先使用 `watchlist` 中已经带出的模式字段；如果仍不够，再回看同日 `patterns_all_YYYY-MM-DD.csv`。
 
@@ -185,12 +185,23 @@
 - `breakout_date`
 - `breakout_volume_ratio`
 - `days_after_breakout`
+- `main_rise_start_date`
+- `main_rise_end_date`
+- `main_rise_return_pct`
+- `transition_days`
+- `platform_start_date`
+- `platform_end_date`
+- `platform_high`
 - `platform_window_days`
 - `platform_range_pct`
 - `distance_to_platform_high_pct`
+- `recent_high_date`
+- `recent_high_price`
+- `days_since_recent_high`
+- `distance_from_recent_high_pct`
+- `ma20_touch_date`
+- `ma20_touch_distance`
 - `distance_to_ma20`
-- `consolidation_days`
-- `consolidation_range_pct`
 
 推荐固定句式如下：
 
@@ -207,16 +218,12 @@
   示例：`4 月 17 日突破后第 3 天，当前仍只比前高高 5.1%，若回踩 MA20 但收盘能站回去，仍可视作二次上车窗口。`
 
 - `模式4`
-  写成“突破震荡平台”的口径。
-  示例：`4 月 20 日突破近 20 日震荡平台，平台振幅约 8.5%，当前只比平台上沿高 3.2%，属于平台突破后不远的位置。`
+  写成“第一段主升后，平台整理，再放量突破”的口径。
+  示例：`前面先走出一段 15 日涨约 32% 的第一段主升，过渡 2 天后进入 28 日平台整理，平台振幅约 9.1%。4 月 20 日放量突破平台上沿，当前只比平台高点高 3.2%，仍属于突破后不远的位置。`
 
 - `模式5`
-  写成“趋势回踩”的口径。
-  示例：`趋势回踩 MA20，当前距离 MA20 约 1.8%，若回踩缩量且重新转强，更适合按趋势延续理解。`
-
-- `模式6`
-  写成“整理后再启动”的口径。
-  示例：`前面整理了 7 天，整理区间约 6.2%，当前重新向上试图走二波，重点看整理上沿附近是否能放量站稳。`
+  写成“短期高点后，最近两天回踩 MA20 又收回”的口径。
+  示例：`最近 10 日内在 4 月 18 日打出短期高点 28.40，且该高点之前 20 日没有更高点。最近两天里回踩到 MA20 附近甚至盘中短破，但收盘重新站回 MA20，上升结构暂时还没坏。`
 
 写逐股说明时，至少包含下面 4 类信息：
 

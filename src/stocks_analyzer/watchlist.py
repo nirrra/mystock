@@ -20,7 +20,6 @@ PATTERN_PRIORITY = {
     "1": 2.8,
     "4": 2.4,
     "5": 2.2,
-    "6": 2.0,
 }
 LABEL_BONUS = {
     "strong_buy": 1.0,
@@ -85,6 +84,19 @@ PATTERN_CANDIDATE_FIELDS = (
     "consolidation_range_pct",
     "consolidation_volume_ratio",
     "volume_ratio_20",
+    "main_rise_start_date",
+    "main_rise_end_date",
+    "main_rise_return_pct",
+    "transition_days",
+    "platform_start_date",
+    "platform_end_date",
+    "platform_high",
+    "recent_high_date",
+    "recent_high_price",
+    "days_since_recent_high",
+    "distance_from_recent_high_pct",
+    "ma20_touch_date",
+    "ma20_touch_distance",
 )
 
 
@@ -420,12 +432,9 @@ def _base_tier(row: pd.Series) -> str | None:
         return "第一梯队"
     if pattern_id in {"4", "5"} and avg_score >= 0.36:
         return "第一梯队"
-    if pattern_id == "6" and avg_score >= 0.42 and label == "strong_buy":
-        return "第一梯队"
-
     if pattern_id in {"1", "2", "3"} and avg_score >= 0.28:
         return "第二梯队"
-    if pattern_id in {"4", "5", "6"} and avg_score >= 0.32:
+    if pattern_id in {"4", "5"} and avg_score >= 0.32:
         return "第二梯队"
 
     return "第三梯队"

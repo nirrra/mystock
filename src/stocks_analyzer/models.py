@@ -55,37 +55,24 @@ class Type3Config:
 
 @dataclass(slots=True)
 class Type4Config:
-    trend_lookback_days: int
-    min_return_trend_lookback: float
-    ma60_rising_lookback: int
-    platform_window_days: int
+    main_rise_window_days: int
+    main_rise_return_min: float
+    transition_min_days: int
+    transition_max_days: int
+    platform_min_days: int
+    platform_max_days: int
     platform_range_max: float
-    platform_upper_half_min_days: int
     breakout_volume_ratio_min: float
-    breakout_lookback_days: int
-    breakout_min_distance_pct: float
-    breakout_max_distance_pct: float
+    post_breakout_max_days: int
+    post_breakout_max_distance_pct: float
 
 
 @dataclass(slots=True)
 class Type5Config:
-    trend_lookback_days: int
-    min_return_trend_lookback: float
-    ma_rising_lookback: int
-    proximity_to_ma20: float
-    max_drawdown_15d: float
-    volume_contraction_max: float
-
-
-@dataclass(slots=True)
-class Type6Config:
-    strong_lookback_days: int
-    min_return_strong_lookback: float
-    strong_day_return_min: float
-    consolidation_min_days: int
-    consolidation_max_days: int
-    consolidation_range_max: float
-    restart_breakout_days: int
+    recent_high_lookback_days: int
+    high_pre_lookback_days: int
+    ma20_touch_lookback_days: int
+    ma20_touch_abs_tolerance: float
 
 
 @dataclass(slots=True)
@@ -238,4 +225,3 @@ class AppConfig:
     type3: Type3Config
     type4: Type4Config
     type5: Type5Config
-    type6: Type6Config

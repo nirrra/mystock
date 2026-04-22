@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import pandas as pd
 
-from .models import AppConfig, Type1Config, Type2Config, Type3Config, Type4Config, Type5Config, Type6Config
+from .models import AppConfig, Type1Config, Type2Config, Type3Config, Type4Config, Type5Config
 from .volume_top_breakout import VolumeTopBreakoutConfig, VolumeTopBreakoutEvent, detect_volume_top_breakout
 
 
@@ -13,7 +13,6 @@ VOLUME_TOP_BREAKOUT = "volume_top_breakout"
 VOLUME_TOP_FOLLOW_THROUGH = "volume_top_follow_through"
 PLATFORM_BREAKOUT = "platform_breakout"
 TREND_PULLBACK = "trend_pullback"
-SECOND_WAVE = "second_wave"
 
 STRATEGY_NAMES = (
     VOLUME_TOP_PRE_BREAKOUT,
@@ -21,7 +20,6 @@ STRATEGY_NAMES = (
     VOLUME_TOP_FOLLOW_THROUGH,
     PLATFORM_BREAKOUT,
     TREND_PULLBACK,
-    SECOND_WAVE,
 )
 
 
@@ -62,10 +60,6 @@ def evaluate_strategies(
         match = _apply_type5(history_df, symbol, name, config.type5)
         if match is not None:
             results.append(match)
-    if SECOND_WAVE in selected:
-        match = _apply_type6(history_df, symbol, name, config.type6)
-        if match is not None:
-            results.append(match)
 
     return results
 
@@ -80,22 +74,21 @@ def required_history_days(config: AppConfig, selected: Sequence[str]) -> int:
         requirements.append(
             max(
                 60,
-                config.type4.trend_lookback_days + 1,
-                config.type4.ma60_rising_lookback + 1,
-                config.type4.platform_window_days + 1,
+                config.type4.main_rise_window_days
+                + config.type4.transition_max_days
+                + config.type4.platform_max_days
+                + 1,
             )
         )
     if TREND_PULLBACK in selected:
         requirements.append(
             max(
                 60,
-                config.type5.trend_lookback_days + 1,
-                config.type5.ma_rising_lookback + 1,
+                config.type5.recent_high_lookback_days + config.type5.high_pre_lookback_days + 1,
+                config.type5.ma20_touch_lookback_days + 1,
                 20,
             )
         )
-    if SECOND_WAVE in selected:
-        requirements.append(max(20, config.type6.strong_lookback_days + 1, 2 * config.type6.consolidation_max_days + 1))
     return max(requirements)
 
 
@@ -241,35 +234,32 @@ def _apply_volume_top_follow_through(
 
 
 def _apply_type4(history_df: pd.DataFrame, symbol: str, name: str, config: Type4Config) -> dict[str, object] | None:
-    minimum_length = max(60, config.trend_lookback_days + 1, config.platform_window_days + config.breakout_lookback_days + 1)
+    minimum_length = max(
+        60,
+        config.main_rise_window_days + config.transition_max_days + config.platform_min_days + 1,
+    )
     if len(history_df) < minimum_length:
         return None
 
     latest = history_df.iloc[-1]
-    if pd.isna(latest["ma_20"]) or pd.isna(latest["ma_60"]) or pd.isna(latest["volume_ratio_20"]):
+    if pd.isna(latest["ma_10"]):
         return None
-
-    if pd.isna(latest["ma_5"]):
-        return None
-    if not (float(latest["ma_5"]) > float(latest["ma_20"]) > float(latest["ma_60"])):
-        return None
-
-    trend_return = _lookback_return(history_df, config.trend_lookback_days)
-    if trend_return is None or trend_return < config.min_return_trend_lookback:
+    if float(latest["close"]) <= float(latest["ma_10"]):
         return None
 
     breakout_event = _find_recent_platform_breakout(history_df, config)
     if breakout_event is None:
         return None
 
-    platform_high = breakout_event["platform_high"]
-    distance_pct = 0.0 if platform_high <= 0 else (float(latest["close"]) - platform_high) / platform_high
-    if distance_pct < config.breakout_min_distance_pct or distance_pct > config.breakout_max_distance_pct:
+    platform_high = float(breakout_event["platform_high"])
+    distance_pct = 0.0 if platform_high <= 0 else float(latest["close"]) / platform_high - 1.0
+    if distance_pct > config.post_breakout_max_distance_pct:
         return None
 
     reason = (
-        f"recent platform breakout on {breakout_event['breakout_date']}, "
-        f"platform_range={breakout_event['platform_range_pct']:.2%}, distance={distance_pct:.2%}"
+        f"first rise {breakout_event['main_rise_return_pct']:.2%} in {config.main_rise_window_days}d, "
+        f"platform={breakout_event['platform_window_days']}d range={breakout_event['platform_range_pct']:.2%}, "
+        f"breakout on {breakout_event['breakout_date']}, distance={distance_pct:.2%}"
     )
     return _build_result(
         history_df=history_df,
@@ -277,56 +267,48 @@ def _apply_type4(history_df: pd.DataFrame, symbol: str, name: str, config: Type4
         name=name,
         strategy_name=PLATFORM_BREAKOUT,
         reason=reason,
-        platform_window_days=config.platform_window_days,
+        main_rise_start_date=breakout_event["main_rise_start_date"],
+        main_rise_end_date=breakout_event["main_rise_end_date"],
+        main_rise_return_pct=breakout_event["main_rise_return_pct"],
+        transition_days=breakout_event["transition_days"],
+        platform_start_date=breakout_event["platform_start_date"],
+        platform_end_date=breakout_event["platform_end_date"],
+        platform_high=platform_high,
+        breakout_volume_ratio=breakout_event["breakout_volume_ratio"],
+        days_after_breakout=breakout_event["days_after_breakout"],
         platform_range_pct=breakout_event["platform_range_pct"],
+        platform_window_days=breakout_event["platform_window_days"],
         breakout_date=breakout_event["breakout_date"],
         distance_to_platform_high_pct=distance_pct,
     )
 
 
 def _apply_type5(history_df: pd.DataFrame, symbol: str, name: str, config: Type5Config) -> dict[str, object] | None:
-    if len(history_df) < max(60, config.trend_lookback_days + 1, config.ma_rising_lookback + 1, 20):
+    if len(history_df) < max(60, config.recent_high_lookback_days + config.high_pre_lookback_days + 1):
         return None
 
     latest = history_df.iloc[-1]
-    if pd.isna(latest["ma_20"]) or pd.isna(latest["ma_60"]) or pd.isna(latest["distance_to_ma20"]):
-        return None
-
-    ma20_prev = history_df["ma_20"].shift(config.ma_rising_lookback).iloc[-1]
-    ma60_prev = history_df["ma_60"].shift(config.ma_rising_lookback).iloc[-1]
-    if pd.isna(ma20_prev) or pd.isna(ma60_prev):
+    if pd.isna(latest["ma_20"]) or pd.isna(latest["ma_60"]):
         return None
     if float(latest["ma_20"]) <= float(latest["ma_60"]):
         return None
-    if float(latest["ma_20"]) < float(ma20_prev) or float(latest["ma_60"]) < float(ma60_prev):
+    if float(latest["close"]) <= float(latest["ma_20"]):
         return None
 
-    trend_return = _lookback_return(history_df, config.trend_lookback_days)
-    if trend_return is None or trend_return < config.min_return_trend_lookback:
+    recent_high = _find_recent_pattern5_high(history_df, config)
+    if recent_high is None:
         return None
 
-    distance_to_ma20 = float(latest["distance_to_ma20"])
-    if abs(distance_to_ma20) > config.proximity_to_ma20:
-        return None
-    if float(latest["close"]) < float(latest["ma_20"]) or float(latest["close"]) < float(latest["ma_60"]):
+    ma20_touch = _find_recent_ma20_touch(history_df, config)
+    if ma20_touch is None:
         return None
 
-    recent_peak = float(history_df["close"].tail(15).max())
-    drawdown_15d = 0.0 if recent_peak <= 0 else 1 - float(latest["close"]) / recent_peak
-    if drawdown_15d > config.max_drawdown_15d:
-        return None
-
-    recent_volume_5d = float(history_df["volume"].tail(5).mean())
-    recent_volume_20d = float(history_df["volume"].tail(20).mean())
-    if recent_volume_20d <= 0:
-        return None
-    volume_contraction_ratio = recent_volume_5d / recent_volume_20d
-    if volume_contraction_ratio > config.volume_contraction_max:
-        return None
+    recent_high_price = float(recent_high["recent_high_price"])
+    distance_from_recent_high_pct = 0.0 if recent_high_price <= 0 else float(latest["close"]) / recent_high_price - 1.0
 
     reason = (
-        f"trend pullback near MA20: distance={distance_to_ma20:.2%}, "
-        f"drawdown_15d={drawdown_15d:.2%}, vol_5d/20d={volume_contraction_ratio:.2f}"
+        f"recent 10d high on {recent_high['recent_high_date']} at {recent_high_price:.2f}, "
+        f"MA20 touch on {ma20_touch['ma20_touch_date']}, latest distance={distance_from_recent_high_pct:.2%}"
     )
     return _build_result(
         history_df=history_df,
@@ -334,128 +316,121 @@ def _apply_type5(history_df: pd.DataFrame, symbol: str, name: str, config: Type5
         name=name,
         strategy_name=TREND_PULLBACK,
         reason=reason,
-        distance_to_ma20=distance_to_ma20,
-        drawdown_15d=drawdown_15d,
-        volume_contraction_ratio=volume_contraction_ratio,
+        recent_high_date=recent_high["recent_high_date"],
+        recent_high_price=recent_high_price,
+        days_since_recent_high=recent_high["days_since_recent_high"],
+        distance_from_recent_high_pct=distance_from_recent_high_pct,
+        ma20_touch_date=ma20_touch["ma20_touch_date"],
+        ma20_touch_distance=ma20_touch["ma20_touch_distance"],
+        distance_to_ma20=(float(latest["close"]) - float(latest["ma_20"])) / float(latest["ma_20"]),
     )
-
-
-def _apply_type6(history_df: pd.DataFrame, symbol: str, name: str, config: Type6Config) -> dict[str, object] | None:
-    if len(history_df) < max(20, config.strong_lookback_days + 1, 2 * config.consolidation_max_days + 1):
-        return None
-
-    latest = history_df.iloc[-1]
-    if pd.isna(latest["ma_10"]) or pd.isna(latest["ma_20"]):
-        return None
-    if float(latest["close"]) < float(latest["ma_10"]) or float(latest["ma_10"]) < float(latest["ma_20"]):
-        return None
-
-    strong_return = _lookback_return(history_df, config.strong_lookback_days)
-    if strong_return is None or strong_return < config.min_return_strong_lookback:
-        return None
-
-    strong_day_return = float(history_df["return_1d"].tail(config.strong_lookback_days).max())
-    if pd.isna(strong_day_return) or strong_day_return < config.strong_day_return_min:
-        return None
-
-    breakout_window = history_df.iloc[-(config.restart_breakout_days + 1) : -1]
-    if len(breakout_window) < config.restart_breakout_days:
-        return None
-    if float(latest["close"]) <= float(breakout_window["close"].max()) and float(latest["high"]) <= float(
-        breakout_window["high"].max()
-    ):
-        return None
-
-    consolidation_days, consolidation_range_pct, volume_ratio = _find_second_wave_window(history_df, config)
-    if consolidation_days is None:
-        return None
-
-    reason = (
-        f"second wave after {strong_return:.2%} in {config.strong_lookback_days}d, "
-        f"consolidation={consolidation_days}d range={consolidation_range_pct:.2%}, vol_ratio={volume_ratio:.2f}"
-    )
-    return _build_result(
-        history_df=history_df,
-        symbol=symbol,
-        name=name,
-        strategy_name=SECOND_WAVE,
-        reason=reason,
-        consolidation_days=consolidation_days,
-        consolidation_range_pct=consolidation_range_pct,
-        consolidation_volume_ratio=volume_ratio,
-    )
-
-
-def _find_second_wave_window(history_df: pd.DataFrame, config: Type6Config) -> tuple[int | None, float | None, float | None]:
-    for window in range(config.consolidation_max_days, config.consolidation_min_days - 1, -1):
-        if len(history_df) < 2 * window + 1:
-            continue
-
-        consolidation = history_df.iloc[-(window + 1) : -1]
-        launch = history_df.iloc[-(2 * window + 1) : -(window + 1)]
-        if consolidation.empty or launch.empty:
-            continue
-
-        consolidation_low = float(consolidation["low"].min())
-        consolidation_high = float(consolidation["high"].max())
-        if consolidation_low <= 0:
-            continue
-
-        consolidation_range_pct = (consolidation_high - consolidation_low) / consolidation_low
-        if consolidation_range_pct > config.consolidation_range_max:
-            continue
-
-        if float(consolidation["low"].min()) < float(launch["low"].min()):
-            continue
-
-        launch_volume = float(launch["volume"].mean())
-        if launch_volume <= 0:
-            continue
-        consolidation_volume = float(consolidation["volume"].mean())
-        volume_ratio = consolidation_volume / launch_volume
-        if volume_ratio >= 1:
-            continue
-
-        return window, consolidation_range_pct, volume_ratio
-
-    return None, None, None
 
 
 def _find_recent_platform_breakout(history_df: pd.DataFrame, config: Type4Config) -> dict[str, object] | None:
     latest_index = len(history_df) - 1
-    start_index = max(config.platform_window_days, latest_index - config.breakout_lookback_days + 1)
+    start_index = max(
+        config.main_rise_window_days + config.transition_max_days + config.platform_min_days,
+        latest_index - config.post_breakout_max_days,
+    )
 
-    best_match: dict[str, object] | None = None
-    for breakout_index in range(start_index, latest_index + 1):
+    for breakout_index in range(latest_index, start_index - 1, -1):
         breakout_row = history_df.iloc[breakout_index]
         if pd.isna(breakout_row["volume_ratio_20"]) or float(breakout_row["volume_ratio_20"]) < config.breakout_volume_ratio_min:
             continue
 
-        platform_start = breakout_index - config.platform_window_days
-        platform = history_df.iloc[platform_start:breakout_index]
-        if len(platform) < config.platform_window_days:
-            continue
-
-        platform_high = float(platform["high"].max())
-        platform_low = float(platform["low"].min())
-        if platform_low <= 0:
-            continue
-        platform_range_pct = (platform_high - platform_low) / platform_low
-        if platform_range_pct > config.platform_range_max:
-            continue
-
         breakout_close = float(breakout_row["close"])
-        if breakout_close <= platform_high:
+        for platform_window_days in range(config.platform_max_days, config.platform_min_days - 1, -1):
+            platform_start = breakout_index - platform_window_days
+            if platform_start <= 0:
+                continue
+
+            platform = history_df.iloc[platform_start:breakout_index]
+            if len(platform) < platform_window_days:
+                continue
+
+            platform_high = float(platform["high"].max())
+            platform_low = float(platform["low"].min())
+            if platform_low <= 0:
+                continue
+            platform_range_pct = (platform_high - platform_low) / platform_low
+            if platform_range_pct > config.platform_range_max:
+                continue
+            if breakout_close <= platform_high:
+                continue
+
+            for transition_days in range(config.transition_min_days, config.transition_max_days + 1):
+                main_rise_end = platform_start - transition_days - 1
+                main_rise_start = main_rise_end - config.main_rise_window_days + 1
+                if main_rise_start < 0:
+                    continue
+
+                main_rise = history_df.iloc[main_rise_start : main_rise_end + 1]
+                if len(main_rise) < config.main_rise_window_days:
+                    continue
+
+                main_rise_start_close = float(main_rise.iloc[0]["close"])
+                main_rise_end_close = float(main_rise.iloc[-1]["close"])
+                if main_rise_start_close <= 0:
+                    continue
+                main_rise_return_pct = main_rise_end_close / main_rise_start_close - 1.0
+                if main_rise_return_pct < config.main_rise_return_min:
+                    continue
+
+                return {
+                    "breakout_index": breakout_index,
+                    "breakout_date": pd.Timestamp(breakout_row["trade_date"]).date().isoformat(),
+                    "breakout_volume_ratio": float(breakout_row["volume_ratio_20"]),
+                    "days_after_breakout": latest_index - breakout_index,
+                    "platform_high": platform_high,
+                    "platform_range_pct": platform_range_pct,
+                    "platform_window_days": platform_window_days,
+                    "platform_start_date": pd.Timestamp(platform.iloc[0]["trade_date"]).date().isoformat(),
+                    "platform_end_date": pd.Timestamp(platform.iloc[-1]["trade_date"]).date().isoformat(),
+                    "main_rise_start_date": pd.Timestamp(main_rise.iloc[0]["trade_date"]).date().isoformat(),
+                    "main_rise_end_date": pd.Timestamp(main_rise.iloc[-1]["trade_date"]).date().isoformat(),
+                    "main_rise_return_pct": main_rise_return_pct,
+                    "transition_days": transition_days,
+                }
+
+    return None
+
+
+def _find_recent_pattern5_high(history_df: pd.DataFrame, config: Type5Config) -> dict[str, object] | None:
+    latest_index = len(history_df) - 1
+    start_index = max(config.high_pre_lookback_days, latest_index - config.recent_high_lookback_days + 1)
+    for index in range(latest_index, start_index - 1, -1):
+        current_high = float(history_df.iloc[index]["high"])
+        previous_window = history_df.iloc[index - config.high_pre_lookback_days : index]
+        if previous_window.empty:
             continue
-
-        best_match = {
-            "breakout_index": breakout_index,
-            "breakout_date": pd.Timestamp(breakout_row["trade_date"]).date().isoformat(),
-            "platform_high": platform_high,
-            "platform_range_pct": platform_range_pct,
+        previous_max_high = float(previous_window["high"].max())
+        if previous_max_high > current_high:
+            continue
+        return {
+            "recent_high_date": pd.Timestamp(history_df.iloc[index]["trade_date"]).date().isoformat(),
+            "recent_high_price": current_high,
+            "days_since_recent_high": latest_index - index,
         }
+    return None
 
-    return best_match
+
+def _find_recent_ma20_touch(history_df: pd.DataFrame, config: Type5Config) -> dict[str, object] | None:
+    recent = history_df.tail(config.ma20_touch_lookback_days).reset_index(drop=True)
+    for offset in range(len(recent) - 1, -1, -1):
+        row = recent.iloc[offset]
+        if pd.isna(row.get("ma_20")):
+            continue
+        ma20 = float(row["ma_20"])
+        low_price = float(row["low"])
+        close_price = float(row["close"])
+        if close_price <= ma20:
+            continue
+        if abs(low_price - ma20) <= config.ma20_touch_abs_tolerance or low_price < ma20:
+            return {
+                "ma20_touch_date": pd.Timestamp(row["trade_date"]).date().isoformat(),
+                "ma20_touch_distance": low_price - ma20,
+            }
+    return None
 
 
 def _lookback_return(history_df: pd.DataFrame, lookback_days: int) -> float | None:

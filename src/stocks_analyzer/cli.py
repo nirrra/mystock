@@ -98,7 +98,6 @@ PATTERN_FLAG_MAP = {
     "pattern3": "volume_top_follow_through",
     "pattern4": "platform_breakout",
     "pattern5": "trend_pullback",
-    "pattern6": "second_wave",
 }
 PATTERN_LABEL_MAP = {
     "volume_top_pre_breakout": "1",
@@ -106,7 +105,6 @@ PATTERN_LABEL_MAP = {
     "volume_top_follow_through": "3",
     "platform_breakout": "4",
     "trend_pullback": "5",
-    "second_wave": "6",
 }
 PROGRESS_LOG_INTERVAL = 100
 LOCAL_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -121,7 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  1. mystock update --start-date 20240101\n"
             "     更新主板股票池并拉取本地日线数据。\n"
             "  2. mystock pattern\n"
-            "     扫描本地全部股票，识别 1 到 6 号模式并生成 CSV。\n"
+            "     扫描本地全部股票，识别 1 到 5 号模式并生成 CSV。\n"
             "  3. mystock plot 603588\n"
             "     查看单只股票近两年的 K 线和成交量图。\n\n"
             "常见示例：\n"
@@ -164,10 +162,10 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--limit", type=int, default=None, help="仅更新前 N 只股票，便于小范围测试")
     pattern = subparsers.add_parser(
         "pattern",
-        help="识别本地日线数据中的 1 到 6 号模式",
+        help="识别本地日线数据中的 1 到 5 号模式",
         description=(
-            "扫描本地缓存的全部股票日线数据，识别模式 1 到 6。\n"
-            "默认识别全部模式；如果传入 --1 --2 --3 --4 --5 --6 中的任意组合，则只识别指定模式。"
+            "扫描本地缓存的全部股票日线数据，识别模式 1 到 5。\n"
+            "默认识别全部模式；如果传入 --1 --2 --3 --4 --5 中的任意组合，则只识别指定模式。"
         ),
         epilog=(
             "常见示例：\n"
@@ -184,7 +182,6 @@ def build_parser() -> argparse.ArgumentParser:
     pattern.add_argument("--3", dest="pattern3", action="store_true", help="只识别模式 3")
     pattern.add_argument("--4", dest="pattern4", action="store_true", help="只识别模式 4")
     pattern.add_argument("--5", dest="pattern5", action="store_true", help="只识别模式 5")
-    pattern.add_argument("--6", dest="pattern6", action="store_true", help="只识别模式 6")
     pattern.add_argument("--as-of", default=None, help="分析截止日期，格式 YYYY-MM-DD")
     pattern.add_argument("--limit", type=int, default=None, help="终端最多显示多少行")
     pattern.add_argument("--output", default=None, help="可选的 CSV 输出路径")
@@ -1570,13 +1567,26 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
         "days_since_old_high",
         "max_drawdown_since_old_high",
         "distance_to_old_high_pct",
+        "recent_high_date",
+        "recent_high_price",
+        "days_since_recent_high",
+        "distance_from_recent_high_pct",
         "extension_above_old_high_pct",
+        "main_rise_start_date",
+        "main_rise_end_date",
+        "main_rise_return_pct",
+        "transition_days",
+        "platform_start_date",
+        "platform_end_date",
+        "platform_high",
         "breakout_date",
         "breakout_volume_ratio",
         "days_after_breakout",
         "platform_window_days",
         "platform_range_pct",
         "distance_to_platform_high_pct",
+        "ma20_touch_date",
+        "ma20_touch_distance",
         "distance_to_ma20",
         "drawdown_15d",
         "consolidation_days",

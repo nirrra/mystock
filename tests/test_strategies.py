@@ -6,7 +6,6 @@ from stocks_analyzer.config import load_config
 from stocks_analyzer.indicators import add_indicators
 from stocks_analyzer.strategies import (
     PLATFORM_BREAKOUT,
-    SECOND_WAVE,
     TREND_PULLBACK,
     VOLUME_TOP_BREAKOUT,
     VOLUME_TOP_FOLLOW_THROUGH,
@@ -97,81 +96,68 @@ def test_evaluate_volume_top_follow_through_rejects_if_earlier_higher_high_exist
 def test_evaluate_platform_breakout_returns_match() -> None:
     config = _load_test_config()
 
-    prelude = [45.0] * 20
-    rising = list(pd.Series(range(50, 76)).astype(float))
+    prelude = [40.0] * 40
+    first_rise = [50.0, 52.0, 54.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 69.0, 70.0, 71.0, 72.0, 73.0]
+    transition = [72.5, 72.0]
     platform = [
-        74.8,
-        75.2,
-        75.5,
-        75.1,
-        75.6,
-        75.3,
-        75.8,
-        75.4,
-        75.7,
-        75.2,
-        75.9,
-        75.5,
-        75.8,
-        75.6,
-        75.4,
-        75.7,
-        75.9,
-        75.5,
-        75.8,
-        75.6,
+        71.2,
+        70.8,
+        71.5,
+        71.0,
+        70.9,
+        71.4,
+        71.1,
+        70.7,
+        71.3,
+        71.0,
+        70.8,
+        71.2,
+        71.0,
+        70.9,
+        71.4,
+        71.1,
+        70.8,
+        71.2,
+        71.0,
+        71.3,
     ]
-    breakout_and_follow = [78.5, 79.0, 78.8]
-    closes = prelude + rising + platform + breakout_and_follow
+    breakout_and_follow = [74.0, 75.0, 74.6]
+    closes = prelude + first_rise + transition + platform + breakout_and_follow
     dataframe = _build_dataframe(closes)
-    breakout_index = len(prelude) + len(rising) + len(platform)
-    dataframe.loc[breakout_index, "high"] = 79.2
-    dataframe.loc[breakout_index, "close"] = 78.5
-    dataframe.loc[breakout_index, "volume"] = 3_000_000
-    dataframe.loc[len(dataframe) - 1, "high"] = 79.1
+    breakout_index = len(prelude) + len(first_rise) + len(transition) + len(platform)
+    dataframe.loc[breakout_index, "high"] = 74.8
+    dataframe.loc[breakout_index, "close"] = 74.0
+    dataframe.loc[breakout_index, "volume"] = 3_200_000
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
 
     assert [row["strategy_name"] for row in result] == [PLATFORM_BREAKOUT]
+    assert 20 <= result[0]["platform_window_days"] <= 30
+    assert 1 <= result[0]["transition_days"] <= 3
 
 
 def test_evaluate_trend_pullback_returns_match() -> None:
     config = _load_test_config()
 
-    prelude = [40.0] * 20
-    rising = list(pd.Series(range(50, 101)).astype(float))
-    pullback = [100.5, 100.0, 99.5, 99.0, 98.8, 98.7, 98.9, 99.1, 99.3, 99.5]
-    closes = prelude + rising + pullback
+    prelude = [40.0] * 30
+    rising = list(pd.Series(range(50, 111)).astype(float))
+    recent = [110.5, 111.0, 111.5, 112.0, 112.5, 113.0, 112.6, 108.0, 107.8, 108.6]
+    closes = prelude + rising + recent
     dataframe = _build_dataframe(closes)
-    recent_start = len(dataframe) - 5
-    dataframe.loc[: recent_start - 1, "volume"] = 1_600_000
-    dataframe.loc[recent_start:, "volume"] = 600_000
+    touch_index = len(dataframe) - 2
+    enriched = add_indicators(dataframe)
+    ma20 = float(enriched.iloc[touch_index]["ma_20"])
+    dataframe.loc[touch_index, "low"] = ma20 - 0.2
+    dataframe.loc[touch_index, "close"] = ma20 + 0.4
+    dataframe.loc[touch_index, "high"] = max(float(dataframe.loc[touch_index, "high"]), ma20 + 0.8)
+    dataframe.loc[len(dataframe) - 1, "close"] = ma20 + 0.9
+    dataframe.loc[len(dataframe) - 1, "low"] = min(float(dataframe.loc[len(dataframe) - 1, "low"]), ma20 + 0.2)
+    dataframe.loc[len(dataframe) - 1, "high"] = max(float(dataframe.loc[len(dataframe) - 1, "high"]), ma20 + 1.2)
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [TREND_PULLBACK])
 
     assert [row["strategy_name"] for row in result] == [TREND_PULLBACK]
-
-
-def test_evaluate_second_wave_returns_match() -> None:
-    config = _load_test_config()
-    config.history_momentum_filter.lookback_days = 30
-
-    launch = list(pd.Series([50, 52, 54, 56, 60, 64, 68, 72, 77, 82, 88, 94]).astype(float))
-    trend = list(pd.Series([96, 98, 100, 102, 104, 106, 108, 109, 110, 111, 112, 113]).astype(float))
-    consolidation = [111.0, 110.5, 110.8, 111.2, 110.9, 111.1, 111.0, 111.3]
-    closes = launch + trend + consolidation + [114.5]
-    dataframe = _build_dataframe(closes)
-    dataframe.loc[4, "close"] = 64.8
-    dataframe.loc[4, "high"] = 65.4
-    dataframe.loc[4, "low"] = 59.8
-    dataframe.loc[4, "open"] = 60.0
-    dataframe.loc[len(launch) : len(launch) + len(trend) - 1, "volume"] = 1_600_000
-    dataframe.loc[len(launch) + len(trend) : len(dataframe) - 2, "volume"] = 850_000
-    dataframe.loc[len(dataframe) - 1, "high"] = 115.0
-
-    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [SECOND_WAVE])
-
-    assert [row["strategy_name"] for row in result] == [SECOND_WAVE]
+    assert result[0]["recent_high_date"] == pd.Timestamp(dataframe.iloc[len(prelude) + len(rising) + 6]["trade_date"]).date().isoformat()
 
 
 def test_evaluate_strategies_filters_out_stock_without_recent_5d_plus_10pct_history() -> None:
@@ -226,6 +212,20 @@ def _load_test_config():
     config.type3.breakout_volume_multiplier = 2.0
     config.type3.post_breakout_max_days = 8
     config.type3.post_breakout_max_extension_pct = 0.10
+    config.type4.main_rise_window_days = 15
+    config.type4.main_rise_return_min = 0.30
+    config.type4.transition_min_days = 1
+    config.type4.transition_max_days = 3
+    config.type4.platform_min_days = 20
+    config.type4.platform_max_days = 30
+    config.type4.platform_range_max = 0.15
+    config.type4.breakout_volume_ratio_min = 1.5
+    config.type4.post_breakout_max_days = 5
+    config.type4.post_breakout_max_distance_pct = 0.08
+    config.type5.recent_high_lookback_days = 10
+    config.type5.high_pre_lookback_days = 20
+    config.type5.ma20_touch_lookback_days = 2
+    config.type5.ma20_touch_abs_tolerance = 0.5
     return config
 
 
