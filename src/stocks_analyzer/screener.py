@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Callable
 
 import pandas as pd
 
@@ -20,6 +21,7 @@ class Screener:
         as_of: date,
         selected_strategies: list[str] | None = None,
         symbols: list[str] | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> pd.DataFrame:
         strategies = selected_strategies or list(STRATEGY_NAMES)
         universe = self.storage.load_universe()
@@ -28,24 +30,34 @@ class Screener:
             universe = universe[universe["symbol"].astype(str).isin(symbol_set)].reset_index(drop=True)
         minimum_history = required_history_days(self.config, strategies)
         results: list[dict[str, object]] = []
+        instruments = universe.to_dict("records")
+        total_instruments = len(instruments)
 
-        for instrument in universe.to_dict("records"):
+        for index, instrument in enumerate(instruments, start=1):
             symbol = instrument["symbol"]
             try:
                 daily_bars = self.storage.load_daily_bars(symbol)
             except FileNotFoundError:
+                if progress_callback is not None:
+                    progress_callback(index, total_instruments)
                 continue
 
             indicator_frame = add_indicators(daily_bars)
             cutoff = indicator_frame[indicator_frame["trade_date"].dt.date <= as_of].reset_index(drop=True)
             if cutoff.empty or len(cutoff) < minimum_history:
+                if progress_callback is not None:
+                    progress_callback(index, total_instruments)
                 continue
 
             latest = cutoff.iloc[-1]
             if pd.isna(latest["amount_ma_20"]) or latest["amount_ma_20"] < self.config.universe.min_avg_amount_20d:
+                if progress_callback is not None:
+                    progress_callback(index, total_instruments)
                 continue
 
             results.extend(evaluate_strategies(cutoff, instrument, self.config, strategies))
+            if progress_callback is not None:
+                progress_callback(index, total_instruments)
 
         if not results:
             return pd.DataFrame()

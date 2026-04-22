@@ -141,23 +141,25 @@ def test_evaluate_trend_pullback_returns_match() -> None:
 
     prelude = [40.0] * 30
     rising = list(pd.Series(range(50, 111)).astype(float))
-    recent = [110.5, 111.0, 111.5, 112.0, 112.5, 113.0, 112.6, 108.0, 107.8, 108.6]
+    recent = [110.5, 111.0, 111.5, 112.0, 113.0, 112.5, 112.0, 108.0, 107.8, 108.6]
     closes = prelude + rising + recent
     dataframe = _build_dataframe(closes)
     touch_index = len(dataframe) - 2
     enriched = add_indicators(dataframe)
     ma20 = float(enriched.iloc[touch_index]["ma_20"])
+    reclaim_close = ma20 * 1.012
+    latest_close = ma20 * 1.02
     dataframe.loc[touch_index, "low"] = ma20 - 0.2
-    dataframe.loc[touch_index, "close"] = ma20 + 0.4
-    dataframe.loc[touch_index, "high"] = max(float(dataframe.loc[touch_index, "high"]), ma20 + 0.8)
-    dataframe.loc[len(dataframe) - 1, "close"] = ma20 + 0.9
+    dataframe.loc[touch_index, "close"] = reclaim_close
+    dataframe.loc[touch_index, "high"] = max(float(dataframe.loc[touch_index, "high"]), reclaim_close + 0.4)
+    dataframe.loc[len(dataframe) - 1, "close"] = latest_close
     dataframe.loc[len(dataframe) - 1, "low"] = min(float(dataframe.loc[len(dataframe) - 1, "low"]), ma20 + 0.2)
-    dataframe.loc[len(dataframe) - 1, "high"] = max(float(dataframe.loc[len(dataframe) - 1, "high"]), ma20 + 1.2)
+    dataframe.loc[len(dataframe) - 1, "high"] = max(float(dataframe.loc[len(dataframe) - 1, "high"]), latest_close + 0.3)
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [TREND_PULLBACK])
 
     assert [row["strategy_name"] for row in result] == [TREND_PULLBACK]
-    assert result[0]["recent_high_date"] == pd.Timestamp(dataframe.iloc[len(prelude) + len(rising) + 6]["trade_date"]).date().isoformat()
+    assert result[0]["recent_high_date"] == pd.Timestamp(dataframe.iloc[len(prelude) + len(rising) + 4]["trade_date"]).date().isoformat()
 
 
 def test_evaluate_strategies_filters_out_stock_without_recent_5d_plus_10pct_history() -> None:
@@ -213,19 +215,22 @@ def _load_test_config():
     config.type3.post_breakout_max_days = 8
     config.type3.post_breakout_max_extension_pct = 0.10
     config.type4.main_rise_window_days = 15
-    config.type4.main_rise_return_min = 0.30
+    config.type4.main_rise_return_min = 0.20
     config.type4.transition_min_days = 1
-    config.type4.transition_max_days = 3
-    config.type4.platform_min_days = 20
+    config.type4.transition_max_days = 5
+    config.type4.platform_min_days = 15
     config.type4.platform_max_days = 30
     config.type4.platform_range_max = 0.15
-    config.type4.breakout_volume_ratio_min = 1.5
-    config.type4.post_breakout_max_days = 5
-    config.type4.post_breakout_max_distance_pct = 0.08
+    config.type4.breakout_volume_ratio_min = 1.3
+    config.type4.post_breakout_max_days = 8
+    config.type4.post_breakout_max_distance_pct = 0.10
     config.type5.recent_high_lookback_days = 10
     config.type5.high_pre_lookback_days = 20
+    config.type5.high_peak_window_days = 5
     config.type5.ma20_touch_lookback_days = 2
     config.type5.ma20_touch_abs_tolerance = 0.5
+    config.type5.ma20_touch_pct_tolerance = 0.01
+    config.type5.ma20_reclaim_min_pct = 0.01
     return config
 
 

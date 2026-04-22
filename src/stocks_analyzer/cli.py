@@ -423,12 +423,16 @@ def main() -> None:
     project_root = Path(args.project_root).resolve()
     _load_local_env(project_root / ".env.local")
     config = load_config(project_root / args.config)
-    _configure_network(config.network)
+    if _command_needs_network(args.command):
+        _configure_network(config.network)
     paths = ProjectPaths(project_root, config.storage)
     storage = Storage(paths)
 
     if args.command == "update":
-        provider = create_data_provider(config.provider)
+        update_provider_name = _resolve_update_provider_name(config.provider)
+        if update_provider_name != config.provider:
+            logging.info("Update command overrides provider from %s to %s", config.provider, update_provider_name)
+        provider = create_data_provider(update_provider_name)
         try:
             _run_update(
                 storage,
@@ -693,6 +697,7 @@ def _run_update(
 
     success_count = 0
     failed_symbols: list[str] = []
+    total_symbols = len(symbols)
 
     for index, item_symbol in enumerate(symbols, start=1):
         try:
@@ -708,6 +713,7 @@ def _run_update(
         except Exception as exc:
             failed_symbols.append(item_symbol)
             logging.warning("[%s/%s] failed to fetch %s: %s", index, len(symbols), item_symbol, exc)
+        _log_scan_progress("Update", index, total_symbols)
 
     logging.info(
         "Daily update finished: success=%s failed=%s",
@@ -803,7 +809,12 @@ def _run_pattern(
 ) -> None:
     _ensure_universe(storage, provider_name, config.universe.exclude_st)
     screener = Screener(storage, config)
-    results = screener.run(as_of=as_of, selected_strategies=selected_patterns, symbols=symbols)
+    results = screener.run(
+        as_of=as_of,
+        selected_strategies=selected_patterns,
+        symbols=symbols,
+        progress_callback=lambda current, total: _log_scan_progress("Pattern", current, total),
+    )
     exported = _prepare_pattern_results(results)
     exported = _append_recent_tradingview_scores(storage, exported, as_of=as_of, lookback_days=5, symbols=symbols)
     exported = _append_recent_macd_summary(storage, exported, as_of=as_of, symbols=symbols)
@@ -987,7 +998,12 @@ def _run_trend_universe(
     top_n: int,
     output: str | None,
 ) -> None:
-    summary = scan_trend_universe(storage, config, as_of=trade_date)
+    summary = scan_trend_universe(
+        storage,
+        config,
+        as_of=trade_date,
+        progress_callback=lambda current, total: _log_scan_progress("Trend-universe", current, total),
+    )
     report_paths = save_trend_universe_report(paths, trade_date=trade_date, dataframe=summary, output=output)
     print(
         _format_dataframe(
@@ -1027,7 +1043,12 @@ def _run_trend_score(
     top_n: int,
     output: str | None,
 ) -> None:
-    scored = scan_indicator_scored_entries(storage, config, trade_date=trade_date)
+    scored = scan_indicator_scored_entries(
+        storage,
+        config,
+        trade_date=trade_date,
+        progress_callback=lambda current, total: _log_scan_progress("Trend-score", current, total),
+    )
     report_paths = save_trend_scores_report(paths, trade_date=trade_date, dataframe=scored, output=output)
     print(
         _format_dataframe(
@@ -1047,7 +1068,12 @@ def _run_trend(
     top_n: int,
     output: str | None,
 ) -> None:
-    scored = scan_indicator_scored_entries(storage, config, trade_date=trade_date)
+    scored = scan_indicator_scored_entries(
+        storage,
+        config,
+        trade_date=trade_date,
+        progress_callback=lambda current, total: _log_scan_progress("Trend", current, total),
+    )
     report_paths = save_trend_report(paths, trade_date=trade_date, dataframe=scored, output=output)
     watchlist_payload = build_watchlist_candidates_from_trend(
         scored,
@@ -1090,7 +1116,12 @@ def _run_trend_entries(
     top_n: int,
     output: str | None,
 ) -> None:
-    scored = scan_indicator_scored_entries(storage, config, trade_date=trade_date)
+    scored = scan_indicator_scored_entries(
+        storage,
+        config,
+        trade_date=trade_date,
+        progress_callback=lambda current, total: _log_scan_progress("Trend-entries", current, total),
+    )
     entries = select_tradable_entries(scored, config)
     report_paths = save_trend_entries_report(paths, trade_date=trade_date, dataframe=entries, output=output)
     print(
@@ -2381,6 +2412,17 @@ def _load_local_env(path: Path) -> None:
         if not key or key in os.environ:
             continue
         os.environ[key] = value.strip()
+
+
+def _command_needs_network(command_name: str) -> bool:
+    return command_name in {"update", "plot", "intraday-screening", "xueqiu-archive"}
+
+
+def _resolve_update_provider_name(provider_name: str) -> str:
+    normalized = str(provider_name or "").strip().lower()
+    if normalized == "baostock":
+        return "akshare"
+    return normalized
 
 
 def _refresh_universe(storage: Storage, provider, exclude_st: bool) -> pd.DataFrame:

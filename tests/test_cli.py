@@ -10,11 +10,14 @@ from stocks_analyzer.cli import (
     _append_recent_atr_summary,
     _append_recent_macd_summary,
     _append_recent_trend_universe_summary,
+    _command_needs_network,
     _configure_network,
     _load_local_env,
     _append_recent_trend_summary,
     _run_pattern,
+    _run_trend_universe,
     _run_trend,
+    _run_update,
     _prepare_pattern_results,
     build_parser,
 )
@@ -216,6 +219,18 @@ def test_build_parser_accepts_backtest_entries_portfolio_command() -> None:
     assert args.command == "backtest-entries-portfolio"
     assert args.date == "2026-04-10"
     assert args.top_n == 6
+
+
+def test_command_needs_network_only_for_networked_commands() -> None:
+    assert _command_needs_network("update") is True
+    assert _command_needs_network("plot") is True
+    assert _command_needs_network("intraday-screening") is True
+    assert _command_needs_network("xueqiu-archive") is True
+    assert _command_needs_network("macd") is False
+    assert _command_needs_network("atr") is False
+    assert _command_needs_network("trend-universe") is False
+    assert _command_needs_network("trend") is False
+    assert _command_needs_network("pattern") is False
 
 
 def test_build_parser_accepts_research_thresholds_command() -> None:
@@ -656,7 +671,10 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
     )
 
     monkeypatch.setattr("stocks_analyzer.cli._ensure_universe", lambda storage, provider_name, exclude_st: None)
-    monkeypatch.setattr("stocks_analyzer.cli.Screener.run", lambda self, as_of, selected_strategies, symbols=None: pd.DataFrame())
+    monkeypatch.setattr(
+        "stocks_analyzer.cli.Screener.run",
+        lambda self, as_of, selected_strategies, symbols=None, progress_callback=None: pd.DataFrame(),
+    )
     monkeypatch.setattr("stocks_analyzer.cli._prepare_pattern_results", lambda results: exported.copy())
     monkeypatch.setattr("stocks_analyzer.cli._append_recent_tradingview_scores", lambda storage, exported, as_of, lookback_days, symbols=None: exported)
     monkeypatch.setattr("stocks_analyzer.cli._append_recent_macd_summary", lambda storage, exported, as_of, symbols=None: exported)
@@ -714,7 +732,10 @@ def test_run_trend_updates_trend_watchlist_for_same_trade_date(monkeypatch) -> N
         ]
     )
 
-    monkeypatch.setattr("stocks_analyzer.cli.scan_indicator_scored_entries", lambda storage, config, trade_date: scored.copy())
+    monkeypatch.setattr(
+        "stocks_analyzer.cli.scan_indicator_scored_entries",
+        lambda storage, config, trade_date, progress_callback=None: scored.copy(),
+    )
 
     _run_trend(
         storage=storage,
@@ -729,3 +750,142 @@ def test_run_trend_updates_trend_watchlist_for_same_trade_date(monkeypatch) -> N
     assert trend_watchlist["trade_date"] == "2026-04-10"
     assert trend_watchlist["candidate_count"] == 1
     assert trend_watchlist["candidates"][0]["symbol"] == "600000"
+
+
+def test_run_update_reports_progress_for_each_symbol(monkeypatch) -> None:
+    progress_calls: list[tuple[int, int]] = []
+    universe = pd.DataFrame([{"symbol": "600000"}, {"symbol": "600001"}])
+
+    monkeypatch.setattr("stocks_analyzer.cli._refresh_or_load_universe", lambda storage, provider, exclude_st: universe.copy())
+    monkeypatch.setattr(
+        "stocks_analyzer.cli._update_daily_cache_for_symbol",
+        lambda **kwargs: Path("C:/tmp/daily.parquet"),
+    )
+    monkeypatch.setattr("stocks_analyzer.cli._log_scan_progress", lambda stage_name, current, total: progress_calls.append((current, total)))
+
+    _run_update(
+        storage=object(),
+        provider=object(),
+        exclude_st=True,
+        adjust="qfq",
+        symbol=None,
+        start_date="20240101",
+        end_date="20260422",
+        limit=None,
+    )
+
+    assert progress_calls == [(1, 2), (2, 2)]
+
+
+def test_run_pattern_passes_progress_callback_to_screener(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("pattern_progress_callback")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+    callback_seen: list[bool] = []
+
+    monkeypatch.setattr("stocks_analyzer.cli._ensure_universe", lambda storage, provider_name, exclude_st: None)
+
+    def fake_run(self, as_of, selected_strategies, symbols=None, progress_callback=None):
+        callback_seen.append(progress_callback is not None)
+        return pd.DataFrame()
+
+    monkeypatch.setattr("stocks_analyzer.cli.Screener.run", fake_run)
+    monkeypatch.setattr("stocks_analyzer.cli._prepare_pattern_results", lambda results: pd.DataFrame())
+    monkeypatch.setattr("stocks_analyzer.cli._append_recent_tradingview_scores", lambda storage, exported, as_of, lookback_days, symbols=None: exported)
+    monkeypatch.setattr("stocks_analyzer.cli._append_recent_macd_summary", lambda storage, exported, as_of, symbols=None: exported)
+    monkeypatch.setattr("stocks_analyzer.cli._append_recent_atr_summary", lambda storage, exported, as_of, symbols=None: exported)
+    monkeypatch.setattr("stocks_analyzer.cli._load_or_build_trend_universe_summary", lambda storage, config, trade_date, symbols=None: pd.DataFrame())
+    monkeypatch.setattr("stocks_analyzer.cli._append_recent_trend_summary", lambda storage, config, exported, as_of, symbols=None: exported)
+
+    _run_pattern(
+        storage=storage,
+        provider_name=config.provider,
+        config=config,
+        as_of=date(2026, 4, 10),
+        selected_patterns=["volume_top_pre_breakout"],
+        limit=20,
+        output=None,
+        plot_all=False,
+    )
+
+    assert callback_seen == [True]
+
+
+def test_run_trend_universe_passes_progress_callback(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("trend_universe_progress_callback")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+    callback_seen: list[bool] = []
+    summary = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": "600000",
+                "name": "测试趋势",
+                "trend_score": 80.0,
+                "trend_direction_score": 70.0,
+                "trend_strength_score": 75.0,
+            }
+        ]
+    )
+
+    def fake_scan(storage, config, as_of, symbols=None, include_all=False, progress_callback=None):
+        callback_seen.append(progress_callback is not None)
+        return summary.copy()
+
+    monkeypatch.setattr("stocks_analyzer.cli.scan_trend_universe", fake_scan)
+
+    _run_trend_universe(
+        storage=storage,
+        config=config,
+        paths=paths,
+        trade_date=date(2026, 4, 10),
+        top_n=20,
+        output=None,
+    )
+
+    assert callback_seen == [True]
+
+
+def test_run_trend_passes_progress_callback(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("trend_progress_callback")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+    callback_seen: list[bool] = []
+    scored = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": "600000",
+                "name": "测试趋势",
+                "signal_type": "breakout",
+                "buy_score": 76.0,
+                "price_action_score": 60.0,
+                "trend_score": 83.0,
+                "trend_base_score": 70.0,
+                "macd_cross_state": "golden_cross",
+                "macd_divergence_state": "none",
+                "volume_price_divergence_state": "none",
+            }
+        ]
+    )
+
+    def fake_scan(storage, config, trade_date, progress_callback=None):
+        callback_seen.append(progress_callback is not None)
+        return scored.copy()
+
+    monkeypatch.setattr("stocks_analyzer.cli.scan_indicator_scored_entries", fake_scan)
+
+    _run_trend(
+        storage=storage,
+        config=config,
+        paths=paths,
+        trade_date=date(2026, 4, 10),
+        top_n=20,
+        output=None,
+    )
+
+    assert callback_seen == [True]

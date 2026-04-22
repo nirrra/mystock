@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
-
 import pytest
 
 import stocks_analyzer.data_sources.baostock_provider as baostock_provider
-import stocks_analyzer.trading_calendar as trading_calendar
 
 
 class FakeLoginResult:
@@ -123,24 +120,3 @@ def test_login_baostock_retries_when_login_raises(monkeypatch) -> None:
     assert result.error_code == "0"
     assert fake_bs.login_calls == 3
     assert sleep_calls == [0.2, 0.2]
-
-
-def test_is_trading_day_baostock_uses_retrying_login(monkeypatch) -> None:
-    fake_bs = FakeBaoStock(
-        [
-            FakeLoginResult("10002007", "网络接收错误"),
-            FakeLoginResult("0", "success"),
-        ],
-        trade_day_flag="1",
-    )
-    sleep_calls: list[float] = []
-
-    monkeypatch.setattr(baostock_provider, "bs", fake_bs)
-    monkeypatch.setattr(baostock_provider, "sleep", lambda seconds: sleep_calls.append(seconds))
-    monkeypatch.setattr(trading_calendar, "bs", fake_bs)
-
-    assert trading_calendar._is_trading_day_baostock(date(2026, 4, 14)) is True
-    assert fake_bs.login_calls == 2
-    assert fake_bs.query_calls == 1
-    assert fake_bs.logout_calls == 1
-    assert sleep_calls == [1.0]

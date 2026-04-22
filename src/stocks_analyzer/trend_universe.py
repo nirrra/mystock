@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Callable
 
 import pandas as pd
 
@@ -155,14 +156,18 @@ def scan_trend_universe(
     as_of: date,
     symbols: list[str] | None = None,
     include_all: bool = False,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     universe = _load_instruments(storage, symbols=symbols)
     rows: list[dict[str, object]] = []
-    for instrument in universe:
+    total_instruments = len(universe)
+    for index, instrument in enumerate(universe, start=1):
         symbol = str(instrument["symbol"]).zfill(6)
         try:
             daily_bars = storage.load_daily_bars(symbol)
         except FileNotFoundError:
+            if progress_callback is not None:
+                progress_callback(index, total_instruments)
             continue
 
         trend_frame = build_symbol_trend_frame(
@@ -173,11 +178,17 @@ def scan_trend_universe(
         )
         latest = trend_frame[trend_frame["trade_date"].dt.date <= as_of].tail(1)
         if latest.empty:
+            if progress_callback is not None:
+                progress_callback(index, total_instruments)
             continue
         record = latest.iloc[-1].to_dict()
         if not include_all and not bool(record.get("in_trend_universe", False)):
+            if progress_callback is not None:
+                progress_callback(index, total_instruments)
             continue
         rows.append(record)
+        if progress_callback is not None:
+            progress_callback(index, total_instruments)
 
     if not rows:
         return pd.DataFrame()

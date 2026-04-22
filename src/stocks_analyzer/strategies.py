@@ -399,7 +399,14 @@ def _find_recent_pattern5_high(history_df: pd.DataFrame, config: Type5Config) ->
     latest_index = len(history_df) - 1
     start_index = max(config.high_pre_lookback_days, latest_index - config.recent_high_lookback_days + 1)
     for index in range(latest_index, start_index - 1, -1):
+        left = index - config.high_peak_window_days
+        right = index + config.high_peak_window_days
+        if left < 0 or right >= len(history_df):
+            continue
         current_high = float(history_df.iloc[index]["high"])
+        peak_window = history_df.iloc[left : right + 1]["high"].astype(float)
+        if float(peak_window.max()) > current_high:
+            continue
         previous_window = history_df.iloc[index - config.high_pre_lookback_days : index]
         if previous_window.empty:
             continue
@@ -423,9 +430,11 @@ def _find_recent_ma20_touch(history_df: pd.DataFrame, config: Type5Config) -> di
         ma20 = float(row["ma_20"])
         low_price = float(row["low"])
         close_price = float(row["close"])
-        if close_price <= ma20:
+        reclaim_min_price = ma20 * (1.0 + config.ma20_reclaim_min_pct)
+        if close_price < reclaim_min_price:
             continue
-        if abs(low_price - ma20) <= config.ma20_touch_abs_tolerance or low_price < ma20:
+        touch_tolerance = min(config.ma20_touch_abs_tolerance, ma20 * config.ma20_touch_pct_tolerance)
+        if abs(low_price - ma20) <= touch_tolerance or low_price < ma20:
             return {
                 "ma20_touch_date": pd.Timestamp(row["trade_date"]).date().isoformat(),
                 "ma20_touch_distance": low_price - ma20,

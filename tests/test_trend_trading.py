@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
 from stocks_analyzer.config import load_config
+from stocks_analyzer.screener import Screener
 from stocks_analyzer.trend_backtest import backtest_portfolios, backtest_signal_returns, summarize_signal_backtest
 from stocks_analyzer.trend_indicator_scores import build_next_open_entries, score_symbol_trend_entries, select_tradable_entries
 from stocks_analyzer.trend_signals import dedupe_trend_signals, generate_symbol_trend_signals
-from stocks_analyzer.trend_universe import build_symbol_trend_frame
+from stocks_analyzer.trend_universe import build_symbol_trend_frame, scan_trend_universe
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,6 +81,100 @@ def test_build_symbol_trend_frame_marks_trend_universe_candidate() -> None:
     latest = trend_frame.iloc[-1]
     assert bool(latest["in_trend_universe"]) is True
     assert float(latest["trend_score"]) > 60.0
+
+
+def test_scan_trend_universe_invokes_progress_callback(monkeypatch) -> None:
+    config = _load_test_config()
+    progress_calls: list[tuple[int, int]] = []
+    bars = _make_breakout_bars()
+
+    class FakeStorage:
+        def load_universe(self) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    {"symbol": "600000", "name": "甲"},
+                    {"symbol": "600001", "name": "乙"},
+                ]
+            )
+
+        def load_daily_bars(self, symbol: str) -> pd.DataFrame:
+            if symbol == "600001":
+                raise FileNotFoundError(symbol)
+            return bars.copy()
+
+    monkeypatch.setattr(
+        "stocks_analyzer.trend_universe.build_symbol_trend_frame",
+        lambda daily_bars, symbol, name, config: pd.DataFrame(
+            [
+                {
+                    "trade_date": pd.Timestamp("2026-04-10"),
+                    "symbol": symbol,
+                    "name": name,
+                    "trend_score": 88.0,
+                    "trend_direction_score": 80.0,
+                    "trend_strength_score": 82.0,
+                    "in_trend_universe": True,
+                }
+            ]
+        ),
+    )
+
+    result = scan_trend_universe(
+        FakeStorage(),
+        config,
+        as_of=date(2026, 4, 10),
+        progress_callback=lambda current, total: progress_calls.append((current, total)),
+    )
+
+    assert result["symbol"].tolist() == ["600000"]
+    assert progress_calls == [(1, 2), (2, 2)]
+
+
+def test_screener_run_invokes_progress_callback(monkeypatch) -> None:
+    config = _load_test_config()
+    progress_calls: list[tuple[int, int]] = []
+    bars = _make_breakout_bars()
+
+    class FakeStorage:
+        def load_universe(self) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    {"symbol": "600000", "name": "甲"},
+                    {"symbol": "600001", "name": "乙"},
+                ]
+            )
+
+        def load_daily_bars(self, symbol: str) -> pd.DataFrame:
+            if symbol == "600001":
+                raise FileNotFoundError(symbol)
+            return bars.copy()
+
+    monkeypatch.setattr("stocks_analyzer.screener.required_history_days", lambda config, strategies: 1)
+    monkeypatch.setattr(
+        "stocks_analyzer.screener.add_indicators",
+        lambda frame: frame.assign(amount_ma_20=frame["amount"].astype(float)),
+    )
+    monkeypatch.setattr(
+        "stocks_analyzer.screener.evaluate_strategies",
+        lambda cutoff, instrument, config, strategies: [
+            {
+                "trade_date": pd.Timestamp("2026-04-10"),
+                "symbol": str(instrument["symbol"]).zfill(6),
+                "name": instrument["name"],
+                "strategy_name": "volume_top_pre_breakout",
+                "close": 10.0,
+                "reason": "demo",
+            }
+        ],
+    )
+
+    results = Screener(FakeStorage(), config).run(
+        as_of=date(2026, 4, 10),
+        progress_callback=lambda current, total: progress_calls.append((current, total)),
+    )
+
+    assert results["symbol"].tolist() == ["600000"]
+    assert progress_calls == [(1, 2), (2, 2)]
 
 
 def test_generate_symbol_trend_signals_detects_breakout_only_after_breakout_day() -> None:

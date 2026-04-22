@@ -157,6 +157,12 @@ python -m stocks_analyzer --project-root . research-thresholds --date 2026-04-10
 - `--start-date` 主要用于首次初始化
 - 本地已有缓存时，`update` 会优先保证日期连续，但默认信任本地末尾数据，不允许通过更晚的 `--start-date` 制造缺口
 
+当前推荐的数据源顺序：
+
+- 日线更新优先建议走 `sina`
+- 如果 `sina` 链路不稳定，再考虑切换或临时回退到 `baostock`
+- 当前 `update` 命令内部会优先走 `akshare` 的日线实现，并默认把 `sina` 作为首选日线入口
+
 常用示例：
 
 ```bash
@@ -643,7 +649,8 @@ buy_score = trend_base_score * 0.35 + trigger_score * 0.65
 - `intraday-screening` **不会生成新的 `watchlist`**
 - `intraday-screening` 当前**不会更新日线 parquet**
 - `intraday-screening` 当前**不会把 5 分钟 K 线长期缓存到本地 parquet**；5 分钟数据是在运行时抓取并用于计算盘中分数
-- 默认配置下，日线数据源 `provider` 使用 `baostock`，分钟线数据源 `intraday_provider` 使用 `itick`
+- 当前建议的日线源顺序是：先 `sina`，如果 `sina` 不稳定，再尝试 `baostock`
+- 分钟线数据源 `intraday_provider` 目前建议使用 `itick`
 - 仓库里保留了 `tushare` 分钟线 provider 代码，后续如果你要切换，只需要把 `intraday_provider` 改成 `tushare` 并配置环境变量 `TUSHARE_TOKEN`
 - 现在也支持把 `intraday_provider` 改成 `itick`；使用前需要配置环境变量 `ITICK_TOKEN`
 - 在 `itick` 模式下，盘中复筛会优先走批量 `/stock/klines` 请求，尽量降低 `5 次/分钟` 配额下的限流风险
@@ -792,7 +799,8 @@ python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 
 - `daily-screening` 更适合盘后或定时任务，不适合盘中全市场快速执行
 - `intraday-screening` 依赖已有 `watchlist`
 - 如果没有可用 `watchlist`，盘中复筛会报错
-- 交易日判断会优先尝试数据源接口，失败后退化到工作日判断
+- 当前推荐的数据源选择是：先 `sina`，如果 `sina` 不稳定，再尝试 `baostock`
+- 交易日判断当前优先走 `akshare` 的交易日历接口，失败后退化到工作日判断
 - 雪球归档属于最佳努力抓取，不保证完整覆盖
 
 ## 兼容入口

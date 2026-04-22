@@ -1,0 +1,6 @@
+Timeout (0:00:05)!
+Thread 0x00007f30 (most recent call first):
+  File "D:\Softwares\anaconda3\Lib\site-packages\baostock\util\socketutil.py", line 68 in send_msg
+  File "D:\Softwares\anaconda3\Lib\site-packages\baostock\login\loginout.py", line 56 in login
+  File "C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\data_sources\baostock_provider.py", line 61 in login_baostock
+  File "<stdin>", line 7 in <module>

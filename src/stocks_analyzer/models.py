@@ -71,8 +71,11 @@ class Type4Config:
 class Type5Config:
     recent_high_lookback_days: int
     high_pre_lookback_days: int
+    high_peak_window_days: int
     ma20_touch_lookback_days: int
     ma20_touch_abs_tolerance: float
+    ma20_touch_pct_tolerance: float
+    ma20_reclaim_min_pct: float
 
 
 @dataclass(slots=True)

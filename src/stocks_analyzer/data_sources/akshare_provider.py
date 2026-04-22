@@ -21,6 +21,7 @@ class AKShareDataProvider(DataProvider):
     def __init__(self) -> None:
         if ak is None:
             raise RuntimeError("akshare is not installed. Run `pip install -e .` first.") from _IMPORT_ERROR
+        self._daily_backend = "sina"
 
     def get_instruments(self) -> pd.DataFrame:
         dataframe = ak.stock_info_a_code_name()
@@ -40,42 +41,7 @@ class AKShareDataProvider(DataProvider):
             end_date=end_date,
             adjust=adjust,
         )
-        renamed = dataframe.rename(
-            columns={
-                "日期": "trade_date",
-                "股票代码": "symbol",
-                "开盘": "open",
-                "收盘": "close",
-                "最高": "high",
-                "最低": "low",
-                "成交量": "volume",
-                "成交额": "amount",
-                "涨跌幅": "pct_change",
-                "涨跌额": "change",
-                "振幅": "amplitude",
-                "换手率": "turnover",
-            }
-        )
-        normalized = renamed.loc[
-            :,
-            [
-                "trade_date",
-                "symbol",
-                "open",
-                "close",
-                "high",
-                "low",
-                "volume",
-                "amount",
-                "pct_change",
-                "change",
-                "amplitude",
-                "turnover",
-            ],
-        ].copy()
-        normalized["trade_date"] = pd.to_datetime(normalized["trade_date"])
-        normalized["symbol"] = normalized["symbol"].astype(str).str.zfill(6)
-        return normalized.sort_values("trade_date").reset_index(drop=True)
+        return _normalize_daily_bars(dataframe, symbol=symbol)
 
     def get_intraday_bars(
         self,
@@ -115,15 +81,13 @@ class AKShareDataProvider(DataProvider):
         last_error: Exception | None = None
         for attempt in range(1, 4):
             try:
-                return ak.stock_zh_a_hist(
-                    symbol=symbol,
-                    period="daily",
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust=adjust,
-                )
+                return self._fetch_daily_bars(symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust)
             except RequestException as exc:
                 last_error = exc
+                if self._daily_backend == "sina":
+                    self._daily_backend = "eastmoney"
+                    time.sleep(0.5)
+                    continue
                 if attempt == 3:
                     break
                 time.sleep(attempt)
@@ -131,6 +95,22 @@ class AKShareDataProvider(DataProvider):
         if last_error is not None:
             raise last_error
         raise RuntimeError(f"Failed to fetch daily bars for {symbol}")
+
+    def _fetch_daily_bars(self, *, symbol: str, start_date: str, end_date: str, adjust: str) -> pd.DataFrame:
+        if self._daily_backend == "sina":
+            return ak.stock_zh_a_daily(
+                symbol=_with_exchange_prefix(symbol),
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust,
+            )
+        return ak.stock_zh_a_hist(
+            symbol=symbol,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
 
     def _retry_fetch_intraday_bars(
         self,
@@ -301,3 +281,79 @@ def _aggregate_trends_to_period(dataframe: pd.DataFrame, *, period: str) -> pd.D
     return aggregated[
         ["时间", "开盘", "收盘", "最高", "最低", "涨跌幅", "涨跌额", "成交量", "成交额", "振幅", "换手率"]
     ]
+
+
+def _normalize_daily_bars(dataframe: pd.DataFrame, *, symbol: str) -> pd.DataFrame:
+    rename_map = {
+        "日期": "trade_date",
+        "date": "trade_date",
+        "股票代码": "symbol",
+        "开盘": "open",
+        "open": "open",
+        "收盘": "close",
+        "close": "close",
+        "最高": "high",
+        "high": "high",
+        "最低": "low",
+        "low": "low",
+        "成交量": "volume",
+        "volume": "volume",
+        "成交额": "amount",
+        "amount": "amount",
+        "涨跌幅": "pct_change",
+        "涨跌额": "change",
+        "振幅": "amplitude",
+        "换手率": "turnover",
+        "turnover": "turnover",
+    }
+    renamed = dataframe.rename(columns={key: value for key, value in rename_map.items() if key in dataframe.columns}).copy()
+    renamed["trade_date"] = pd.to_datetime(renamed["trade_date"])
+    renamed["symbol"] = str(symbol).zfill(6)
+
+    for column in ["open", "close", "high", "low", "volume", "amount", "turnover"]:
+        if column in renamed.columns:
+            renamed[column] = pd.to_numeric(renamed[column], errors="coerce")
+        else:
+            renamed[column] = pd.NA
+
+    if "change" in renamed.columns:
+        renamed["change"] = pd.to_numeric(renamed["change"], errors="coerce")
+    else:
+        renamed["change"] = renamed["close"].diff()
+
+    if "pct_change" in renamed.columns:
+        renamed["pct_change"] = pd.to_numeric(renamed["pct_change"], errors="coerce")
+    else:
+        renamed["pct_change"] = renamed["close"].pct_change().mul(100)
+
+    if "amplitude" in renamed.columns:
+        renamed["amplitude"] = pd.to_numeric(renamed["amplitude"], errors="coerce")
+    else:
+        renamed["amplitude"] = (
+            (renamed["high"] - renamed["low"]).div(renamed["close"].replace(0, pd.NA)).mul(100)
+        )
+
+    return renamed.loc[
+        :,
+        [
+            "trade_date",
+            "symbol",
+            "open",
+            "close",
+            "high",
+            "low",
+            "volume",
+            "amount",
+            "pct_change",
+            "change",
+            "amplitude",
+            "turnover",
+        ],
+    ].sort_values("trade_date").reset_index(drop=True)
+
+
+def _with_exchange_prefix(symbol: str) -> str:
+    code = str(symbol).zfill(6)
+    if code.startswith(("600", "601", "603", "605", "688", "689", "900")):
+        return f"sh{code}"
+    return f"sz{code}"

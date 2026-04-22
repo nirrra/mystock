@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pandas as pd
 
-from stocks_analyzer.cli import _refresh_or_load_universe, _update_daily_cache_for_symbol
+from stocks_analyzer.cli import _refresh_or_load_universe, _resolve_update_provider_name, _update_daily_cache_for_symbol
 from stocks_analyzer.config import load_config
 from stocks_analyzer.paths import ProjectPaths
 from stocks_analyzer.storage import Storage
@@ -56,6 +56,11 @@ def test_refresh_or_load_universe_falls_back_to_cached_universe() -> None:
     result = _refresh_or_load_universe(storage, EmptyProvider(), exclude_st=True)
 
     assert result["symbol"].tolist() == ["600000"]
+
+
+def test_resolve_update_provider_name_switches_baostock_to_akshare() -> None:
+    assert _resolve_update_provider_name("baostock") == "akshare"
+    assert _resolve_update_provider_name("akshare") == "akshare"
 
 
 def _make_daily_frame(symbol: str, dates: list[str]) -> pd.DataFrame:
