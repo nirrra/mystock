@@ -18,7 +18,7 @@ from stocks_analyzer.strategies import (
 def test_evaluate_volume_top_pre_breakout_returns_match() -> None:
     config = _load_test_config()
 
-    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0])
+    dataframe = _build_volume_top_frame(final_closes=[96.0, 97.0, 98.0])
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_PRE_BREAKOUT])
 
     assert [row["strategy_name"] for row in result] == [VOLUME_TOP_PRE_BREAKOUT]
@@ -27,7 +27,7 @@ def test_evaluate_volume_top_pre_breakout_returns_match() -> None:
 def test_evaluate_volume_top_pre_breakout_allows_equal_high_after_old_high() -> None:
     config = _load_test_config()
 
-    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0])
+    dataframe = _build_volume_top_frame(final_closes=[96.0, 97.0, 98.0])
     equal_high_index = len(dataframe) - 10
     dataframe.loc[equal_high_index, "high"] = 101.0
 
@@ -214,15 +214,16 @@ def _load_test_config():
     config.type1.min_old_high_gap_days = 20
     config.type1.peak_window_days = 2
     config.type1.breakout_volume_lookback_days = 5
-    config.type1.breakout_volume_multiplier = 3.0
+    config.type1.breakout_volume_multiplier = 2.0
+    config.type1.near_high_threshold_pct = 0.05
     config.type2.min_old_high_gap_days = 20
     config.type2.peak_window_days = 2
     config.type2.breakout_volume_lookback_days = 5
-    config.type2.breakout_volume_multiplier = 3.0
+    config.type2.breakout_volume_multiplier = 2.0
     config.type3.min_old_high_gap_days = 20
     config.type3.peak_window_days = 2
     config.type3.breakout_volume_lookback_days = 5
-    config.type3.breakout_volume_multiplier = 3.0
+    config.type3.breakout_volume_multiplier = 2.0
     config.type3.post_breakout_max_days = 8
     config.type3.post_breakout_max_extension_pct = 0.10
     return config

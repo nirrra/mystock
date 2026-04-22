@@ -110,22 +110,22 @@ strategies:
     min_drawdown_pct: 0.10
     peak_window_days: 10
     breakout_volume_lookback_days: 20
-    breakout_volume_multiplier: 3.0
-    near_high_threshold_pct: 0.08
+    breakout_volume_multiplier: 2.0
+    near_high_threshold_pct: 0.05
     require_break_below_ma60: true
   type2:
     min_old_high_gap_days: 60
     min_drawdown_pct: 0.10
     peak_window_days: 10
     breakout_volume_lookback_days: 20
-    breakout_volume_multiplier: 3.0
+    breakout_volume_multiplier: 2.0
     require_break_below_ma60: true
   type3:
     min_old_high_gap_days: 60
     min_drawdown_pct: 0.10
     peak_window_days: 10
     breakout_volume_lookback_days: 20
-    breakout_volume_multiplier: 3.0
+    breakout_volume_multiplier: 2.0
     post_breakout_max_days: 8
     post_breakout_max_extension_pct: 0.10
     require_break_below_ma60: true
