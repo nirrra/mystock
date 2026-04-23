@@ -36,7 +36,7 @@ from .probability_reporting import (
 )
 from .reporting import format_multi_pattern_summary, format_report
 from .screener import Screener, parse_as_of
-from .storage import Storage
+from .storage import DailyBarsReadError, Storage
 from .strategies import STRATEGY_NAMES
 from .trend_backtest import backtest_portfolios, backtest_signal_returns, summarize_signal_backtest
 from .trend_indicator_scores import build_next_open_entries, scan_indicator_scored_entries, select_tradable_entries
@@ -739,6 +739,12 @@ def _update_daily_cache_for_symbol(
         fresh = provider.get_daily_bars(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
         target = storage.save_daily_bars(symbol, fresh)
         logging.info("Initialized %s rows for %s to %s", len(fresh), symbol, target)
+        return target
+    except DailyBarsReadError as exc:
+        logging.warning("Cached daily bars for %s are unreadable; rebuilding from %s: %s", symbol, start_date, exc)
+        fresh = provider.get_daily_bars(symbol, start_date=start_date, end_date=end_date, adjust=adjust)
+        target = storage.save_daily_bars(symbol, fresh)
+        logging.info("Rebuilt %s rows for %s to %s", len(fresh), symbol, target)
         return target
 
     cached_frame = cached.copy()
@@ -1505,7 +1511,9 @@ def _run_predict_prob(
         symbol = str(instrument["symbol"])
         try:
             bars = storage.load_daily_bars(symbol)
-        except FileNotFoundError:
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            if isinstance(exc, DailyBarsReadError):
+                logging.warning("Skip prediction for %s because cached daily bars are unreadable: %s", symbol, exc)
             continue
 
         feature_frame = build_feature_frame(bars)
@@ -1536,7 +1544,9 @@ def _load_daily_history_map(storage: Storage, symbols: list[str]) -> dict[str, p
     for symbol in {str(item).zfill(6) for item in symbols}:
         try:
             history[symbol] = storage.load_daily_bars(symbol)
-        except FileNotFoundError:
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            if isinstance(exc, DailyBarsReadError):
+                logging.warning("Skip cached daily history for %s because it is unreadable: %s", symbol, exc)
             continue
     return history
 
@@ -1973,7 +1983,9 @@ def _build_tradingview_snapshots(
         symbol = str(instrument["symbol"])
         try:
             bars = storage.load_daily_bars(symbol)
-        except FileNotFoundError:
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            if isinstance(exc, DailyBarsReadError):
+                logging.warning("Skip TradingView for %s because cached daily bars are unreadable: %s", symbol, exc)
             _log_scan_progress("TradingView", index, total_instruments)
             continue
 
@@ -2080,7 +2092,9 @@ def _build_macd_summary(
         symbol = _normalize_exported_symbol(row["symbol"])
         try:
             bars = storage.load_daily_bars(symbol)
-        except FileNotFoundError:
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            if isinstance(exc, DailyBarsReadError):
+                logging.warning("Skip MACD for %s because cached daily bars are unreadable: %s", symbol, exc)
             _log_scan_progress("MACD", index, total_rows)
             continue
 
@@ -2154,7 +2168,9 @@ def _build_atr_summary(
         symbol = _normalize_exported_symbol(row["symbol"])
         try:
             bars = storage.load_daily_bars(symbol)
-        except FileNotFoundError:
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            if isinstance(exc, DailyBarsReadError):
+                logging.warning("Skip ATR for %s because cached daily bars are unreadable: %s", symbol, exc)
             _log_scan_progress("ATR", index, total_rows)
             continue
 
@@ -2282,7 +2298,9 @@ def _resolve_recent_trading_dates(
         symbol = str(instrument["symbol"])
         try:
             bars = storage.load_daily_bars(symbol)
-        except FileNotFoundError:
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            if isinstance(exc, DailyBarsReadError):
+                logging.warning("Skip cached daily history for %s because it is unreadable: %s", symbol, exc)
             continue
         trade_dates = pd.to_datetime(bars["trade_date"]).dt.date
         recent_dates = sorted(item for item in trade_dates.unique() if item <= as_of)
@@ -2314,8 +2332,11 @@ def _plot_pattern_matches(storage: Storage, config, as_of: date, results: pd.Dat
         normalized_symbol = str(symbol).zfill(6)
         try:
             daily_bars = storage.load_daily_bars(normalized_symbol)
-        except FileNotFoundError:
-            logging.warning("Skip plot for %s because local daily bars are missing", normalized_symbol)
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            if isinstance(exc, DailyBarsReadError):
+                logging.warning("Skip plot for %s because cached daily bars are unreadable: %s", normalized_symbol, exc)
+            else:
+                logging.warning("Skip plot for %s because local daily bars are missing", normalized_symbol)
             continue
         filtered = filter_by_date(daily_bars, start_date, end_date)
         if filtered.empty:

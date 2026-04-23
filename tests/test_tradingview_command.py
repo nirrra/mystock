@@ -92,6 +92,35 @@ def test_run_tradingview_generates_csv() -> None:
     assert all("2025" in item.name for item in daily_files)
 
 
+def test_run_tradingview_skips_unreadable_cached_file() -> None:
+    tmp_path = _make_workspace_tmp_dir("tradingview_corrupt_cache")
+    config = load_config(ROOT / "config" / "default.yaml")
+    paths = ProjectPaths(tmp_path, config.storage)
+    storage = Storage(paths)
+
+    universe = pd.DataFrame(
+        [
+            {"symbol": "600000", "name": "测试一"},
+            {"symbol": "600001", "name": "坏缓存"},
+        ]
+    )
+    storage.save_universe(universe)
+    storage.save_daily_bars("600000", _make_daily_bars("600000", seed=1))
+    (storage.paths.daily_dir / "600001.parquet").write_text("not a parquet file", encoding="utf-8")
+
+    output_path = tmp_path / "reports" / "tradingview" / "ratings.csv"
+    _run_tradingview(
+        storage=storage,
+        config=config,
+        trade_date=date(2025, 10, 31),
+        top_n=10,
+        output=str(output_path),
+    )
+
+    result = pd.read_csv(output_path)
+    assert result["symbol"].tolist() == ['="600000"']
+
+
 def test_run_tradingview_can_limit_to_symbol_subset() -> None:
     tmp_path = _make_workspace_tmp_dir("tradingview_subset")
     config = load_config(ROOT / "config" / "default.yaml")

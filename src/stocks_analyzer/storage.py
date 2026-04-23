@@ -8,6 +8,10 @@ import pandas as pd
 from .paths import ProjectPaths
 
 
+class DailyBarsReadError(RuntimeError):
+    """Raised when a cached daily-bars parquet file exists but cannot be read."""
+
+
 class Storage:
     def __init__(self, paths: ProjectPaths) -> None:
         self.paths = paths
@@ -31,7 +35,10 @@ class Storage:
         target = self.paths.daily_dir / f"{symbol}.parquet"
         if not target.exists():
             raise FileNotFoundError(f"Daily bars not found for {symbol}: {target}")
-        return pd.read_parquet(target)
+        try:
+            return pd.read_parquet(target)
+        except Exception as exc:
+            raise DailyBarsReadError(f"Daily bars are unreadable for {symbol}: {target}: {exc}") from exc
 
     def has_daily_bars(self, symbol: str) -> bool:
         target = self.paths.daily_dir / f"{symbol}.parquet"

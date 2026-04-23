@@ -112,6 +112,36 @@ def test_update_daily_cache_initializes_from_requested_start_date() -> None:
     assert storage.load_daily_bars("600000")["trade_date"].dt.date.max().isoformat() == "2026-04-11"
 
 
+def test_update_daily_cache_rebuilds_unreadable_cached_file() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    root = _make_workspace_tmp_dir("update_rebuild_corrupt")
+    config = load_config(project_root / "config" / "default.yaml")
+    paths = ProjectPaths(root, config.storage)
+    storage = Storage(paths)
+    corrupt_path = storage.paths.daily_dir / "600000.parquet"
+    corrupt_path.write_text("not a parquet file", encoding="utf-8")
+    provider = RecordingDailyProvider(_make_daily_frame("600000", ["2026-04-10", "2026-04-11"]))
+
+    _update_daily_cache_for_symbol(
+        storage=storage,
+        provider=provider,
+        symbol="600000",
+        start_date="20260401",
+        end_date="20260411",
+        adjust="qfq",
+    )
+
+    assert provider.calls == [
+        {
+            "symbol": "600000",
+            "start_date": "20260401",
+            "end_date": "20260411",
+            "adjust": "qfq",
+        }
+    ]
+    assert storage.load_daily_bars("600000")["trade_date"].dt.date.max().isoformat() == "2026-04-11"
+
+
 def test_update_daily_cache_appends_from_next_day_even_when_user_start_is_later() -> None:
     project_root = Path(__file__).resolve().parents[1]
     root = _make_workspace_tmp_dir("update_incremental")
