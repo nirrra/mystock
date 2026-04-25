@@ -1,0 +1,25 @@
+{
+  "trade_date": "2026-04-10",
+  "source_file": "demo.csv",
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "symbol": "002579",
+      "name": "中京电子",
+      "tier": "第一梯队",
+      "pattern_id": "1",
+      "tradingview_label": "buy",
+      "tradingview_avg_5d": 0.42,
+      "连续上榜天数": 1
+    },
+    {
+      "symbol": "603803",
+      "name": "瑞斯康达",
+      "tier": "第二梯队",
+      "pattern_id": "2",
+      "tradingview_label": "strong_buy",
+      "tradingview_avg_5d": 0.5,
+      "连续上榜天数": 1
+    }
+  ]
+}

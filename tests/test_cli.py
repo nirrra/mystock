@@ -47,11 +47,12 @@ def test_build_parser_accepts_update_with_symbol() -> None:
 
 def test_build_parser_accepts_pattern_flags() -> None:
     parser = build_parser()
-    args = parser.parse_args(["pattern", "--1", "--5", "--plot-all", "--as-of", "2026-04-10"])
+    args = parser.parse_args(["pattern", "--1", "--5", "--6", "--plot-all", "--as-of", "2026-04-10"])
 
     assert args.command == "pattern"
     assert args.pattern1 is True
     assert args.pattern5 is True
+    assert args.pattern6 is True
     assert args.plot_all is True
     assert args.as_of == "2026-04-10"
 
@@ -212,6 +213,17 @@ def test_build_parser_accepts_backtest_entries_command() -> None:
     assert args.start_date == "2026-01-01"
 
 
+def test_build_parser_accepts_backtest_patterns_command_and_flags() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["backtest-patterns", "--date", "2026-04-10", "--start-date", "2026-01-01", "--1", "--3"])
+
+    assert args.command == "backtest-patterns"
+    assert args.date == "2026-04-10"
+    assert args.start_date == "2026-01-01"
+    assert args.pattern1 is True
+    assert args.pattern3 is True
+
+
 def test_build_parser_accepts_backtest_entries_portfolio_command() -> None:
     parser = build_parser()
     args = parser.parse_args(["backtest-entries-portfolio", "--date", "2026-04-10", "--top-n", "6"])
@@ -301,6 +313,7 @@ def test_configure_network_prefers_existing_proxy_env(monkeypatch) -> None:
         NetworkConfig(
             http_proxy="http://127.0.0.1:7897",
             https_proxy="http://127.0.0.1:7897",
+            socks5_proxy=None,
             no_proxy="127.0.0.1,localhost",
         )
     )
@@ -331,6 +344,7 @@ def test_configure_network_skips_unreachable_local_proxy(monkeypatch, caplog) ->
             NetworkConfig(
                 http_proxy="http://127.0.0.1:7897",
                 https_proxy="http://localhost:7897",
+                socks5_proxy=None,
                 no_proxy="127.0.0.1,localhost",
             )
         )
@@ -359,6 +373,7 @@ def test_configure_network_applies_reachable_local_proxy(monkeypatch) -> None:
         NetworkConfig(
             http_proxy="http://127.0.0.1:7897",
             https_proxy="http://127.0.0.1:7897",
+            socks5_proxy=None,
             no_proxy="127.0.0.1,localhost",
         )
     )

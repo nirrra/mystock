@@ -24,6 +24,7 @@ from .ml_dataset import build_probability_dataset, infer_split_dates, split_prob
 from .ml_evaluation import evaluate_trained_artifact
 from .ml_models import load_model_artifact, normalize_model_names, predict_with_model, train_and_save_models
 from .models import NetworkConfig
+from .pattern_backtest import scan_pattern_backtest_signals, summarize_pattern_backtest
 from .paths import ProjectPaths
 from .plotting import default_start_date, filter_by_date, load_or_fetch_daily, plot_candles_and_volume
 from .probability_reporting import (
@@ -45,6 +46,7 @@ from .trend_reporting import (
     save_entry_backtest_reports,
     save_entry_portfolio_backtest_reports,
     save_macd_report,
+    save_pattern_backtest_reports,
     save_portfolio_backtest_reports,
     save_signal_backtest_reports,
     save_threshold_research_reports,
@@ -79,6 +81,8 @@ from .xueqiu_archive import archive_xueqiu_user_1155695148
 
 
 def _localize_argparse() -> None:
+    if getattr(argparse, "_stocks_analyzer_localized", False):
+        return
     translations = {
         "usage: ": "用法：",
         "positional arguments": "位置参数",
@@ -90,6 +94,7 @@ def _localize_argparse() -> None:
         argparse._ = lambda text: translations.get(original(text), original(text))
     else:
         argparse._ = lambda text: translations.get(text, text)
+    argparse._stocks_analyzer_localized = True
 
 
 PATTERN_FLAG_MAP = {
@@ -98,6 +103,7 @@ PATTERN_FLAG_MAP = {
     "pattern3": "volume_top_follow_through",
     "pattern4": "platform_breakout",
     "pattern5": "trend_pullback",
+    "pattern6": "double_volume_support_rebound",
 }
 PATTERN_LABEL_MAP = {
     "volume_top_pre_breakout": "1",
@@ -105,6 +111,7 @@ PATTERN_LABEL_MAP = {
     "volume_top_follow_through": "3",
     "platform_breakout": "4",
     "trend_pullback": "5",
+    "double_volume_support_rebound": "6",
 }
 PROGRESS_LOG_INTERVAL = 100
 LOCAL_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -119,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  1. mystock update --start-date 20240101\n"
             "     更新主板股票池并拉取本地日线数据。\n"
             "  2. mystock pattern\n"
-            "     扫描本地全部股票，识别 1 到 5 号模式并生成 CSV。\n"
+            "     扫描本地全部股票，识别 1 到 6 号模式并生成 CSV。\n"
             "  3. mystock plot 603588\n"
             "     查看单只股票近两年的 K 线和成交量图。\n\n"
             "常见示例：\n"
@@ -162,10 +169,10 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--limit", type=int, default=None, help="仅更新前 N 只股票，便于小范围测试")
     pattern = subparsers.add_parser(
         "pattern",
-        help="识别本地日线数据中的 1 到 5 号模式",
+        help="识别本地日线数据中的 1 到 6 号模式",
         description=(
-            "扫描本地缓存的全部股票日线数据，识别模式 1 到 5。\n"
-            "默认识别全部模式；如果传入 --1 --2 --3 --4 --5 中的任意组合，则只识别指定模式。"
+            "扫描本地缓存的全部股票日线数据，识别模式 1 到 6。\n"
+            "默认识别全部模式；如果传入 --1 --2 --3 --4 --5 --6 中的任意组合，则只识别指定模式。"
         ),
         epilog=(
             "常见示例：\n"
@@ -182,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     pattern.add_argument("--3", dest="pattern3", action="store_true", help="只识别模式 3")
     pattern.add_argument("--4", dest="pattern4", action="store_true", help="只识别模式 4")
     pattern.add_argument("--5", dest="pattern5", action="store_true", help="只识别模式 5")
+    pattern.add_argument("--6", dest="pattern6", action="store_true", help="只识别模式 6")
     pattern.add_argument("--as-of", default=None, help="分析截止日期，格式 YYYY-MM-DD")
     pattern.add_argument("--limit", type=int, default=None, help="终端最多显示多少行")
     pattern.add_argument("--output", default=None, help="可选的 CSV 输出路径")
@@ -383,6 +391,23 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_entries.add_argument("--start-date", default=None, help="回测开始日期，格式 YYYY-MM-DD")
     backtest_entries.add_argument("--output", default=None, help="可选的回测明细 CSV 输出路径")
     backtest_entries.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+
+    backtest_patterns = subparsers.add_parser(
+        "backtest-patterns",
+        help="运行六种模式的纯模式胜率回测",
+        description="扫描历史模式 1 到 6 命中，按同股同模式 5 个交易日冷却去重后执行次日开盘固定持有回测。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    backtest_patterns.add_argument("--date", required=True, help="回测截止日期，格式 YYYY-MM-DD")
+    backtest_patterns.add_argument("--start-date", required=True, help="回测开始日期，格式 YYYY-MM-DD")
+    backtest_patterns.add_argument("--1", dest="pattern1", action="store_true", help="只回测模式 1")
+    backtest_patterns.add_argument("--2", dest="pattern2", action="store_true", help="只回测模式 2")
+    backtest_patterns.add_argument("--3", dest="pattern3", action="store_true", help="只回测模式 3")
+    backtest_patterns.add_argument("--4", dest="pattern4", action="store_true", help="只回测模式 4")
+    backtest_patterns.add_argument("--5", dest="pattern5", action="store_true", help="只回测模式 5")
+    backtest_patterns.add_argument("--6", dest="pattern6", action="store_true", help="只回测模式 6")
+    backtest_patterns.add_argument("--output", default=None, help="可选的回测明细 CSV 输出路径")
+    backtest_patterns.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
 
     backtest_entries_portfolio = subparsers.add_parser(
         "backtest-entries-portfolio",
@@ -635,6 +660,19 @@ def main() -> None:
             paths=paths,
             end_date=datetime.fromisoformat(args.date).date(),
             start_date=_parse_optional_date(args.start_date),
+            output=args.output,
+            top_n=args.top_n,
+        )
+        return
+
+    if args.command == "backtest-patterns":
+        _run_backtest_patterns(
+            storage=storage,
+            config=config,
+            paths=paths,
+            end_date=datetime.fromisoformat(args.date).date(),
+            start_date=datetime.fromisoformat(args.start_date).date(),
+            selected_patterns=_selected_patterns(args),
             output=args.output,
             top_n=args.top_n,
         )
@@ -1191,6 +1229,75 @@ def _run_backtest_entries(
     print(f"次日开盘回测汇总：{report_paths['summary_path']}")
 
 
+def _run_backtest_patterns(
+    storage: Storage,
+    config,
+    paths: ProjectPaths,
+    end_date: date,
+    start_date: date,
+    selected_patterns: list[str],
+    output: str | None,
+    top_n: int,
+) -> None:
+    signals = scan_pattern_backtest_signals(
+        storage,
+        config,
+        start_date=start_date,
+        end_date=end_date,
+        selected_strategies=selected_patterns,
+        cooldown_trading_days=5,
+        progress_callback=lambda current, total: _log_scan_progress("Pattern-backtest", current, total),
+    )
+    daily_history = _load_daily_history_map(storage, signals["symbol"].astype(str).tolist() if not signals.empty else [])
+    detail = backtest_signal_returns(signals, daily_history, config.trend_backtest, entry_timing="next_open")
+    if not detail.empty:
+        detail["pattern_id"] = detail["signal_type"].map(PATTERN_LABEL_MAP)
+        detail = detail.rename(columns={"signal_type": "strategy_name"})
+        preferred = [
+            "trade_date",
+            "signal_date",
+            "entry_date",
+            "exit_date",
+            "symbol",
+            "name",
+            "pattern_id",
+            "strategy_name",
+            "holding_days",
+            "entry_price",
+            "exit_price",
+            "return_pct",
+            "max_upside_pct",
+            "max_drawdown_pct",
+            "min_return_pct",
+            "trigger_reason",
+            "entry_timing",
+            "entry_note",
+        ]
+        available = [column for column in preferred if column in detail.columns]
+        remaining = [column for column in detail.columns if column not in available]
+        detail = detail.loc[:, available + remaining]
+    summary = summarize_pattern_backtest(detail.rename(columns={"strategy_name": "signal_type"}) if not detail.empty else detail)
+    report_paths = save_pattern_backtest_reports(paths, report_date=end_date, detail=detail, summary=summary, output=output)
+    print(
+        _format_dataframe(
+            summary,
+            [
+                "pattern_id",
+                "strategy_name",
+                "holding_days",
+                "signal_count",
+                "win_rate",
+                "avg_return_pct",
+                "avg_max_upside_pct",
+                "avg_max_drawdown_pct",
+            ],
+            top_n,
+        )
+    )
+    print(f"\n模式回测明细：{report_paths['detail_path']}")
+    print(f"模式回测汇总：{report_paths['summary_path']}")
+
+
 def _run_backtest_portfolio(
     storage: Storage,
     config,
@@ -1629,6 +1736,32 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
         "ma20_touch_date",
         "ma20_touch_distance",
         "distance_to_ma20",
+        "pattern6_branch",
+        "anchor_date",
+        "anchor_close",
+        "support_price",
+        "anchor_volume_ratio_prev",
+        "anchor_volume_ratio_ma20",
+        "launch_confirm_high_date",
+        "launch_confirm_high_price",
+        "launch_confirm_return_pct",
+        "peak_date",
+        "peak_price",
+        "anchor_to_peak_return_pct",
+        "limit_up_like_count",
+        "pullback_low_date",
+        "pullback_low_price",
+        "peak_to_pullback_drawdown_pct",
+        "pullback_volume_ratio_to_anchor",
+        "pullback_front_half_avg_volume",
+        "pullback_back_half_avg_volume",
+        "pullback_back_half_volume_ratio",
+        "support_touch_date",
+        "breakdown_date",
+        "breakdown_volume_ratio_to_anchor",
+        "reclaim_date",
+        "days_to_reclaim",
+        "post_reclaim_days",
         "drawdown_15d",
         "consolidation_days",
         "consolidation_range_pct",

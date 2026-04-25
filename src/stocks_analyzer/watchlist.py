@@ -20,6 +20,7 @@ PATTERN_PRIORITY = {
     "1": 2.8,
     "4": 2.4,
     "5": 2.2,
+    "6": 2.2,
 }
 LABEL_BONUS = {
     "strong_buy": 1.0,
@@ -97,6 +98,32 @@ PATTERN_CANDIDATE_FIELDS = (
     "distance_from_recent_high_pct",
     "ma20_touch_date",
     "ma20_touch_distance",
+    "pattern6_branch",
+    "anchor_date",
+    "anchor_close",
+    "support_price",
+    "anchor_volume_ratio_prev",
+    "anchor_volume_ratio_ma20",
+    "launch_confirm_high_date",
+    "launch_confirm_high_price",
+    "launch_confirm_return_pct",
+    "peak_date",
+    "peak_price",
+    "anchor_to_peak_return_pct",
+    "limit_up_like_count",
+    "pullback_low_date",
+    "pullback_low_price",
+    "peak_to_pullback_drawdown_pct",
+    "pullback_volume_ratio_to_anchor",
+    "pullback_front_half_avg_volume",
+    "pullback_back_half_avg_volume",
+    "pullback_back_half_volume_ratio",
+    "support_touch_date",
+    "breakdown_date",
+    "breakdown_volume_ratio_to_anchor",
+    "reclaim_date",
+    "days_to_reclaim",
+    "post_reclaim_days",
 )
 
 
@@ -430,11 +457,11 @@ def _base_tier(row: pd.Series) -> str | None:
 
     if pattern_id in {"1", "2", "3"} and avg_score >= 0.35:
         return "第一梯队"
-    if pattern_id in {"4", "5"} and avg_score >= 0.36:
+    if pattern_id in {"4", "5", "6"} and avg_score >= 0.36:
         return "第一梯队"
     if pattern_id in {"1", "2", "3"} and avg_score >= 0.28:
         return "第二梯队"
-    if pattern_id in {"4", "5"} and avg_score >= 0.32:
+    if pattern_id in {"4", "5", "6"} and avg_score >= 0.32:
         return "第二梯队"
 
     return "第三梯队"

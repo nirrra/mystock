@@ -1,0 +1,8 @@
+{
+  "report_date": "2026-04-24",
+  "detail_rows": 11223,
+  "summary_rows": 4,
+  "detail_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\backtests\\patterns\\pattern_backtest_details_2026-04-24.csv",
+  "summary_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\backtests\\patterns\\pattern_backtest_summary_2026-04-24.csv",
+  "entry_note": "Research entry assumption: score calculated at close and entered at the next open."
+}

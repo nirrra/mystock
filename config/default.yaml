@@ -148,3 +148,28 @@ strategies:
     ma20_touch_abs_tolerance: 0.5
     ma20_touch_pct_tolerance: 0.01
     ma20_reclaim_min_pct: 0.01
+  type6:
+    max_anchor_scan_days: 80
+    min_anchor_age_days: 6
+    anchor_min_return: 0.03
+    anchor_prev_volume_multiplier: 2.0
+    anchor_ma_volume_multiplier: 1.8
+    launch_confirm_days: 15
+    launch_min_high_return: 0.18
+    launch_limit_up_return: 0.095
+    launch_limit_up_min_count: 2
+    peak_to_pullback_min_drawdown_pct: 0.08
+    pullback_max_days: 20
+    pullback_volume_max_anchor_ratio: 0.75
+    pullback_volume_split_min_days: 4
+    pullback_back_half_volume_ratio: 0.8
+    support_tolerance_pct: 0.025
+    support_touch_lookback_days: 5
+    support_break_tolerance_pct: 0.015
+    stable_min_return: 0.005
+    break_reclaim_lookback_days: 8
+    break_below_pct: 0.01
+    breakdown_volume_max_anchor_ratio: 0.6
+    max_reclaim_days: 3
+    post_reclaim_max_sideways_days: 5
+    post_reclaim_range_max: 0.12

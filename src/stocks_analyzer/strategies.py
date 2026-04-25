@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import pandas as pd
 
-from .models import AppConfig, Type1Config, Type2Config, Type3Config, Type4Config, Type5Config
+from .models import AppConfig, Type1Config, Type2Config, Type3Config, Type4Config, Type5Config, Type6Config
 from .volume_top_breakout import VolumeTopBreakoutConfig, VolumeTopBreakoutEvent, detect_volume_top_breakout
 
 
@@ -13,6 +13,7 @@ VOLUME_TOP_BREAKOUT = "volume_top_breakout"
 VOLUME_TOP_FOLLOW_THROUGH = "volume_top_follow_through"
 PLATFORM_BREAKOUT = "platform_breakout"
 TREND_PULLBACK = "trend_pullback"
+DOUBLE_VOLUME_SUPPORT_REBOUND = "double_volume_support_rebound"
 
 STRATEGY_NAMES = (
     VOLUME_TOP_PRE_BREAKOUT,
@@ -20,6 +21,7 @@ STRATEGY_NAMES = (
     VOLUME_TOP_FOLLOW_THROUGH,
     PLATFORM_BREAKOUT,
     TREND_PULLBACK,
+    DOUBLE_VOLUME_SUPPORT_REBOUND,
 )
 
 
@@ -60,6 +62,10 @@ def evaluate_strategies(
         match = _apply_type5(history_df, symbol, name, config.type5)
         if match is not None:
             results.append(match)
+    if DOUBLE_VOLUME_SUPPORT_REBOUND in selected:
+        match = _apply_type6(history_df, symbol, name, config.type6)
+        if match is not None:
+            results.append(match)
 
     return results
 
@@ -87,6 +93,14 @@ def required_history_days(config: AppConfig, selected: Sequence[str]) -> int:
                 config.type5.recent_high_lookback_days + config.type5.high_pre_lookback_days + 1,
                 config.type5.ma20_touch_lookback_days + 1,
                 20,
+            )
+        )
+    if DOUBLE_VOLUME_SUPPORT_REBOUND in selected:
+        requirements.append(
+            max(
+                60,
+                config.type6.max_anchor_scan_days,
+                config.type6.min_anchor_age_days + config.type6.launch_confirm_days + config.type6.pullback_volume_split_min_days,
             )
         )
     return max(requirements)
@@ -324,6 +338,309 @@ def _apply_type5(history_df: pd.DataFrame, symbol: str, name: str, config: Type5
         ma20_touch_distance=ma20_touch["ma20_touch_distance"],
         distance_to_ma20=(float(latest["close"]) - float(latest["ma_20"])) / float(latest["ma_20"]),
     )
+
+
+def _apply_type6(history_df: pd.DataFrame, symbol: str, name: str, config: Type6Config) -> dict[str, object] | None:
+    if len(history_df) < max(60, config.min_anchor_age_days + config.launch_confirm_days + config.pullback_volume_split_min_days):
+        return None
+
+    latest_index = len(history_df) - 1
+    first_anchor_index = max(1, latest_index - config.max_anchor_scan_days + 1)
+    last_anchor_index = latest_index - config.min_anchor_age_days
+    if last_anchor_index < first_anchor_index:
+        return None
+
+    for anchor_index in range(last_anchor_index, first_anchor_index - 1, -1):
+        context = _build_type6_context(history_df, anchor_index, config)
+        if context is None:
+            continue
+
+        branch = _match_type6_break_reclaim(history_df, context, config)
+        if branch is None:
+            branch = _match_type6_support_hold(history_df, context, config)
+        if branch is None:
+            continue
+
+        return _build_type6_result(history_df, symbol, name, context, branch)
+
+    return None
+
+
+def _build_type6_context(history_df: pd.DataFrame, anchor_index: int, config: Type6Config) -> dict[str, object] | None:
+    if not _is_type6_anchor(history_df, anchor_index, config):
+        return None
+
+    latest_index = len(history_df) - 1
+    anchor = history_df.iloc[anchor_index]
+    anchor_close = float(anchor["close"])
+    anchor_volume = float(anchor["volume"])
+    if anchor_close <= 0 or anchor_volume <= 0:
+        return None
+
+    launch_end = min(latest_index, anchor_index + config.launch_confirm_days - 1)
+    if launch_end <= anchor_index:
+        return None
+    launch_window = history_df.iloc[anchor_index : launch_end + 1]
+    launch_high_offset = int(launch_window["high"].astype(float).to_numpy().argmax())
+    launch_high_index = anchor_index + launch_high_offset
+    launch_high_price = float(history_df.iloc[launch_high_index]["high"])
+    launch_return = launch_high_price / anchor_close - 1.0
+    if launch_return < config.launch_min_high_return:
+        return None
+
+    limit_up_like_count = _count_limit_up_like_days(history_df, anchor_index, launch_high_index, config.launch_limit_up_return)
+    if limit_up_like_count < config.launch_limit_up_min_count:
+        return None
+
+    peak_window = history_df.iloc[anchor_index : latest_index + 1]
+    peak_offset = int(peak_window["high"].astype(float).to_numpy().argmax())
+    peak_index = anchor_index + peak_offset
+    if peak_index <= anchor_index or peak_index >= latest_index:
+        return None
+    peak_price = float(history_df.iloc[peak_index]["high"])
+
+    pullback = history_df.iloc[peak_index + 1 : latest_index + 1].reset_index(drop=False)
+    if len(pullback) < config.pullback_volume_split_min_days:
+        return None
+
+    pullback_low_offset = int(pullback["low"].astype(float).to_numpy().argmin())
+    pullback_low_row = pullback.iloc[pullback_low_offset]
+    pullback_low_index = int(pullback_low_row["index"])
+    pullback_low_price = float(pullback_low_row["low"])
+    peak_to_pullback_drawdown = 1.0 - pullback_low_price / peak_price
+    if peak_to_pullback_drawdown < config.peak_to_pullback_min_drawdown_pct:
+        return None
+    if pullback_low_price > anchor_close * (1.0 + config.support_tolerance_pct):
+        return None
+    if pullback_low_index - peak_index > config.pullback_max_days:
+        return None
+
+    pullback_avg_volume = float(pullback["volume"].astype(float).mean())
+    pullback_volume_ratio_to_anchor = pullback_avg_volume / anchor_volume
+    if pullback_volume_ratio_to_anchor > config.pullback_volume_max_anchor_ratio:
+        return None
+
+    split_index = len(pullback) // 2
+    front_half = pullback.iloc[:split_index]
+    back_half = pullback.iloc[split_index:]
+    if front_half.empty or back_half.empty:
+        return None
+    front_half_avg_volume = float(front_half["volume"].astype(float).mean())
+    back_half_avg_volume = float(back_half["volume"].astype(float).mean())
+    if front_half_avg_volume <= 0:
+        return None
+    back_half_volume_ratio = back_half_avg_volume / front_half_avg_volume
+    if back_half_volume_ratio > config.pullback_back_half_volume_ratio:
+        return None
+
+    prev_volume = float(history_df.iloc[anchor_index - 1]["volume"])
+    anchor_volume_ratio_prev = anchor_volume / prev_volume if prev_volume > 0 else None
+    volume_ma20 = anchor.get("volume_ma_20")
+    anchor_volume_ratio_ma20 = None
+    if volume_ma20 is not None and pd.notna(volume_ma20) and float(volume_ma20) > 0:
+        anchor_volume_ratio_ma20 = anchor_volume / float(volume_ma20)
+
+    return {
+        "anchor_index": anchor_index,
+        "anchor_date": _row_date(anchor),
+        "anchor_close": anchor_close,
+        "anchor_volume": anchor_volume,
+        "support_price": anchor_close,
+        "anchor_volume_ratio_prev": anchor_volume_ratio_prev,
+        "anchor_volume_ratio_ma20": anchor_volume_ratio_ma20,
+        "launch_confirm_high_index": launch_high_index,
+        "launch_confirm_high_date": _row_date(history_df.iloc[launch_high_index]),
+        "launch_confirm_high_price": launch_high_price,
+        "launch_confirm_return_pct": launch_return,
+        "limit_up_like_count": limit_up_like_count,
+        "peak_index": peak_index,
+        "peak_date": _row_date(history_df.iloc[peak_index]),
+        "peak_price": peak_price,
+        "anchor_to_peak_return_pct": peak_price / anchor_close - 1.0,
+        "pullback_low_index": pullback_low_index,
+        "pullback_low_date": _row_date(history_df.iloc[pullback_low_index]),
+        "pullback_low_price": pullback_low_price,
+        "peak_to_pullback_drawdown_pct": peak_to_pullback_drawdown,
+        "pullback_volume_ratio_to_anchor": pullback_volume_ratio_to_anchor,
+        "pullback_front_half_avg_volume": front_half_avg_volume,
+        "pullback_back_half_avg_volume": back_half_avg_volume,
+        "pullback_back_half_volume_ratio": back_half_volume_ratio,
+    }
+
+
+def _is_type6_anchor(history_df: pd.DataFrame, index: int, config: Type6Config) -> bool:
+    if index <= 0:
+        return False
+    row = history_df.iloc[index]
+    previous = history_df.iloc[index - 1]
+    close_price = float(row["close"])
+    open_price = float(row["open"])
+    previous_close = float(previous["close"])
+    if close_price <= open_price or previous_close <= 0:
+        return False
+    if close_price / previous_close - 1.0 < config.anchor_min_return:
+        return False
+
+    volume = float(row["volume"])
+    previous_volume = float(previous["volume"])
+    prev_volume_ok = previous_volume > 0 and volume / previous_volume >= config.anchor_prev_volume_multiplier
+    ma_volume_ok = False
+    volume_ma20 = row.get("volume_ma_20")
+    if volume_ma20 is not None and pd.notna(volume_ma20) and float(volume_ma20) > 0:
+        ma_volume_ok = volume / float(volume_ma20) >= config.anchor_ma_volume_multiplier
+    return prev_volume_ok or ma_volume_ok
+
+
+def _count_limit_up_like_days(history_df: pd.DataFrame, start_index: int, end_index: int, min_return: float) -> int:
+    count = 0
+    for index in range(max(1, start_index), end_index + 1):
+        previous_close = float(history_df.iloc[index - 1]["close"])
+        if previous_close <= 0:
+            continue
+        close_price = float(history_df.iloc[index]["close"])
+        if close_price / previous_close - 1.0 >= min_return:
+            count += 1
+    return count
+
+
+def _match_type6_break_reclaim(
+    history_df: pd.DataFrame,
+    context: dict[str, object],
+    config: Type6Config,
+) -> dict[str, object] | None:
+    latest_index = len(history_df) - 1
+    latest = history_df.iloc[latest_index]
+    support_price = float(context["support_price"])
+    anchor_volume = float(context["anchor_volume"])
+    start_index = max(int(context["peak_index"]) + 1, latest_index - config.break_reclaim_lookback_days + 1)
+
+    for breakdown_index in range(latest_index, start_index - 1, -1):
+        breakdown = history_df.iloc[breakdown_index]
+        if float(breakdown["close"]) >= support_price * (1.0 - config.break_below_pct):
+            continue
+        breakdown_volume = float(breakdown["volume"])
+        breakdown_volume_ratio = breakdown_volume / anchor_volume if anchor_volume > 0 else float("inf")
+        if breakdown_volume_ratio > config.breakdown_volume_max_anchor_ratio:
+            continue
+
+        reclaim_deadline = min(latest_index, breakdown_index + config.max_reclaim_days)
+        for reclaim_index in range(breakdown_index + 1, reclaim_deadline + 1):
+            reclaim = history_df.iloc[reclaim_index]
+            if float(reclaim["close"]) < support_price:
+                continue
+            if not _is_bullish_or_positive(history_df, reclaim_index):
+                continue
+
+            post_reclaim_days = latest_index - reclaim_index
+            if post_reclaim_days > config.post_reclaim_max_sideways_days:
+                continue
+            post = history_df.iloc[reclaim_index : latest_index + 1]
+            if float(post["close"].astype(float).min()) < support_price * (1.0 - config.break_below_pct):
+                continue
+            post_low = float(post["low"].astype(float).min())
+            if post_low <= 0:
+                continue
+            post_range = float(post["high"].astype(float).max()) / post_low - 1.0
+            if post_range > config.post_reclaim_range_max:
+                continue
+            if float(latest["close"]) < support_price or not _is_bullish_or_positive(history_df, latest_index):
+                continue
+
+            return {
+                "pattern6_branch": "break_reclaim",
+                "breakdown_date": _row_date(breakdown),
+                "breakdown_volume_ratio_to_anchor": breakdown_volume_ratio,
+                "reclaim_date": _row_date(reclaim),
+                "days_to_reclaim": reclaim_index - breakdown_index,
+                "post_reclaim_days": post_reclaim_days,
+            }
+    return None
+
+
+def _match_type6_support_hold(
+    history_df: pd.DataFrame,
+    context: dict[str, object],
+    config: Type6Config,
+) -> dict[str, object] | None:
+    latest_index = len(history_df) - 1
+    latest = history_df.iloc[latest_index]
+    support_price = float(context["support_price"])
+    start_index = max(int(context["peak_index"]) + 1, latest_index - config.support_touch_lookback_days + 1)
+    recent = history_df.iloc[start_index : latest_index + 1].reset_index(drop=False)
+    if recent.empty:
+        return None
+
+    touched = recent[recent["low"].astype(float) <= support_price * (1.0 + config.support_tolerance_pct)]
+    if touched.empty:
+        return None
+    if float(recent["close"].astype(float).min()) < support_price * (1.0 - config.support_break_tolerance_pct):
+        return None
+    if float(latest["close"]) < support_price:
+        return None
+    if float(latest["close"]) <= float(latest["open"]):
+        return None
+    if latest_index <= 0:
+        return None
+    previous_close = float(history_df.iloc[latest_index - 1]["close"])
+    if previous_close <= 0 or float(latest["close"]) / previous_close - 1.0 < config.stable_min_return:
+        return None
+
+    touch_row = touched.iloc[-1]
+    return {
+        "pattern6_branch": "support_hold",
+        "support_touch_date": _row_date(history_df.iloc[int(touch_row["index"])]),
+    }
+
+
+def _build_type6_result(
+    history_df: pd.DataFrame,
+    symbol: str,
+    name: str,
+    context: dict[str, object],
+    branch: dict[str, object],
+) -> dict[str, object]:
+    if branch["pattern6_branch"] == "break_reclaim":
+        reason = (
+            f"double-volume break reclaim: anchor={context['anchor_date']} support={float(context['support_price']):.2f}, "
+            f"peak={float(context['peak_price']):.2f} on {context['peak_date']}, "
+            f"launch={float(context['launch_confirm_return_pct']):.2%}, limit_up_like={context['limit_up_like_count']}, "
+            f"broke={branch['breakdown_date']} vol_ratio={float(branch['breakdown_volume_ratio_to_anchor']):.2f}, "
+            f"reclaimed={branch['reclaim_date']} in {branch['days_to_reclaim']}d"
+        )
+    else:
+        reason = (
+            f"double-volume support hold: anchor={context['anchor_date']} close={float(context['anchor_close']):.2f}, "
+            f"peak={float(context['peak_price']):.2f} on {context['peak_date']}, "
+            f"launch={float(context['launch_confirm_return_pct']):.2%}, limit_up_like={context['limit_up_like_count']}, "
+            f"pullback={float(context['peak_to_pullback_drawdown_pct']):.2%}, "
+            f"vol_back/front={float(context['pullback_back_half_volume_ratio']):.2f}, "
+            f"touch={branch['support_touch_date']}"
+        )
+
+    extra = {key: value for key, value in context.items() if not key.endswith("_index") and key != "anchor_volume"}
+    extra.update(branch)
+    return _build_result(
+        history_df=history_df,
+        symbol=symbol,
+        name=name,
+        strategy_name=DOUBLE_VOLUME_SUPPORT_REBOUND,
+        reason=reason,
+        **extra,
+    )
+
+
+def _is_bullish_or_positive(history_df: pd.DataFrame, index: int) -> bool:
+    row = history_df.iloc[index]
+    if float(row["close"]) > float(row["open"]):
+        return True
+    if index <= 0:
+        return False
+    previous_close = float(history_df.iloc[index - 1]["close"])
+    return previous_close > 0 and float(row["close"]) > previous_close
+
+
+def _row_date(row: pd.Series) -> str:
+    return pd.Timestamp(row["trade_date"]).date().isoformat()
 
 
 def _find_recent_platform_breakout(history_df: pd.DataFrame, config: Type4Config) -> dict[str, object] | None:

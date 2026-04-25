@@ -79,6 +79,34 @@ class Type5Config:
 
 
 @dataclass(slots=True)
+class Type6Config:
+    max_anchor_scan_days: int
+    min_anchor_age_days: int
+    anchor_min_return: float
+    anchor_prev_volume_multiplier: float
+    anchor_ma_volume_multiplier: float
+    launch_confirm_days: int
+    launch_min_high_return: float
+    launch_limit_up_return: float
+    launch_limit_up_min_count: int
+    peak_to_pullback_min_drawdown_pct: float
+    pullback_max_days: int
+    pullback_volume_max_anchor_ratio: float
+    pullback_volume_split_min_days: int
+    pullback_back_half_volume_ratio: float
+    support_tolerance_pct: float
+    support_touch_lookback_days: int
+    support_break_tolerance_pct: float
+    stable_min_return: float
+    break_reclaim_lookback_days: int
+    break_below_pct: float
+    breakdown_volume_max_anchor_ratio: float
+    max_reclaim_days: int
+    post_reclaim_max_sideways_days: int
+    post_reclaim_range_max: float
+
+
+@dataclass(slots=True)
 class HistoryMomentumFilterConfig:
     lookback_days: int
     window_days: int
@@ -228,3 +256,4 @@ class AppConfig:
     type3: Type3Config
     type4: Type4Config
     type5: Type5Config
+    type6: Type6Config

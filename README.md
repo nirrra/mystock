@@ -182,21 +182,21 @@ python -m stocks_analyzer --project-root . update --start-date 20240101 --end-da
 
 作用：
 
-- 扫描本地日线缓存，识别 1 到 5 号模式
+- 扫描本地日线缓存，识别 1 到 6 号模式
 
 常用示例：
 
 ```bash
 python -m stocks_analyzer --project-root . pattern
 python -m stocks_analyzer --project-root . pattern --1
-python -m stocks_analyzer --project-root . pattern --2 --5
+python -m stocks_analyzer --project-root . pattern --2 --6
 python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10 --output reports/my_patterns.csv
 python -m stocks_analyzer --project-root . pattern --plot-all
 ```
 
 主要参数：
 
-- `--1 --2 --3 --4 --5`：只识别指定模式
+- `--1 --2 --3 --4 --5 --6`：只识别指定模式
 - `--as-of`：分析截止日期，格式 `YYYY-MM-DD`
 - `--limit`：终端展示上限
 - `--output`：自定义 CSV 输出路径
@@ -206,7 +206,7 @@ python -m stocks_analyzer --project-root . pattern --plot-all
 
 - `reports/patterns/patterns_all_YYYY-MM-DD.csv`
 
-#### 五个模式分别识别什么
+#### 六个模式分别识别什么
 
 ##### 模式1：量顶天立地预突破型
 
@@ -237,6 +237,66 @@ python -m stocks_analyzer --project-root . pattern --plot-all
 这类股票近期刚打出过一个短期高点，随后在最近两天内回踩到 `MA20` 附近甚至盘中短破，但收盘又重新站回 `MA20` 上方，同时 `MA20` 仍然保持在 `MA60` 之上。
 
 它更适合观察“强趋势里的深洗盘后，是否会重新转强”。
+
+#### 纯模式回测结果（数据截止 2026-04-24）
+
+以下结果来自 `backtest-patterns` 纯模式回测，统计口径为：`T` 日收盘命中模式，`T+1` 日开盘买入，固定持有 `5/10/20/40` 个交易日后按收盘价卖出。同一只股票、同一个模式在 5 个交易日内只统计第一次命中。该结果不叠加 `watchlist`、主线、TradingView、趋势池、MACD/量价等后续过滤条件。
+
+回测明细文件：
+
+- `reports/backtests/patterns/pattern_backtest_details_2026-04-24.csv`
+- `reports/backtests/patterns/pattern_backtest_summary_2026-04-24.csv`
+
+不同周期胜率汇总：
+
+| 模式 | 策略名 | 5日胜率 | 10日胜率 | 20日胜率 | 40日胜率 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | `volume_top_pre_breakout` | 46.49% | 46.08% | 47.77% | **49.07%** |
+| 2 | `volume_top_breakout` | 42.57% | 43.43% | **43.69%** | 42.70% |
+| 3 | `volume_top_follow_through` | 45.98% | 44.71% | **46.02%** | 45.22% |
+| 4 | `platform_breakout` | 38.24% | 37.62% | **41.01%** | 37.08% |
+| 5 | `trend_pullback` | **48.14%** | 48.07% | 46.35% | 45.01% |
+| 6 | `double_volume_support_rebound` | **47.80%** | 47.38% | 42.95% | 42.45% |
+
+综合排名：
+
+| 排名 | 模式 | 策略名 | 最佳周期胜率 | 综合判断 | 建议定位 |
+| ---: | --- | --- | ---: | --- | --- |
+| 1 | 模式5 | `trend_pullback` | **48.14%（5日）** | 样本数最大，5/10 日胜率都接近 48%，短周期稳定性最好 | 首选短线观察模式，重点看 5-10 日 |
+| 2 | 模式1 | `volume_top_pre_breakout` | **49.07%（40日）** | 纯模式里 40 日胜率最高，平均收益随持有期拉长改善 | 更适合 20-40 日前高预突破潜伏 |
+| 3 | 模式6 | `double_volume_support_rebound` | **47.80%（5日）** | 5/10 日表现接近模式5，但 20/40 日明显走弱 | 适合短周期反弹观察，不宜拉长持有 |
+| 4 | 模式3 | `volume_top_follow_through` | **46.02%（20日）** | 收益右尾存在，但胜率中等，稳定性不如模式1/5/6 | 作为突破后延续或回踩的补充观察 |
+| 5 | 模式2 | `volume_top_breakout` | **43.69%（20日）** | 刚突破后短线胜率偏低，5/10 日平均收益为负 | 不宜单独作为买点，需叠加过滤条件 |
+| 6 | 模式4 | `platform_breakout` | **41.01%（20日）** | 当前六类中最弱，5/10 日胜率和平均收益都偏差 | 暂时降级，只保留观察或重做规则 |
+
+| 模式 | 策略名 | 持有天数 | 样本数 | 胜率 | 平均收益 | 平均最大浮盈 | 平均最大回撤 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | `volume_top_pre_breakout` | 5 | 3650 | 46.49% | 0.44% | 6.25% | 4.56% |
+| 1 | `volume_top_pre_breakout` | 10 | 3618 | 46.08% | 0.76% | 9.09% | 6.15% |
+| 1 | `volume_top_pre_breakout` | 20 | 3582 | 47.77% | 1.40% | 12.95% | 8.15% |
+| 1 | `volume_top_pre_breakout` | 40 | 3436 | 49.07% | 2.83% | 18.44% | 10.36% |
+| 2 | `volume_top_breakout` | 5 | 1548 | 42.57% | -0.11% | 8.34% | 6.32% |
+| 2 | `volume_top_breakout` | 10 | 1529 | 43.43% | -0.11% | 11.41% | 8.11% |
+| 2 | `volume_top_breakout` | 20 | 1513 | 43.69% | 0.27% | 15.35% | 10.24% |
+| 2 | `volume_top_breakout` | 40 | 1438 | 42.70% | 1.58% | 21.60% | 12.86% |
+| 3 | `volume_top_follow_through` | 5 | 3521 | 45.98% | 0.37% | 6.96% | 4.98% |
+| 3 | `volume_top_follow_through` | 10 | 3489 | 44.71% | 0.48% | 9.84% | 6.69% |
+| 3 | `volume_top_follow_through` | 20 | 3446 | 46.02% | 1.34% | 13.92% | 8.83% |
+| 3 | `volume_top_follow_through` | 40 | 3273 | 45.22% | 2.87% | 20.49% | 11.49% |
+| 4 | `platform_breakout` | 5 | 2785 | 38.24% | -0.56% | 5.92% | 5.09% |
+| 4 | `platform_breakout` | 10 | 2783 | 37.62% | -0.89% | 8.31% | 7.15% |
+| 4 | `platform_breakout` | 20 | 2780 | 41.01% | 0.30% | 12.38% | 9.54% |
+| 4 | `platform_breakout` | 40 | 2686 | 37.08% | 0.46% | 18.42% | 12.14% |
+| 5 | `trend_pullback` | 5 | 10387 | 48.14% | 0.44% | 5.81% | 4.44% |
+| 5 | `trend_pullback` | 10 | 10357 | 48.07% | 0.83% | 8.77% | 6.34% |
+| 5 | `trend_pullback` | 20 | 10276 | 46.35% | 1.41% | 13.23% | 8.63% |
+| 5 | `trend_pullback` | 40 | 9729 | 45.01% | 2.52% | 19.16% | 11.73% |
+| 6 | `double_volume_support_rebound` | 5 | 2866 | 47.80% | 0.37% | 6.71% | 5.06% |
+| 6 | `double_volume_support_rebound` | 10 | 2845 | 47.38% | 0.55% | 9.78% | 7.07% |
+| 6 | `double_volume_support_rebound` | 20 | 2803 | 42.95% | 0.09% | 14.00% | 10.14% |
+| 6 | `double_volume_support_rebound` | 40 | 2709 | 42.45% | 1.78% | 20.51% | 13.57% |
+
+模式6在本次补充回测中已生成完整持有样本，短周期表现优于 20/40 日，内部最佳结果为 5 日胜率 `47.80%`。
 
 ### `plot`
 

@@ -5,6 +5,7 @@ import pandas as pd
 from stocks_analyzer.config import load_config
 from stocks_analyzer.indicators import add_indicators
 from stocks_analyzer.strategies import (
+    DOUBLE_VOLUME_SUPPORT_REBOUND,
     PLATFORM_BREAKOUT,
     TREND_PULLBACK,
     VOLUME_TOP_BREAKOUT,
@@ -162,6 +163,57 @@ def test_evaluate_trend_pullback_returns_match() -> None:
     assert result[0]["recent_high_date"] == pd.Timestamp(dataframe.iloc[len(prelude) + len(rising) + 4]["trade_date"]).date().isoformat()
 
 
+def test_evaluate_double_volume_support_rebound_support_hold_returns_match() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_pattern6_support_hold_frame()
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
+
+    assert [row["strategy_name"] for row in result] == [DOUBLE_VOLUME_SUPPORT_REBOUND]
+    assert result[0]["pattern6_branch"] == "support_hold"
+    assert result[0]["limit_up_like_count"] >= 2
+    assert result[0]["anchor_to_peak_return_pct"] >= 0.18
+    assert result[0]["pullback_back_half_volume_ratio"] <= 0.8
+
+
+def test_evaluate_double_volume_support_rebound_break_reclaim_returns_match() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_pattern6_break_reclaim_frame()
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
+
+    assert [row["strategy_name"] for row in result] == [DOUBLE_VOLUME_SUPPORT_REBOUND]
+    assert result[0]["pattern6_branch"] == "break_reclaim"
+    assert result[0]["breakdown_volume_ratio_to_anchor"] <= 0.6
+    assert result[0]["days_to_reclaim"] == 1
+
+
+def test_evaluate_double_volume_support_rebound_rejects_weak_launch_after_anchor() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_pattern6_support_hold_frame()
+    anchor_index = 55
+    for index in range(anchor_index + 1, anchor_index + 4):
+        dataframe.loc[index, "close"] = min(float(dataframe.loc[index, "close"]), 11.2)
+        dataframe.loc[index, "high"] = min(float(dataframe.loc[index, "high"]), 11.3)
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
+
+    assert result == []
+
+
+def test_evaluate_double_volume_support_rebound_rejects_high_volume_breakdown() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_pattern6_break_reclaim_frame()
+    breakdown_index = len(dataframe) - 4
+    dataframe.loc[breakdown_index, "volume"] = 700_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
+
+    assert result == []
+
+
 def test_evaluate_strategies_filters_out_stock_without_recent_5d_plus_10pct_history() -> None:
     config = _load_test_config()
     config.history_momentum_filter.lookback_days = 50
@@ -270,6 +322,72 @@ def _build_slow_volume_top_frame() -> pd.DataFrame:
     for index in range(22, len(dataframe)):
         dataframe.loc[index, "high"] = min(float(dataframe.loc[index, "high"]), 99.5)
     return dataframe
+
+
+def _build_pattern6_support_hold_frame() -> pd.DataFrame:
+    closes = [10.0] * 55 + [10.5, 11.5, 12.6, 12.8, 12.0, 11.3, 10.9, 10.65, 10.7, 10.85]
+    dataframe = _build_dataframe(closes)
+    anchor_index = 55
+    dataframe.loc[anchor_index, "volume"] = 1_000_000
+    dataframe.loc[anchor_index, "open"] = 10.0
+    dataframe.loc[anchor_index, "close"] = 10.5
+    dataframe.loc[anchor_index, "high"] = 10.65
+    dataframe.loc[anchor_index, "low"] = 9.95
+    _shape_pattern6_after_anchor(dataframe, anchor_index)
+    latest_index = len(dataframe) - 1
+    dataframe.loc[latest_index, "open"] = 10.65
+    dataframe.loc[latest_index, "close"] = 10.85
+    dataframe.loc[latest_index, "low"] = 10.48
+    dataframe.loc[latest_index, "high"] = 10.95
+    return dataframe
+
+
+def _build_pattern6_break_reclaim_frame() -> pd.DataFrame:
+    closes = [10.0] * 55 + [10.5, 11.5, 12.6, 12.8, 12.0, 11.0, 10.2, 10.65, 10.7, 10.9]
+    dataframe = _build_dataframe(closes)
+    anchor_index = 55
+    dataframe.loc[anchor_index, "volume"] = 1_000_000
+    dataframe.loc[anchor_index, "open"] = 10.0
+    dataframe.loc[anchor_index, "close"] = 10.5
+    dataframe.loc[anchor_index, "high"] = 10.65
+    dataframe.loc[anchor_index, "low"] = 9.95
+    _shape_pattern6_after_anchor(dataframe, anchor_index)
+    breakdown_index = len(dataframe) - 4
+    reclaim_index = len(dataframe) - 3
+    dataframe.loc[breakdown_index, "open"] = 10.6
+    dataframe.loc[breakdown_index, "close"] = 10.2
+    dataframe.loc[breakdown_index, "low"] = 10.1
+    dataframe.loc[breakdown_index, "high"] = 10.75
+    dataframe.loc[breakdown_index, "volume"] = 550_000
+    dataframe.loc[reclaim_index, "open"] = 10.3
+    dataframe.loc[reclaim_index, "close"] = 10.65
+    dataframe.loc[reclaim_index, "low"] = 10.3
+    dataframe.loc[reclaim_index, "high"] = 10.8
+    dataframe.loc[reclaim_index, "volume"] = 450_000
+    latest_index = len(dataframe) - 1
+    dataframe.loc[latest_index, "open"] = 10.65
+    dataframe.loc[latest_index, "close"] = 10.9
+    dataframe.loc[latest_index, "low"] = 10.62
+    dataframe.loc[latest_index, "high"] = 11.0
+    dataframe.loc[latest_index, "volume"] = 300_000
+    return dataframe
+
+
+def _shape_pattern6_after_anchor(dataframe: pd.DataFrame, anchor_index: int) -> None:
+    overrides = {
+        anchor_index + 1: {"open": 10.5, "close": 11.5, "high": 11.6, "low": 10.45, "volume": 900_000},
+        anchor_index + 2: {"open": 11.5, "close": 12.6, "high": 12.75, "low": 11.45, "volume": 850_000},
+        anchor_index + 3: {"open": 12.6, "close": 12.8, "high": 13.0, "low": 12.35, "volume": 800_000},
+        anchor_index + 4: {"open": 12.8, "close": 12.0, "high": 12.9, "low": 11.85, "volume": 700_000},
+        anchor_index + 5: {"open": 12.0, "close": 11.3, "high": 12.05, "low": 11.2, "volume": 650_000},
+        anchor_index + 6: {"open": 11.3, "close": 10.9, "high": 11.4, "low": 10.7, "volume": 500_000},
+        anchor_index + 7: {"open": 10.9, "close": 10.65, "high": 10.95, "low": 10.48, "volume": 420_000},
+        anchor_index + 8: {"open": 10.65, "close": 10.7, "high": 10.8, "low": 10.52, "volume": 350_000},
+        anchor_index + 9: {"open": 10.7, "close": 10.85, "high": 10.95, "low": 10.48, "volume": 300_000},
+    }
+    for index, values in overrides.items():
+        for column, value in values.items():
+            dataframe.loc[index, column] = value
 
 
 def _build_dataframe(closes: list[float]) -> pd.DataFrame:

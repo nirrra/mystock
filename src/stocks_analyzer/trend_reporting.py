@@ -260,6 +260,38 @@ def save_entry_backtest_reports(
     }
 
 
+def save_pattern_backtest_reports(
+    paths: ProjectPaths,
+    *,
+    report_date: date,
+    detail: pd.DataFrame,
+    summary: pd.DataFrame,
+    output: str | None = None,
+) -> dict[str, Path]:
+    target_dir = paths.reports_dir / "backtests" / "patterns"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    detail_path = Path(output) if output else target_dir / f"pattern_backtest_details_{report_date.isoformat()}.csv"
+    summary_path = target_dir / f"pattern_backtest_summary_{report_date.isoformat()}.csv"
+    json_path = target_dir / f"pattern_backtest_summary_{report_date.isoformat()}.json"
+
+    detail.to_csv(detail_path, index=False, encoding="utf-8-sig")
+    summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+    payload = {
+        "report_date": report_date.isoformat(),
+        "detail_rows": int(len(detail)),
+        "summary_rows": int(len(summary)),
+        "detail_path": str(detail_path),
+        "summary_path": str(summary_path),
+        "entry_note": detail["entry_note"].iloc[0] if not detail.empty and "entry_note" in detail.columns else None,
+    }
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "detail_path": detail_path,
+        "summary_path": summary_path,
+        "json_path": json_path,
+    }
+
+
 def save_portfolio_backtest_reports(
     paths: ProjectPaths,
     *,
