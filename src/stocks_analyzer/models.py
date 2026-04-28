@@ -25,9 +25,12 @@ class Type1Config:
     min_old_high_gap_days: int
     min_drawdown_pct: float
     peak_window_days: int
-    breakout_volume_lookback_days: int
-    breakout_volume_multiplier: float
+    breakout_volume_high_lookback_days: int
+    breakout_min_close_position: float
+    breakout_max_upper_shadow_pct: float
+    breakout_min_body_pct: float
     near_high_threshold_pct: float
+    pre_breakout_volume_ratio_max: float
     require_break_below_ma60: bool = True
 
 
@@ -36,8 +39,13 @@ class Type2Config:
     min_old_high_gap_days: int
     min_drawdown_pct: float
     peak_window_days: int
-    breakout_volume_lookback_days: int
-    breakout_volume_multiplier: float
+    breakout_volume_high_lookback_days: int
+    breakout_min_close_position: float
+    breakout_max_upper_shadow_pct: float
+    breakout_min_body_pct: float
+    post_breakout_max_days: int
+    post_breakout_max_high_extension_pct: float
+    post_breakout_ma20_break_tolerance_pct: float
     require_break_below_ma60: bool = True
 
 
@@ -46,10 +54,13 @@ class Type3Config:
     min_old_high_gap_days: int
     min_drawdown_pct: float
     peak_window_days: int
-    breakout_volume_lookback_days: int
-    breakout_volume_multiplier: float
+    breakout_volume_high_lookback_days: int
+    breakout_min_close_position: float
+    breakout_max_upper_shadow_pct: float
+    breakout_min_body_pct: float
     post_breakout_max_days: int
-    post_breakout_max_extension_pct: float
+    post_breakout_max_high_extension_pct: float
+    post_breakout_ma20_break_tolerance_pct: float
     require_break_below_ma60: bool = True
 
 
@@ -62,7 +73,15 @@ class Type4Config:
     platform_min_days: int
     platform_max_days: int
     platform_range_max: float
+    platform_volume_contraction_max: float
+    platform_range_contraction_max: float
+    platform_low_lift_min_pct: float
+    platform_large_bearish_body_min_pct: float
+    platform_large_bearish_volume_ratio_min: float
     breakout_volume_ratio_min: float
+    breakout_min_close_position: float
+    breakout_max_upper_shadow_pct: float
+    breakout_min_body_pct: float
     post_breakout_max_days: int
     post_breakout_max_distance_pct: float
 
@@ -76,6 +95,9 @@ class Type5Config:
     ma20_touch_abs_tolerance: float
     ma20_touch_pct_tolerance: float
     ma20_reclaim_min_pct: float
+    ma_slope_short_lookback_days: int
+    ma_slope_long_lookback_days: int
+    pullback_volume_contraction_max: float
 
 
 @dataclass(slots=True)
@@ -94,10 +116,12 @@ class Type6Config:
     pullback_volume_max_anchor_ratio: float
     pullback_volume_split_min_days: int
     pullback_back_half_volume_ratio: float
+    pullback_large_bearish_body_min_pct: float
+    pullback_large_bearish_volume_ratio_min: float
     support_tolerance_pct: float
+    support_close_range_pct: float
     support_touch_lookback_days: int
     support_break_tolerance_pct: float
-    stable_min_return: float
     break_reclaim_lookback_days: int
     break_below_pct: float
     breakdown_volume_max_anchor_ratio: float

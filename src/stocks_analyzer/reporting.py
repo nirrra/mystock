@@ -14,8 +14,26 @@ DISPLAY_COLUMNS = [
     "old_high_price",
     "distance_to_old_high_pct",
     "extension_above_old_high_pct",
+    "ma20_slope_short_pct",
+    "ma20_slope_long_pct",
+    "ma60_slope_short_pct",
+    "ma60_slope_long_pct",
+    "pullback_volume_contraction_ratio",
     "breakout_date",
     "breakout_volume_ratio",
+    "breakout_close_position",
+    "breakout_upper_shadow_pct",
+    "breakout_body_pct",
+    "breakout_turnover",
+    "breakout_turnover_state",
+    "post_breakout_max_high_extension_pct",
+    "platform_volume_contraction_ratio",
+    "platform_range_contraction_ratio",
+    "platform_low_lift_pct",
+    "platform_max_bearish_body_pct",
+    "platform_max_bearish_volume_ratio",
+    "pullback_max_bearish_body_pct",
+    "pullback_max_bearish_volume_ratio",
     "volume_ratio_20",
     "reason",
 ]
@@ -28,10 +46,36 @@ def format_report(dataframe: pd.DataFrame, limit: int) -> str:
     display = dataframe.copy()
     if "symbol" in display.columns:
         display["symbol"] = display["symbol"].map(_display_symbol)
-    for column in ("return_15d", "distance_to_old_high_pct", "extension_above_old_high_pct"):
+    for column in (
+        "return_15d",
+        "distance_to_old_high_pct",
+        "extension_above_old_high_pct",
+        "breakout_close_position",
+        "breakout_upper_shadow_pct",
+        "breakout_body_pct",
+        "post_breakout_max_high_extension_pct",
+        "ma20_slope_short_pct",
+        "ma20_slope_long_pct",
+        "ma60_slope_short_pct",
+        "ma60_slope_long_pct",
+        "platform_low_lift_pct",
+        "platform_max_bearish_body_pct",
+        "pullback_max_bearish_body_pct",
+    ):
         if column in display.columns:
             display[column] = display[column].map(lambda value: f"{value:.2%}" if pd.notna(value) else "nan")
-    for column in ("close", "old_high_price", "volume_ratio_20", "breakout_volume_ratio"):
+    for column in (
+        "close",
+        "old_high_price",
+        "volume_ratio_20",
+        "breakout_volume_ratio",
+        "breakout_turnover",
+        "pullback_volume_contraction_ratio",
+        "platform_volume_contraction_ratio",
+        "platform_range_contraction_ratio",
+        "platform_max_bearish_volume_ratio",
+        "pullback_max_bearish_volume_ratio",
+    ):
         if column in display.columns:
             display[column] = display[column].map(lambda value: f"{value:.2f}" if pd.notna(value) else "nan")
 

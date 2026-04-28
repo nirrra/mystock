@@ -21,6 +21,7 @@ def add_indicators(dataframe: pd.DataFrame) -> pd.DataFrame:
 
     df["close_max_20"] = close.rolling(20).max()
     df["is_20d_high"] = close >= df["close_max_20"]
+    df["volume_ma_5"] = volume.rolling(5).mean()
     df["volume_ma_20"] = volume.rolling(20).mean()
     df["amount_ma_20"] = amount.rolling(20).mean()
 

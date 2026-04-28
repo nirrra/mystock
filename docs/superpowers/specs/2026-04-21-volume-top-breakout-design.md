@@ -42,10 +42,14 @@ A breakout day is valid only when all of the following are true:
 
 - The day is a bullish candle: `close > open`.
 - The day high is above the selected old-high price.
-- The day volume is at least `3x` the average volume of the previous `20` trading days.
-- The `20`-day average volume used above excludes the breakout day itself.
+- The day volume is greater than the highest volume of the previous `90` trading days.
+- The `90`-day volume-high window excludes the breakout day itself.
+- The candle close position is at least `0.60`: `(close - low) / (high - low) >= 0.60`.
+- The upper shadow is no more than `0.35` of the full candle range.
+- The real body is at least `0.25` of the full candle range.
+- Turnover is exported as an auxiliary risk field, but is not a hard filter in this phase.
 
-No breakout-day close-quality rule is imposed. The breakout may close back below the old-high price and still count as a valid breakout event if the above conditions are satisfied.
+The breakout day must show acceptable candle quality. It may still close below the old-high price and count as a valid breakout event if the candle-quality, volume, and high-crossing rules are all satisfied.
 
 ## New Pattern Definitions
 
@@ -58,57 +62,56 @@ Hard conditions:
 - A valid mother-pattern old high exists.
 - No valid breakout day has occurred after that old high and up to the current analysis day.
 - Current close is below or equal to the old-high price.
-- Current close is within `8%` of the old-high price.
+- Current close is within `5%` of the old-high price.
 
 Interpretation:
 
 - This is the "临门一脚" setup.
 - The stock is still under resistance, but the distance is tight enough for next-day monitoring.
 
-### Pattern2: Breakout Confirmation
+### Pattern2: Price Above Old High
 
-Purpose: find stocks whose latest completed daily bar is itself the valid breakout day.
-
-Hard conditions:
-
-- A valid mother-pattern old high exists.
-- The latest completed daily bar satisfies the full breakout-day definition against that old high.
-
-Interpretation:
-
-- This is the first completed-bar confirmation that `量顶天立地` has actually triggered.
-- It is a next-day follow-up candidate, not a same-day chase signal.
-
-### Pattern3: Post-Breakout Follow-Through
-
-Purpose: find stocks within `1` to `8` trading days after a valid breakout that remain in a reasonable next-day ambush zone.
+Purpose: find stocks that have already produced a valid volume breakout and whose current completed daily bar closes above the old-high price.
 
 Hard conditions:
 
 - A valid mother-pattern old high exists.
 - A valid breakout day exists after that old high.
-- The current analysis day is `1` to `8` trading days after the breakout day.
-- Current close is no more than `10%` above the old-high price.
-
-Pattern3 includes two accepted sub-cases:
-
-1. Direct continuation:
-   The stock continues higher after breakout, but current close is still within the allowed `10%` extension limit above the old-high price.
-2. MA20 pullback recovery:
-   The stock may intraday break below `MA20`, but the current close must recover back above `MA20`.
+- The current analysis day is `1` to `10` trading days after the breakout day.
+- Current close is above the old-high price.
+- From the breakout day through the current analysis day, every close is at or above `MA20 * 0.98`.
 
 Interpretation:
 
-- This pattern covers both immediate follow-through and controlled pullback re-entry.
-- The old-high price, not the breakout-day close, is the reference level for the `10%` extension cap.
+- This is the stronger post-breakout state: price is already above the prior resistance while still respecting the MA20 floor.
+- It is a next-day follow-up candidate, not a same-day chase signal.
+
+### Pattern3: Pullback Below Old High Above MA20
+
+Purpose: find stocks within `1` to `10` trading days after a valid breakout that remain in a reasonable next-day ambush zone.
+
+Hard conditions:
+
+- A valid mother-pattern old high exists.
+- A valid breakout day exists after that old high.
+- The current analysis day is `1` to `10` trading days after the breakout day.
+- Current close is below the old-high price.
+- Current close is at or above `MA20 * 0.98`.
+- From the breakout day through the current analysis day, every close is at or above `MA20 * 0.98`.
+- Current-day volume is below the current `5`-day average volume.
+
+Interpretation:
+
+- This pattern covers a controlled, shrinking-volume pullback after the valid volume breakout.
+- The old-high price and MA20 floor define the active observation zone.
 
 ## Pattern Number Migration
 
 The visible pattern numbering should change as follows:
 
 - new `pattern1` = `量顶天立地` pre-breakout watch
-- new `pattern2` = `量顶天立地` breakout confirmation
-- new `pattern3` = `量顶天立地` post-breakout follow-through
+- new `pattern2` = `量顶天立地` post-breakout price above old high
+- new `pattern3` = `量顶天立地` shrinking-volume pullback above MA20 floor
 - old `pattern2` becomes new `pattern4`
 - old `pattern3` becomes new `pattern5`
 - old `pattern4` becomes new `pattern6`
@@ -121,9 +124,9 @@ The system should evaluate the shared mother-pattern structure first, then class
 
 Expected precedence:
 
-- If the latest bar is a valid breakout day, classify as `pattern2`.
-- Else if a valid breakout day exists within the prior `1-8` trading days and the stock is still in range, classify as `pattern3`.
-- Else if no breakout has happened yet and price is within `8%` below the old high, classify as `pattern1`.
+- If a valid breakout exists within the prior `1-10` trading days and current close is above the old-high price while the MA20 floor has held, classify as `pattern2`.
+- Else if a valid breakout exists within the prior `1-10` trading days, current close is below the old high but above `MA20 * 0.98`, and current-day volume is below the current `5`-day average volume, classify as `pattern3`.
+- Else if no breakout has happened yet and price is within `5%` below the old high, classify as `pattern1`.
 
 This keeps the three patterns mutually understandable and avoids duplicate labeling for the same lifecycle stage.
 
@@ -138,7 +141,9 @@ Each matched row should preserve the fields needed for review and plotting:
 - current close
 - distance to old high
 - current extension above old high when applicable
-- breakout-day volume ratio versus the prior `20`-day average
+- breakout-day volume ratio versus the prior `90`-trading-day volume high
+- breakout-day close position, upper-shadow ratio, real-body ratio
+- breakout-day turnover and turnover state
 - pattern reason string describing the matched stage
 
 The output should make it obvious which historical peak was chosen and whether the stock is pre-breakout, on-breakout, or post-breakout.
@@ -147,7 +152,7 @@ The output should make it obvious which historical peak was chosen and whether t
 
 - No intraday confirmation logic
 - No scoring model for bottom quality
-- No additional close-quality constraint on the breakout day
+- No turnover hard filter on the breakout day
 - No requirement that the old high be the absolute highest price in a broader long-term window
 - No redesign of unrelated trend, MACD, ATR, or watchlist ranking logic in this phase
 
@@ -167,11 +172,12 @@ At minimum, tests should cover:
 - peaks that do not have `60` trading days of separation are rejected
 - peaks without at least `10%` drawdown are rejected
 - peaks without an intervening drop below `MA60` are rejected
-- breakout day requires bullish candle, high above old high, and `3x` prior-20-day average volume
-- `pattern1` matches near-old-high candidates within `8%` below resistance
-- `pattern2` matches only when the latest bar is the valid breakout day
-- `pattern3` matches only within `1-8` bars after breakout and rejects extensions above `10%`
-- `pattern3` accepts MA20 intraday breaks only when the close recovers above `MA20`
+- breakout day requires bullish candle, high above old high, a volume high versus the prior `90` trading days, and acceptable candle quality
+- `pattern1` matches near-old-high candidates within `5%` below resistance
+- `pattern2` matches only within `1-10` bars after breakout when current close is above the old high and all post-breakout closes hold above `MA20 * 0.98`
+- `pattern3` matches only within `1-10` bars after breakout when current close is below the old high but above `MA20 * 0.98`
+- `pattern3` rejects any post-breakout close below `MA20 * 0.98`
+- `pattern3` rejects pullbacks whose current-day volume is not below the current `5`-day average volume
 - numbering, CLI selection, and report labels reflect the new `1-6` order
 
 ## Open Assumptions Resolved
@@ -183,6 +189,6 @@ The following design decisions are fixed for implementation unless later changed
 - old high is the most recent qualifying peak, not the highest historical high
 - breakout uses day high crossing the old-high price
 - breakout candle must be bullish
-- breakout volume uses prior-20-day average volume, excluding the breakout day
-- `pattern3` uses old-high price as the extension reference
-- `pattern3` includes both direct continuation and MA20 pullback recovery
+- breakout volume must exceed the prior-90-trading-day volume high, excluding the breakout day
+- `pattern2` uses the old-high price as the above-resistance reference
+- `pattern3` uses the old-high price and `MA20 * 0.98` as its pullback zone

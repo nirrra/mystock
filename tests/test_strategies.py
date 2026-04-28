@@ -36,14 +36,95 @@ def test_evaluate_volume_top_pre_breakout_allows_equal_high_after_old_high() -> 
     assert [row["strategy_name"] for row in result] == [VOLUME_TOP_PRE_BREAKOUT]
 
 
-def test_evaluate_volume_top_breakout_returns_match() -> None:
+def test_evaluate_volume_top_pre_breakout_rejects_large_volume_below_old_high() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[96.0, 97.0, 98.0])
+    latest_index = len(dataframe) - 1
+    dataframe.loc[latest_index, "volume"] = 1_000_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_PRE_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_volume_top_breakout_rejects_breakout_day_before_followup_window() -> None:
     config = _load_test_config()
 
     dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0], breakout_offset=0)
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_BREAKOUT])
 
+    assert result == []
+
+
+def test_evaluate_volume_top_breakout_returns_match() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0, 104.0], breakout_offset=1)
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_BREAKOUT])
+
     assert [row["strategy_name"] for row in result] == [VOLUME_TOP_BREAKOUT]
-    assert result[0]["breakout_date"] == pd.Timestamp(dataframe.iloc[-1]["trade_date"]).date().isoformat()
+    assert result[0]["breakout_date"] == pd.Timestamp(dataframe.iloc[-2]["trade_date"]).date().isoformat()
+    assert result[0]["days_after_breakout"] == 1
+    assert result[0]["breakout_close_position"] >= 0.60
+    assert result[0]["breakout_upper_shadow_pct"] <= 0.35
+    assert result[0]["breakout_body_pct"] >= 0.25
+    assert result[0]["breakout_turnover"] == 1.0
+    assert result[0]["breakout_turnover_state"] == "normal"
+    assert result[0]["post_breakout_max_high_extension_pct"] <= config.type2.post_breakout_max_high_extension_pct
+
+
+def test_evaluate_volume_top_breakout_rejects_after_time_window() -> None:
+    config = _load_test_config()
+    config.type2.post_breakout_max_days = 10
+
+    dataframe = _build_volume_top_frame(
+        final_closes=[92.0, 94.0, 95.0, 102.0, 103.0, 103.5, 104.0, 104.5, 105.0, 105.5, 106.0, 106.5, 107.0, 107.5],
+        breakout_offset=11,
+    )
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_volume_top_breakout_rejects_if_post_breakout_high_is_overextended() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0, 104.0, 105.0], breakout_offset=2)
+    breakout_index = len(dataframe) - 1 - 2
+    dataframe.loc[breakout_index + 1, "high"] = float(dataframe.loc[breakout_index, "close"]) * 1.11
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_volume_top_breakout_rejects_if_volume_does_not_make_lookback_high() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0], breakout_offset=0)
+    breakout_index = len(dataframe) - 1
+    prior_high = float(dataframe.iloc[breakout_index - config.type2.breakout_volume_high_lookback_days : breakout_index]["volume"].max())
+    dataframe.loc[breakout_index, "volume"] = prior_high
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_volume_top_breakout_rejects_poor_breakout_candle_quality() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0], breakout_offset=0)
+    breakout_index = len(dataframe) - 1
+    dataframe.loc[breakout_index, "open"] = 99.0
+    dataframe.loc[breakout_index, "close"] = 102.0
+    dataframe.loc[breakout_index, "high"] = 120.0
+    dataframe.loc[breakout_index, "low"] = 98.0
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [VOLUME_TOP_BREAKOUT])
+
+    assert result == []
 
 
 def test_evaluate_volume_top_breakout_rejects_if_earlier_higher_high_exists_before_breakout() -> None:
@@ -70,11 +151,91 @@ def test_evaluate_volume_top_follow_through_returns_match() -> None:
     enriched.loc[len(enriched) - 1, "low"] = float(enriched.iloc[-1]["ma_20"]) - 0.2
     enriched.loc[len(enriched) - 1, "close"] = float(enriched.iloc[-1]["ma_20"]) + 0.3
     enriched.loc[len(enriched) - 1, "high"] = max(float(enriched.iloc[-1]["high"]), float(enriched.iloc[-1]["close"]) * 1.01)
+    enriched.loc[len(enriched) - 1, "volume"] = float(enriched.iloc[-1]["volume_ma_5"]) * 0.8
 
     result = evaluate_strategies(enriched, _instrument(), config, [VOLUME_TOP_FOLLOW_THROUGH])
 
     assert [row["strategy_name"] for row in result] == [VOLUME_TOP_FOLLOW_THROUGH]
     assert result[0]["days_after_breakout"] == 3
+    assert result[0]["post_breakout_max_high_extension_pct"] <= config.type3.post_breakout_max_high_extension_pct
+
+
+def test_evaluate_volume_top_follow_through_rejects_after_time_window() -> None:
+    config = _load_test_config()
+    config.type3.post_breakout_max_days = 10
+
+    dataframe = _build_volume_top_frame(
+        final_closes=[
+            92.0,
+            94.0,
+            95.0,
+            102.0,
+            99.2,
+            99.1,
+            99.0,
+            98.9,
+            98.8,
+            98.7,
+            98.6,
+            98.5,
+            98.4,
+            98.3,
+            98.2,
+        ],
+        breakout_offset=11,
+    )
+    enriched = add_indicators(dataframe)
+    enriched.loc[len(enriched) - 1, "volume"] = float(enriched.iloc[-1]["volume_ma_5"]) * 0.8
+
+    result = evaluate_strategies(enriched, _instrument(), config, [VOLUME_TOP_FOLLOW_THROUGH])
+
+    assert result == []
+
+
+def test_evaluate_volume_top_follow_through_rejects_if_post_breakout_high_is_overextended() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0, 99.0, 98.5, 99.0], breakout_offset=3)
+    enriched = add_indicators(dataframe)
+    breakout_index = len(enriched) - 1 - 3
+    enriched.loc[breakout_index + 1, "high"] = float(enriched.loc[breakout_index, "close"]) * 1.11
+    enriched.loc[len(enriched) - 1, "low"] = float(enriched.iloc[-1]["ma_20"]) - 0.2
+    enriched.loc[len(enriched) - 1, "close"] = float(enriched.iloc[-1]["ma_20"]) + 0.3
+    enriched.loc[len(enriched) - 1, "volume"] = float(enriched.iloc[-1]["volume_ma_5"]) * 0.8
+
+    result = evaluate_strategies(enriched, _instrument(), config, [VOLUME_TOP_FOLLOW_THROUGH])
+
+    assert result == []
+
+
+def test_evaluate_volume_top_follow_through_rejects_if_close_breaks_ma20_floor_after_breakout() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0, 99.0, 98.5, 99.0], breakout_offset=3)
+    enriched = add_indicators(dataframe)
+    breakout_index = len(enriched) - 1 - 3
+    break_index = breakout_index + 1
+    enriched.loc[break_index, "close"] = float(enriched.loc[break_index, "ma_20"]) * 0.97
+    enriched.loc[len(enriched) - 1, "close"] = float(enriched.iloc[-1]["ma_20"]) * 1.01
+
+    result = evaluate_strategies(enriched, _instrument(), config, [VOLUME_TOP_FOLLOW_THROUGH])
+
+    assert result == []
+
+
+def test_evaluate_volume_top_follow_through_rejects_if_pullback_volume_is_not_contracting() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_volume_top_frame(final_closes=[92.0, 94.0, 95.0, 102.0, 104.0, 103.5, 105.0], breakout_offset=3)
+    enriched = add_indicators(dataframe)
+    enriched.loc[len(enriched) - 1, "low"] = float(enriched.iloc[-1]["ma_20"]) - 0.2
+    enriched.loc[len(enriched) - 1, "close"] = float(enriched.iloc[-1]["ma_20"]) + 0.3
+    enriched.loc[len(enriched) - 1, "high"] = max(float(enriched.iloc[-1]["high"]), float(enriched.iloc[-1]["close"]) * 1.01)
+    enriched.loc[len(enriched) - 1, "volume"] = float(enriched.iloc[-1]["volume_ma_5"]) * 1.05
+
+    result = evaluate_strategies(enriched, _instrument(), config, [VOLUME_TOP_FOLLOW_THROUGH])
+
+    assert result == []
 
 
 def test_evaluate_volume_top_follow_through_rejects_if_earlier_higher_high_exists_before_breakout() -> None:
@@ -96,71 +257,169 @@ def test_evaluate_volume_top_follow_through_rejects_if_earlier_higher_high_exist
 
 def test_evaluate_platform_breakout_returns_match() -> None:
     config = _load_test_config()
+    _force_type4_20_day_platform(config)
 
-    prelude = [40.0] * 40
-    first_rise = [50.0, 52.0, 54.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 69.0, 70.0, 71.0, 72.0, 73.0]
-    transition = [72.5, 72.0]
-    platform = [
-        71.2,
-        70.8,
-        71.5,
-        71.0,
-        70.9,
-        71.4,
-        71.1,
-        70.7,
-        71.3,
-        71.0,
-        70.8,
-        71.2,
-        71.0,
-        70.9,
-        71.4,
-        71.1,
-        70.8,
-        71.2,
-        71.0,
-        71.3,
-    ]
-    breakout_and_follow = [74.0, 75.0, 74.6]
-    closes = prelude + first_rise + transition + platform + breakout_and_follow
-    dataframe = _build_dataframe(closes)
-    breakout_index = len(prelude) + len(first_rise) + len(transition) + len(platform)
-    dataframe.loc[breakout_index, "high"] = 74.8
-    dataframe.loc[breakout_index, "close"] = 74.0
-    dataframe.loc[breakout_index, "volume"] = 3_200_000
+    dataframe, _, _ = _build_platform_breakout_frame()
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
 
     assert [row["strategy_name"] for row in result] == [PLATFORM_BREAKOUT]
     assert 20 <= result[0]["platform_window_days"] <= 30
     assert 1 <= result[0]["transition_days"] <= 3
+    assert result[0]["breakout_close_position"] >= 0.60
+    assert result[0]["breakout_upper_shadow_pct"] <= 0.35
+    assert result[0]["breakout_body_pct"] >= 0.25
+    assert result[0]["breakout_turnover"] == 1.0
+    assert result[0]["breakout_turnover_state"] == "normal"
+    assert result[0]["platform_volume_contraction_ratio"] <= config.type4.platform_volume_contraction_max
+    assert result[0]["platform_range_contraction_ratio"] <= config.type4.platform_range_contraction_max
+    assert result[0]["platform_low_lift_pct"] >= config.type4.platform_low_lift_min_pct
+
+
+def test_evaluate_platform_breakout_rejects_without_platform_volume_contraction() -> None:
+    config = _load_test_config()
+    _force_type4_20_day_platform(config)
+
+    dataframe, platform_start, breakout_index = _build_platform_breakout_frame()
+    split_index = platform_start + (breakout_index - platform_start) // 2
+    dataframe.loc[split_index : breakout_index - 1, "volume"] = 900_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_platform_breakout_rejects_without_range_contraction() -> None:
+    config = _load_test_config()
+    _force_type4_20_day_platform(config)
+
+    dataframe, platform_start, breakout_index = _build_platform_breakout_frame()
+    split_index = platform_start + (breakout_index - platform_start) // 2
+    for index in range(split_index, breakout_index):
+        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 2.0
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_platform_breakout_rejects_without_low_lift() -> None:
+    config = _load_test_config()
+    _force_type4_20_day_platform(config)
+
+    dataframe, platform_start, breakout_index = _build_platform_breakout_frame()
+    split_index = platform_start + (breakout_index - platform_start) // 2
+    front_low = float(dataframe.loc[platform_start : split_index - 1, "low"].min())
+    for index in range(split_index, breakout_index):
+        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 0.05
+    dataframe.loc[split_index, "low"] = front_low - 0.001
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_platform_breakout_rejects_large_bearish_volume_candle_inside_platform() -> None:
+    config = _load_test_config()
+    _force_type4_20_day_platform(config)
+
+    dataframe, platform_start, _ = _build_platform_breakout_frame()
+    large_bearish_index = platform_start + 2
+    dataframe.loc[large_bearish_index, "open"] = 72.0
+    dataframe.loc[large_bearish_index, "close"] = 68.8
+    dataframe.loc[large_bearish_index, "high"] = 72.2
+    dataframe.loc[large_bearish_index, "low"] = 68.7
+    dataframe.loc[large_bearish_index, "volume"] = 2_000_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+
+    assert result == []
+
+
+def test_evaluate_platform_breakout_rejects_poor_breakout_candle_quality() -> None:
+    config = _load_test_config()
+    _force_type4_20_day_platform(config)
+
+    dataframe, _, breakout_index = _build_platform_breakout_frame()
+    dataframe.loc[breakout_index, "open"] = 72.0
+    dataframe.loc[breakout_index, "close"] = 74.0
+    dataframe.loc[breakout_index, "high"] = 82.0
+    dataframe.loc[breakout_index, "low"] = 71.5
+    dataframe.loc[breakout_index, "volume"] = 3_200_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+
+    assert result == []
 
 
 def test_evaluate_trend_pullback_returns_match() -> None:
     config = _load_test_config()
 
-    prelude = [40.0] * 30
-    rising = list(pd.Series(range(50, 111)).astype(float))
-    recent = [110.5, 111.0, 111.5, 112.0, 113.0, 112.5, 112.0, 108.0, 107.8, 108.6]
-    closes = prelude + rising + recent
-    dataframe = _build_dataframe(closes)
-    touch_index = len(dataframe) - 2
-    enriched = add_indicators(dataframe)
-    ma20 = float(enriched.iloc[touch_index]["ma_20"])
-    reclaim_close = ma20 * 1.012
-    latest_close = ma20 * 1.02
-    dataframe.loc[touch_index, "low"] = ma20 - 0.2
-    dataframe.loc[touch_index, "close"] = reclaim_close
-    dataframe.loc[touch_index, "high"] = max(float(dataframe.loc[touch_index, "high"]), reclaim_close + 0.4)
-    dataframe.loc[len(dataframe) - 1, "close"] = latest_close
-    dataframe.loc[len(dataframe) - 1, "low"] = min(float(dataframe.loc[len(dataframe) - 1, "low"]), ma20 + 0.2)
-    dataframe.loc[len(dataframe) - 1, "high"] = max(float(dataframe.loc[len(dataframe) - 1, "high"]), latest_close + 0.3)
+    dataframe = _build_trend_pullback_frame()
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [TREND_PULLBACK])
 
     assert [row["strategy_name"] for row in result] == [TREND_PULLBACK]
-    assert result[0]["recent_high_date"] == pd.Timestamp(dataframe.iloc[len(prelude) + len(rising) + 4]["trade_date"]).date().isoformat()
+    assert result[0]["recent_high_date"] == pd.Timestamp(dataframe.iloc[-6]["trade_date"]).date().isoformat()
+    assert result[0]["ma20_slope_short_pct"] > 0
+    assert result[0]["ma20_slope_long_pct"] > 0
+    assert result[0]["ma60_slope_short_pct"] > 0
+    assert result[0]["ma60_slope_long_pct"] > 0
+    assert result[0]["pullback_volume_contraction_ratio"] <= config.type5.pullback_volume_contraction_max
+
+
+def test_evaluate_trend_pullback_rejects_if_ma20_not_above_short_and_long_slope_refs() -> None:
+    config = _load_test_config()
+
+    enriched = add_indicators(_build_trend_pullback_frame())
+    latest_index = len(enriched) - 1
+    enriched.loc[latest_index, "ma_20"] = min(
+        float(enriched.loc[latest_index - 1, "ma_20"]),
+        float(enriched.loc[latest_index - 10, "ma_20"]),
+    )
+
+    result = evaluate_strategies(enriched, _instrument(), config, [TREND_PULLBACK])
+
+    assert result == []
+
+
+def test_evaluate_trend_pullback_rejects_if_ma60_not_above_short_and_long_slope_refs() -> None:
+    config = _load_test_config()
+
+    enriched = add_indicators(_build_trend_pullback_frame())
+    latest_index = len(enriched) - 1
+    enriched.loc[latest_index, "ma_60"] = min(
+        float(enriched.loc[latest_index - 1, "ma_60"]),
+        float(enriched.loc[latest_index - 10, "ma_60"]),
+    )
+
+    result = evaluate_strategies(enriched, _instrument(), config, [TREND_PULLBACK])
+
+    assert result == []
+
+
+def test_evaluate_trend_pullback_rejects_without_volume_contraction() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_trend_pullback_frame()
+    start_index = len(dataframe) - 5
+    dataframe.loc[start_index:, "volume"] = 1_200_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [TREND_PULLBACK])
+
+    assert result == []
+
+
+def test_evaluate_trend_pullback_allows_rebound_volume_after_contracting_touch() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_trend_pullback_frame()
+    latest_index = len(dataframe) - 1
+    dataframe.loc[latest_index, "volume"] = 1_200_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [TREND_PULLBACK])
+
+    assert [row["strategy_name"] for row in result] == [TREND_PULLBACK]
 
 
 def test_evaluate_double_volume_support_rebound_support_hold_returns_match() -> None:
@@ -174,6 +433,9 @@ def test_evaluate_double_volume_support_rebound_support_hold_returns_match() -> 
     assert result[0]["limit_up_like_count"] >= 2
     assert result[0]["anchor_to_peak_return_pct"] >= 0.18
     assert result[0]["pullback_back_half_volume_ratio"] <= 0.8
+    assert result[0]["pullback_max_bearish_body_pct"] < config.type6.pullback_large_bearish_body_min_pct or (
+        result[0]["pullback_max_bearish_volume_ratio"] < config.type6.pullback_large_bearish_volume_ratio_min
+    )
 
 
 def test_evaluate_double_volume_support_rebound_break_reclaim_returns_match() -> None:
@@ -208,6 +470,54 @@ def test_evaluate_double_volume_support_rebound_rejects_high_volume_breakdown() 
     dataframe = _build_pattern6_break_reclaim_frame()
     breakdown_index = len(dataframe) - 4
     dataframe.loc[breakdown_index, "volume"] = 700_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
+
+    assert result == []
+
+
+def test_evaluate_double_volume_support_rebound_rejects_pullback_distribution_candle() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_pattern6_support_hold_frame()
+    large_bearish_index = 59
+    dataframe.loc[large_bearish_index, "open"] = 12.8
+    dataframe.loc[large_bearish_index, "close"] = 12.0
+    dataframe.loc[large_bearish_index, "high"] = 12.9
+    dataframe.loc[large_bearish_index, "low"] = 11.85
+    dataframe.loc[large_bearish_index, "volume"] = 900_000
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
+
+    assert result == []
+
+
+def test_evaluate_double_volume_support_rebound_allows_non_bullish_query_day() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_pattern6_support_hold_frame()
+    latest_index = len(dataframe) - 1
+    previous_index = latest_index - 1
+    dataframe.loc[previous_index, "close"] = 10.78
+    dataframe.loc[previous_index, "high"] = 10.85
+    dataframe.loc[latest_index, "open"] = 10.80
+    dataframe.loc[latest_index, "close"] = 10.74
+    dataframe.loc[latest_index, "low"] = 10.48
+    dataframe.loc[latest_index, "high"] = 10.82
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
+
+    assert [row["strategy_name"] for row in result] == [DOUBLE_VOLUME_SUPPORT_REBOUND]
+    assert result[0]["pattern6_branch"] == "support_hold"
+
+
+def test_evaluate_double_volume_support_rebound_rejects_close_outside_support_range_after_pullback_low() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_pattern6_support_hold_frame()
+    latest_index = len(dataframe) - 1
+    dataframe.loc[latest_index, "close"] = 10.90
+    dataframe.loc[latest_index, "high"] = 10.95
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
 
@@ -253,19 +563,30 @@ def _load_test_config():
     config.history_momentum_filter.min_return = 0.05
     config.type1.min_old_high_gap_days = 20
     config.type1.peak_window_days = 2
-    config.type1.breakout_volume_lookback_days = 5
-    config.type1.breakout_volume_multiplier = 2.0
+    config.type1.breakout_volume_high_lookback_days = 5
+    config.type1.breakout_min_close_position = 0.60
+    config.type1.breakout_max_upper_shadow_pct = 0.35
+    config.type1.breakout_min_body_pct = 0.25
     config.type1.near_high_threshold_pct = 0.05
+    config.type1.pre_breakout_volume_ratio_max = 1.5
     config.type2.min_old_high_gap_days = 20
     config.type2.peak_window_days = 2
-    config.type2.breakout_volume_lookback_days = 5
-    config.type2.breakout_volume_multiplier = 2.0
+    config.type2.breakout_volume_high_lookback_days = 5
+    config.type2.breakout_min_close_position = 0.60
+    config.type2.breakout_max_upper_shadow_pct = 0.35
+    config.type2.breakout_min_body_pct = 0.25
+    config.type2.post_breakout_max_days = 10
+    config.type2.post_breakout_max_high_extension_pct = 0.10
+    config.type2.post_breakout_ma20_break_tolerance_pct = 0.02
     config.type3.min_old_high_gap_days = 20
     config.type3.peak_window_days = 2
-    config.type3.breakout_volume_lookback_days = 5
-    config.type3.breakout_volume_multiplier = 2.0
-    config.type3.post_breakout_max_days = 8
-    config.type3.post_breakout_max_extension_pct = 0.10
+    config.type3.breakout_volume_high_lookback_days = 5
+    config.type3.breakout_min_close_position = 0.60
+    config.type3.breakout_max_upper_shadow_pct = 0.35
+    config.type3.breakout_min_body_pct = 0.25
+    config.type3.post_breakout_max_days = 10
+    config.type3.post_breakout_max_high_extension_pct = 0.10
+    config.type3.post_breakout_ma20_break_tolerance_pct = 0.02
     config.type4.main_rise_window_days = 15
     config.type4.main_rise_return_min = 0.20
     config.type4.transition_min_days = 1
@@ -273,7 +594,15 @@ def _load_test_config():
     config.type4.platform_min_days = 15
     config.type4.platform_max_days = 30
     config.type4.platform_range_max = 0.15
+    config.type4.platform_volume_contraction_max = 0.8
+    config.type4.platform_range_contraction_max = 0.85
+    config.type4.platform_low_lift_min_pct = 0.0
+    config.type4.platform_large_bearish_body_min_pct = 0.04
+    config.type4.platform_large_bearish_volume_ratio_min = 1.5
     config.type4.breakout_volume_ratio_min = 1.3
+    config.type4.breakout_min_close_position = 0.60
+    config.type4.breakout_max_upper_shadow_pct = 0.35
+    config.type4.breakout_min_body_pct = 0.25
     config.type4.post_breakout_max_days = 8
     config.type4.post_breakout_max_distance_pct = 0.10
     config.type5.recent_high_lookback_days = 10
@@ -283,7 +612,17 @@ def _load_test_config():
     config.type5.ma20_touch_abs_tolerance = 0.5
     config.type5.ma20_touch_pct_tolerance = 0.01
     config.type5.ma20_reclaim_min_pct = 0.01
+    config.type5.ma_slope_short_lookback_days = 1
+    config.type5.ma_slope_long_lookback_days = 10
+    config.type5.pullback_volume_contraction_max = 0.95
+    config.type6.pullback_large_bearish_body_min_pct = 0.04
+    config.type6.pullback_large_bearish_volume_ratio_min = 1.5
     return config
+
+
+def _force_type4_20_day_platform(config) -> None:
+    config.type4.platform_min_days = 20
+    config.type4.platform_max_days = 20
 
 
 def _build_volume_top_frame(*, final_closes: list[float], breakout_offset: int | None = None) -> pd.DataFrame:
@@ -300,13 +639,13 @@ def _build_volume_top_frame(*, final_closes: list[float], breakout_offset: int |
 
     if breakout_offset is not None:
         breakout_index = len(dataframe) - 1 - breakout_offset
-        baseline_volume = float(dataframe.iloc[breakout_index - 5 : breakout_index]["volume"].mean())
+        baseline_high = float(dataframe.iloc[breakout_index - 5 : breakout_index]["volume"].max())
         close_price = float(dataframe.iloc[breakout_index]["close"])
         dataframe.loc[breakout_index, "open"] = min(close_price - 4.0, 99.0)
         dataframe.loc[breakout_index, "high"] = 103.0
         dataframe.loc[breakout_index, "close"] = max(close_price, 101.5)
         dataframe.loc[breakout_index, "low"] = float(dataframe.loc[breakout_index, "open"]) * 0.99
-        dataframe.loc[breakout_index, "volume"] = baseline_volume * 3.5
+        dataframe.loc[breakout_index, "volume"] = baseline_high * 1.2
 
         for index in range(22, breakout_index):
             dataframe.loc[index, "high"] = min(float(dataframe.loc[index, "high"]), 99.5)
@@ -324,6 +663,72 @@ def _build_slow_volume_top_frame() -> pd.DataFrame:
     return dataframe
 
 
+def _build_platform_breakout_frame() -> tuple[pd.DataFrame, int, int]:
+    prelude = [40.0] * 40
+    first_rise = [50.0, 52.0, 54.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 69.0, 70.0, 71.0, 72.0, 73.0]
+    transition = [72.5, 72.0]
+    platform = [
+        71.2,
+        70.8,
+        71.5,
+        71.0,
+        70.9,
+        71.4,
+        71.1,
+        70.7,
+        71.3,
+        71.0,
+        70.8,
+        71.2,
+        71.0,
+        70.9,
+        71.4,
+        71.1,
+        70.8,
+        71.2,
+        71.0,
+        71.3,
+    ]
+    breakout_and_follow = [74.0, 75.0, 74.6]
+    dataframe = _build_dataframe(prelude + first_rise + transition + platform + breakout_and_follow)
+    platform_start = len(prelude) + len(first_rise) + len(transition)
+    breakout_index = platform_start + len(platform)
+    split_index = platform_start + len(platform) // 2
+    for index in range(platform_start, split_index):
+        dataframe.loc[index, "volume"] = 1_000_000
+        dataframe.loc[index, "low"] = min(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) - 0.9
+        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 0.4
+    for index in range(split_index, breakout_index):
+        dataframe.loc[index, "volume"] = 650_000
+        dataframe.loc[index, "low"] = min(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) - 0.1
+        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 0.15
+    dataframe.loc[breakout_index, "high"] = 74.8
+    dataframe.loc[breakout_index, "close"] = 74.0
+    dataframe.loc[breakout_index, "volume"] = 3_200_000
+    return dataframe, platform_start, breakout_index
+
+
+def _build_trend_pullback_frame() -> pd.DataFrame:
+    prelude = [40.0] * 30
+    rising = list(pd.Series(range(50, 111)).astype(float))
+    recent = [110.5, 111.0, 111.5, 112.0, 113.0, 112.5, 112.0, 108.0, 107.8, 108.6]
+    dataframe = _build_dataframe(prelude + rising + recent)
+    touch_index = len(dataframe) - 2
+    enriched = add_indicators(dataframe)
+    ma20 = float(enriched.iloc[touch_index]["ma_20"])
+    reclaim_close = ma20 * 1.012
+    latest_close = ma20 * 1.02
+    dataframe.loc[touch_index, "low"] = ma20 - 0.2
+    dataframe.loc[touch_index, "close"] = reclaim_close
+    dataframe.loc[touch_index, "high"] = max(float(dataframe.loc[touch_index, "high"]), reclaim_close + 0.4)
+    dataframe.loc[len(dataframe) - 1, "close"] = latest_close
+    dataframe.loc[len(dataframe) - 1, "low"] = min(float(dataframe.loc[len(dataframe) - 1, "low"]), ma20 + 0.2)
+    dataframe.loc[len(dataframe) - 1, "high"] = max(float(dataframe.loc[len(dataframe) - 1, "high"]), latest_close + 0.3)
+    dataframe.loc[len(dataframe) - 20 : len(dataframe) - 6, "volume"] = 900_000
+    dataframe.loc[len(dataframe) - 5 :, "volume"] = 500_000
+    return dataframe
+
+
 def _build_pattern6_support_hold_frame() -> pd.DataFrame:
     closes = [10.0] * 55 + [10.5, 11.5, 12.6, 12.8, 12.0, 11.3, 10.9, 10.65, 10.7, 10.85]
     dataframe = _build_dataframe(closes)
@@ -336,9 +741,9 @@ def _build_pattern6_support_hold_frame() -> pd.DataFrame:
     _shape_pattern6_after_anchor(dataframe, anchor_index)
     latest_index = len(dataframe) - 1
     dataframe.loc[latest_index, "open"] = 10.65
-    dataframe.loc[latest_index, "close"] = 10.85
+    dataframe.loc[latest_index, "close"] = 10.78
     dataframe.loc[latest_index, "low"] = 10.48
-    dataframe.loc[latest_index, "high"] = 10.95
+    dataframe.loc[latest_index, "high"] = 10.85
     return dataframe
 
 
@@ -366,9 +771,9 @@ def _build_pattern6_break_reclaim_frame() -> pd.DataFrame:
     dataframe.loc[reclaim_index, "volume"] = 450_000
     latest_index = len(dataframe) - 1
     dataframe.loc[latest_index, "open"] = 10.65
-    dataframe.loc[latest_index, "close"] = 10.9
+    dataframe.loc[latest_index, "close"] = 10.78
     dataframe.loc[latest_index, "low"] = 10.62
-    dataframe.loc[latest_index, "high"] = 11.0
+    dataframe.loc[latest_index, "high"] = 10.9
     dataframe.loc[latest_index, "volume"] = 300_000
     return dataframe
 

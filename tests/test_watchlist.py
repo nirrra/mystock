@@ -183,7 +183,25 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
                 "macd_bottom_divergence_15d": False,
                 "breakout_date": "2026-04-12",
                 "breakout_volume_ratio": 3.2,
+                "breakout_close_position": 0.72,
+                "breakout_upper_shadow_pct": 0.18,
+                "breakout_body_pct": 0.45,
+                "breakout_turnover": 8.5,
+                "breakout_turnover_state": "normal",
                 "days_after_breakout": 2,
+                "post_breakout_max_high_extension_pct": 0.072,
+                "ma20_slope_short_pct": 0.012,
+                "ma20_slope_long_pct": 0.08,
+                "ma60_slope_short_pct": 0.004,
+                "ma60_slope_long_pct": 0.03,
+                "pullback_volume_contraction_ratio": 0.82,
+                "pullback_max_bearish_body_pct": 0.035,
+                "pullback_max_bearish_volume_ratio": 1.25,
+                "platform_volume_contraction_ratio": 0.72,
+                "platform_range_contraction_ratio": 0.64,
+                "platform_low_lift_pct": 0.018,
+                "platform_max_bearish_body_pct": 0.025,
+                "platform_max_bearish_volume_ratio": 1.2,
                 "reason": "demo-2",
             },
             {
@@ -245,7 +263,18 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
     assert payload["candidates"][0]["distance_to_old_high_pct"] == 0.051
     assert payload["candidates"][1]["breakout_date"] == "2026-04-12"
     assert payload["candidates"][1]["breakout_volume_ratio"] == 3.2
+    assert payload["candidates"][1]["breakout_turnover"] == 8.5
+    assert payload["candidates"][1]["breakout_turnover_state"] == "normal"
     assert payload["candidates"][1]["days_after_breakout"] == 2
+    assert payload["candidates"][1]["post_breakout_max_high_extension_pct"] == 0.072
+    assert payload["candidates"][1]["ma20_slope_short_pct"] == 0.012
+    assert payload["candidates"][1]["ma60_slope_long_pct"] == 0.03
+    assert payload["candidates"][1]["pullback_volume_contraction_ratio"] == 0.82
+    assert payload["candidates"][1]["pullback_max_bearish_volume_ratio"] == 1.25
+    assert payload["candidates"][1]["platform_volume_contraction_ratio"] == 0.72
+    assert payload["candidates"][1]["platform_range_contraction_ratio"] == 0.64
+    assert payload["candidates"][1]["platform_low_lift_pct"] == 0.018
+    assert payload["candidates"][1]["platform_max_bearish_volume_ratio"] == 1.2
 
 
 def test_build_watchlist_candidates_from_trend_applies_thresholds_and_risk_filter() -> None:
