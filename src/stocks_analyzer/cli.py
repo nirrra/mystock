@@ -24,7 +24,19 @@ from .ml_dataset import build_probability_dataset, infer_split_dates, split_prob
 from .ml_evaluation import evaluate_trained_artifact
 from .ml_models import load_model_artifact, normalize_model_names, predict_with_model, train_and_save_models
 from .models import NetworkConfig
-from .pattern_backtest import scan_pattern_backtest_signals, summarize_pattern_backtest
+from .pattern_backtest import (
+    build_pattern_forward_price_frame,
+    sample_pattern_backtest_trade_dates,
+    scan_pattern_backtest_signals,
+    summarize_pattern_backtest,
+)
+from .pattern_stop_research import (
+    DEFAULT_HOLDING_DAYS,
+    DEFAULT_STOP_LOSSES,
+    DEFAULT_TAKE_PROFITS,
+    research_pattern_stop_grid,
+    select_best_pattern_stop_grid,
+)
 from .paths import ProjectPaths
 from .plotting import default_start_date, filter_by_date, load_or_fetch_daily, plot_candles_and_volume
 from .probability_reporting import (
@@ -47,6 +59,7 @@ from .trend_reporting import (
     save_entry_portfolio_backtest_reports,
     save_macd_report,
     save_pattern_backtest_reports,
+    save_pattern_stop_research_reports,
     save_portfolio_backtest_reports,
     save_signal_backtest_reports,
     save_threshold_research_reports,
@@ -101,7 +114,7 @@ PATTERN_FLAG_MAP = {
     "pattern1": "volume_top_pre_breakout",
     "pattern2": "volume_top_breakout",
     "pattern3": "volume_top_follow_through",
-    "pattern4": "platform_breakout",
+    "pattern4": "duck_nostril_cross",
     "pattern5": "trend_pullback",
     "pattern6": "double_volume_support_rebound",
 }
@@ -109,7 +122,7 @@ PATTERN_LABEL_MAP = {
     "volume_top_pre_breakout": "1",
     "volume_top_breakout": "2",
     "volume_top_follow_through": "3",
-    "platform_breakout": "4",
+    "duck_nostril_cross": "4",
     "trend_pullback": "5",
     "double_volume_support_rebound": "6",
 }
@@ -407,7 +420,51 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_patterns.add_argument("--5", dest="pattern5", action="store_true", help="只回测模式 5")
     backtest_patterns.add_argument("--6", dest="pattern6", action="store_true", help="只回测模式 6")
     backtest_patterns.add_argument("--output", default=None, help="可选的回测明细 CSV 输出路径")
+    backtest_patterns.add_argument("--sample-dates", type=int, default=None, help="随机抽样的历史信号日数量；不传则全量扫描")
+    backtest_patterns.add_argument("--sample-seed", type=int, default=42, help="抽样随机种子，默认 42")
+    backtest_patterns.add_argument("--save-forward-prices", action="store_true", help="保存每个买入点后续每日价格")
+    backtest_patterns.add_argument("--forward-days", type=int, default=40, help="保存买入后多少个交易日的每日价格，默认 40")
     backtest_patterns.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+
+    research_pattern_stops = subparsers.add_parser(
+        "research-pattern-stops",
+        help="研究模式回测样本的止盈止损网格",
+        description="读取 pattern_forward_prices CSV，按模式和持有周期回测止盈止损组合。默认覆盖 5/10/20/40 周期。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    research_pattern_stops.add_argument("--input", required=True, help="pattern_forward_prices_YYYY-MM-DD.csv 路径")
+    research_pattern_stops.add_argument("--date", default=None, help="报告日期，格式 YYYY-MM-DD；不传则尝试从输入文件名推断")
+    research_pattern_stops.add_argument(
+        "--holding-days",
+        default=",".join(str(item) for item in DEFAULT_HOLDING_DAYS),
+        help="逗号分隔的持有周期，默认 5,10,20,40",
+    )
+    research_pattern_stops.add_argument(
+        "--take-profits",
+        default=",".join(f"{item:.2f}" for item in DEFAULT_TAKE_PROFITS),
+        help="逗号分隔的止盈比例，默认 0.04,0.06,0.08,0.10,0.12,0.15,0.20,0.25",
+    )
+    research_pattern_stops.add_argument(
+        "--stop-losses",
+        default=",".join(f"{item:.2f}" for item in DEFAULT_STOP_LOSSES),
+        help="逗号分隔的止损比例，默认 0.03,0.05,0.07,0.10,0.12",
+    )
+    research_pattern_stops.add_argument(
+        "--same-day-policy",
+        choices=["stop-first", "take-profit-first"],
+        default="stop-first",
+        help="同一天同时触发止盈止损时的处理，默认 stop-first",
+    )
+    research_pattern_stops.add_argument("--ma20-stop", action="store_true", help="启用收盘跌破 MA20 止损")
+    research_pattern_stops.add_argument(
+        "--ma20-stop-tolerance",
+        type=float,
+        default=0.0,
+        help="MA20 止损容忍度，0.00 表示收盘跌破 MA20 即止损，0.01 表示低于 MA20*0.99 才止损",
+    )
+    research_pattern_stops.add_argument("--min-samples", type=int, default=30, help="best 表挑选组合时的最小样本数，默认 30")
+    research_pattern_stops.add_argument("--output", default=None, help="可选的完整网格 CSV 输出路径")
+    research_pattern_stops.add_argument("--top-n", type=int, default=30, help="终端展示前 N 行")
 
     backtest_entries_portfolio = subparsers.add_parser(
         "backtest-entries-portfolio",
@@ -673,6 +730,28 @@ def main() -> None:
             end_date=datetime.fromisoformat(args.date).date(),
             start_date=datetime.fromisoformat(args.start_date).date(),
             selected_patterns=_selected_patterns(args),
+            output=args.output,
+            sample_dates=args.sample_dates,
+            sample_seed=args.sample_seed,
+            save_forward_prices=args.save_forward_prices,
+            forward_days=args.forward_days,
+            top_n=args.top_n,
+        )
+        return
+
+    if args.command == "research-pattern-stops":
+        input_path = Path(args.input)
+        _run_research_pattern_stops(
+            paths=paths,
+            input_path=input_path,
+            report_date=datetime.fromisoformat(args.date).date() if args.date else _infer_report_date_from_path(input_path),
+            holding_days=_parse_int_list(args.holding_days),
+            take_profits=_parse_float_list(args.take_profits),
+            stop_losses=_parse_float_list(args.stop_losses),
+            same_day_policy=args.same_day_policy.replace("-", "_"),
+            ma20_stop=args.ma20_stop,
+            ma20_stop_tolerance=args.ma20_stop_tolerance,
+            min_samples=args.min_samples,
             output=args.output,
             top_n=args.top_n,
         )
@@ -1237,18 +1316,45 @@ def _run_backtest_patterns(
     start_date: date,
     selected_patterns: list[str],
     output: str | None,
+    sample_dates: int | None,
+    sample_seed: int | None,
+    save_forward_prices: bool,
+    forward_days: int,
     top_n: int,
 ) -> None:
+    sampled_trade_dates = None
+    if sample_dates is not None:
+        sampled_trade_dates = sample_pattern_backtest_trade_dates(
+            storage,
+            start_date=start_date,
+            end_date=end_date,
+            sample_size=sample_dates,
+            seed=sample_seed,
+        )
+        logging.info(
+            "Pattern-backtest sampled %s trade dates from %s to %s with seed=%s",
+            len(sampled_trade_dates),
+            start_date.isoformat(),
+            end_date.isoformat(),
+            sample_seed,
+        )
+
     signals = scan_pattern_backtest_signals(
         storage,
         config,
         start_date=start_date,
         end_date=end_date,
         selected_strategies=selected_patterns,
+        sampled_trade_dates=sampled_trade_dates,
         cooldown_trading_days=5,
         progress_callback=lambda current, total: _log_scan_progress("Pattern-backtest", current, total),
     )
     daily_history = _load_daily_history_map(storage, signals["symbol"].astype(str).tolist() if not signals.empty else [])
+    forward_prices = (
+        build_pattern_forward_price_frame(signals, daily_history, forward_days=forward_days, entry_timing="next_open")
+        if save_forward_prices
+        else None
+    )
     detail = backtest_signal_returns(signals, daily_history, config.trend_backtest, entry_timing="next_open")
     if not detail.empty:
         detail["pattern_id"] = detail["signal_type"].map(PATTERN_LABEL_MAP)
@@ -1277,7 +1383,16 @@ def _run_backtest_patterns(
         remaining = [column for column in detail.columns if column not in available]
         detail = detail.loc[:, available + remaining]
     summary = summarize_pattern_backtest(detail.rename(columns={"strategy_name": "signal_type"}) if not detail.empty else detail)
-    report_paths = save_pattern_backtest_reports(paths, report_date=end_date, detail=detail, summary=summary, output=output)
+    report_paths = save_pattern_backtest_reports(
+        paths,
+        report_date=end_date,
+        detail=detail,
+        summary=summary,
+        forward_prices=forward_prices,
+        sampled_trade_dates=sampled_trade_dates,
+        sample_seed=sample_seed if sample_dates is not None else None,
+        output=output,
+    )
     print(
         _format_dataframe(
             summary,
@@ -1296,6 +1411,86 @@ def _run_backtest_patterns(
     )
     print(f"\n模式回测明细：{report_paths['detail_path']}")
     print(f"模式回测汇总：{report_paths['summary_path']}")
+    if "forward_prices_path" in report_paths:
+        print(f"买入后每日价格：{report_paths['forward_prices_path']}")
+
+
+def _run_research_pattern_stops(
+    paths: ProjectPaths,
+    *,
+    input_path: Path,
+    report_date: date,
+    holding_days: list[int],
+    take_profits: list[float],
+    stop_losses: list[float],
+    same_day_policy: str,
+    ma20_stop: bool,
+    ma20_stop_tolerance: float,
+    min_samples: int,
+    output: str | None,
+    top_n: int,
+) -> None:
+    if not input_path.exists():
+        raise FileNotFoundError(f"Pattern forward price file not found: {input_path}")
+
+    forward_prices = pd.read_csv(input_path)
+    if ma20_stop and "ma_20" not in forward_prices.columns:
+        raise RuntimeError(
+            "MA20 stop requires a forward price file with ma_20. "
+            "Please rerun backtest-patterns with --save-forward-prices using the updated code."
+        )
+    result = research_pattern_stop_grid(
+        forward_prices,
+        holding_days=holding_days,
+        take_profits=take_profits,
+        stop_losses=stop_losses,
+        same_day_policy=same_day_policy,
+        ma20_stop=ma20_stop,
+        ma20_stop_tolerance=ma20_stop_tolerance,
+    )
+    summary = result["summary"]
+    trades = result["trades"]
+    best = result["best"]
+    if min_samples != 30 and not summary.empty:
+        best = select_best_pattern_stop_grid(summary, min_samples=min_samples)
+
+    report_paths = save_pattern_stop_research_reports(
+        paths,
+        report_date=report_date,
+        trades=trades,
+        summary=summary,
+        best=best,
+        input_path=input_path,
+        output=output,
+    )
+
+    display = best.copy()
+    if display.empty:
+        display = summary.copy()
+    print(
+        _format_dataframe(
+            display,
+            [
+                "pattern_id",
+                "strategy_name",
+                "holding_days",
+                "take_profit_pct",
+                "stop_loss_pct",
+                "sample_count",
+                "win_rate",
+                "avg_return_pct",
+                "take_profit_rate",
+                "stop_loss_rate",
+                "ma20_stop_rate",
+                "time_exit_rate",
+                "avg_exit_day",
+            ],
+            top_n,
+        )
+    )
+    print(f"\n止盈止损完整网格：{report_paths['summary_path']}")
+    print(f"止盈止损最佳组合：{report_paths['best_path']}")
+    print(f"止盈止损逐笔明细：{report_paths['trades_path']}")
 
 
 def _run_backtest_portfolio(
@@ -1729,9 +1924,26 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
         "main_rise_end_date",
         "main_rise_return_pct",
         "transition_days",
-        "platform_start_date",
-        "platform_end_date",
-        "platform_high",
+        "duck_peak_date",
+        "duck_peak_price",
+        "days_since_duck_peak",
+        "neck_start_date",
+        "neck_return_pct",
+        "neck_low_to_peak_return_pct",
+        "nostril_cross_date",
+        "days_since_nostril_cross",
+        "cross_after_pullback_low_days",
+        "nostril_cross_ma5_ma10_gap_pct",
+        "latest_ma5_ma10_gap_pct",
+        "nostril_volume_ma20_ratio",
+        "distance_to_duck_peak_pct",
+        "peak_tail_avg_volume",
+        "pullback_avg_volume",
+        "pullback_volume_peak_tail_ratio",
+        "pullback_max_single_day_peak_tail_ratio",
+        "large_bearish_count",
+        "max_bearish_body_pct",
+        "max_bearish_volume_ratio",
         "breakout_date",
         "breakout_volume_ratio",
         "breakout_close_position",
@@ -2505,6 +2717,30 @@ def _parse_optional_date(value: str | None) -> date | None:
     if value is None:
         return None
     return datetime.fromisoformat(value).date()
+
+
+def _parse_int_list(value: str) -> list[int]:
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    if not items:
+        raise ValueError("Expected at least one integer value")
+    return [int(item) for item in items]
+
+
+def _parse_float_list(value: str) -> list[float]:
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    if not items:
+        raise ValueError("Expected at least one float value")
+    return [float(item) for item in items]
+
+
+def _infer_report_date_from_path(path: Path) -> date:
+    stem = path.stem
+    for token in reversed(stem.split("_")):
+        try:
+            return datetime.fromisoformat(token).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Cannot infer report date from input path: {path}")
 
 
 def _resolve_probability_split_dates(

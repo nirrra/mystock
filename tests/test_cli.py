@@ -215,13 +215,34 @@ def test_build_parser_accepts_backtest_entries_command() -> None:
 
 def test_build_parser_accepts_backtest_patterns_command_and_flags() -> None:
     parser = build_parser()
-    args = parser.parse_args(["backtest-patterns", "--date", "2026-04-10", "--start-date", "2026-01-01", "--1", "--3"])
+    args = parser.parse_args(
+        [
+            "backtest-patterns",
+            "--date",
+            "2026-04-10",
+            "--start-date",
+            "2026-01-01",
+            "--1",
+            "--3",
+            "--sample-dates",
+            "12",
+            "--sample-seed",
+            "7",
+            "--save-forward-prices",
+            "--forward-days",
+            "40",
+        ]
+    )
 
     assert args.command == "backtest-patterns"
     assert args.date == "2026-04-10"
     assert args.start_date == "2026-01-01"
     assert args.pattern1 is True
     assert args.pattern3 is True
+    assert args.sample_dates == 12
+    assert args.sample_seed == 7
+    assert args.save_forward_prices is True
+    assert args.forward_days == 40
 
 
 def test_build_parser_accepts_backtest_entries_portfolio_command() -> None:
@@ -231,6 +252,37 @@ def test_build_parser_accepts_backtest_entries_portfolio_command() -> None:
     assert args.command == "backtest-entries-portfolio"
     assert args.date == "2026-04-10"
     assert args.top_n == 6
+
+
+def test_build_parser_accepts_research_pattern_stops_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "research-pattern-stops",
+            "--input",
+            "reports/backtests/patterns/pattern_forward_prices_2026-04-24.csv",
+            "--holding-days",
+            "5,10,20,40",
+            "--take-profits",
+            "0.04,0.08",
+            "--stop-losses",
+            "0.03,0.05",
+            "--same-day-policy",
+            "take-profit-first",
+            "--ma20-stop",
+            "--ma20-stop-tolerance",
+            "0.01",
+        ]
+    )
+
+    assert args.command == "research-pattern-stops"
+    assert args.input.endswith("pattern_forward_prices_2026-04-24.csv")
+    assert args.holding_days == "5,10,20,40"
+    assert args.take_profits == "0.04,0.08"
+    assert args.stop_losses == "0.03,0.05"
+    assert args.same_day_policy == "take-profit-first"
+    assert args.ma20_stop is True
+    assert args.ma20_stop_tolerance == 0.01
 
 
 def test_command_needs_network_only_for_networked_commands() -> None:

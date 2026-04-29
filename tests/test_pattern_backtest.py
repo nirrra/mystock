@@ -7,7 +7,12 @@ from uuid import uuid4
 import pandas as pd
 
 from stocks_analyzer.config import load_config
-from stocks_analyzer.pattern_backtest import scan_pattern_backtest_signals, summarize_pattern_backtest
+from stocks_analyzer.pattern_backtest import (
+    build_pattern_forward_price_frame,
+    sample_pattern_backtest_trade_dates,
+    scan_pattern_backtest_signals,
+    summarize_pattern_backtest,
+)
 from stocks_analyzer.paths import ProjectPaths
 from stocks_analyzer.storage import Storage
 from stocks_analyzer.strategies import TREND_PULLBACK, VOLUME_TOP_PRE_BREAKOUT
@@ -100,6 +105,77 @@ def test_scan_pattern_backtest_signals_keeps_different_patterns_on_same_day(monk
     assert signals["pattern_id"].tolist() == ["1", "5"]
 
 
+def test_scan_pattern_backtest_signals_only_evaluates_sampled_dates(monkeypatch) -> None:
+    storage, config = _make_storage_and_config(_make_workspace_tmp_dir("pattern_backtest_sampled_dates"))
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "测试"}]))
+    bars = _make_daily_bars(65)
+    storage.save_daily_bars("600000", bars)
+    evaluated_dates = []
+
+    def fake_evaluate_strategies(history_df, instrument, config, selected):
+        latest = history_df.iloc[-1]
+        trade_date = pd.Timestamp(latest["trade_date"]).date()
+        evaluated_dates.append(trade_date)
+        return [
+            {
+                "trade_date": trade_date.isoformat(),
+                "symbol": str(instrument["symbol"]),
+                "name": str(instrument["name"]),
+                "strategy_name": VOLUME_TOP_PRE_BREAKOUT,
+                "close": float(latest["close"]),
+                "reason": "sampled",
+            }
+        ]
+
+    monkeypatch.setattr("stocks_analyzer.pattern_backtest.evaluate_strategies", fake_evaluate_strategies)
+    monkeypatch.setattr("stocks_analyzer.pattern_backtest.required_history_days", lambda config, strategies: 1)
+
+    sampled_dates = [
+        pd.Timestamp(bars["trade_date"].iloc[60]).date(),
+        pd.Timestamp(bars["trade_date"].iloc[62]).date(),
+    ]
+    signals = scan_pattern_backtest_signals(
+        storage,
+        config,
+        start_date=pd.Timestamp(bars["trade_date"].iloc[58]).date(),
+        end_date=pd.Timestamp(bars["trade_date"].iloc[64]).date(),
+        selected_strategies=[VOLUME_TOP_PRE_BREAKOUT],
+        sampled_trade_dates=sampled_dates,
+        cooldown_trading_days=1,
+    )
+
+    assert evaluated_dates == sampled_dates
+    assert signals["trade_date"].dt.date.tolist() == sampled_dates
+
+
+def test_sample_pattern_backtest_trade_dates_is_seeded_and_sorted() -> None:
+    storage, config = _make_storage_and_config(_make_workspace_tmp_dir("pattern_backtest_sample_dates"))
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "测试"}]))
+    bars = _make_daily_bars(20)
+    storage.save_daily_bars("600000", bars)
+
+    sampled = sample_pattern_backtest_trade_dates(
+        storage,
+        start_date=pd.Timestamp(bars["trade_date"].iloc[5]).date(),
+        end_date=pd.Timestamp(bars["trade_date"].iloc[15]).date(),
+        sample_size=4,
+        seed=7,
+    )
+    repeated = sample_pattern_backtest_trade_dates(
+        storage,
+        start_date=pd.Timestamp(bars["trade_date"].iloc[5]).date(),
+        end_date=pd.Timestamp(bars["trade_date"].iloc[15]).date(),
+        sample_size=4,
+        seed=7,
+    )
+
+    assert sampled == sorted(sampled)
+    assert sampled == repeated
+    assert len(sampled) == 4
+    assert sampled[0] >= pd.Timestamp(bars["trade_date"].iloc[5]).date()
+    assert sampled[-1] <= pd.Timestamp(bars["trade_date"].iloc[15]).date()
+
+
 def test_summarize_pattern_backtest_uses_next_open_returns() -> None:
     config = load_config("config/default.yaml")
     config.trend_backtest.holding_days = (2,)
@@ -128,6 +204,35 @@ def test_summarize_pattern_backtest_uses_next_open_returns() -> None:
     assert summary.loc[0, "win_rate"] == 1.0
 
 
+def test_build_pattern_forward_price_frame_saves_40_day_daily_prices() -> None:
+    bars = _make_daily_bars(45, closes=[10.0 + index for index in range(45)], opens=[10.5 + index for index in range(45)])
+    signals = pd.DataFrame(
+        [
+            {
+                "trade_date": pd.Timestamp(bars["trade_date"].iloc[0]),
+                "symbol": "600000",
+                "name": "测试",
+                "pattern_id": "1",
+                "signal_type": VOLUME_TOP_PRE_BREAKOUT,
+                "trigger_reason": "mode 1",
+            }
+        ]
+    )
+
+    forward_prices = build_pattern_forward_price_frame(signals, {"600000": bars}, forward_days=40, entry_timing="next_open")
+
+    assert len(forward_prices) == 40
+    assert forward_prices["forward_day"].tolist() == list(range(1, 41))
+    assert forward_prices.loc[0, "entry_date"] == pd.Timestamp(bars["trade_date"].iloc[1])
+    assert forward_prices.loc[0, "entry_price"] == 11.5
+    assert forward_prices.loc[0, "open"] == 11.5
+    assert forward_prices.loc[0, "open_return_pct"] == 0.0
+    assert forward_prices.loc[1, "close_return_pct"] == round(float(bars["close"].iloc[2]) / 11.5 - 1, 4)
+    assert "ma_20" in forward_prices.columns
+    assert "close_below_ma20" in forward_prices.columns
+    assert pd.notna(forward_prices.loc[18, "ma_20"])
+
+
 def test_save_pattern_backtest_reports_writes_expected_files() -> None:
     config = load_config("config/default.yaml")
     tmp_path = _make_workspace_tmp_dir("pattern_backtest_reports")
@@ -145,12 +250,22 @@ def test_save_pattern_backtest_reports_writes_expected_files() -> None:
         ]
     )
     summary = pd.DataFrame([{"pattern_id": "1", "holding_days": 5, "signal_count": 1, "win_rate": 1.0}])
+    forward_prices = pd.DataFrame([{"sample_id": "20260410_600000_1", "forward_day": 1, "close": 10.0}])
 
-    paths_map = save_pattern_backtest_reports(paths, report_date=date(2026, 4, 24), detail=detail, summary=summary)
+    paths_map = save_pattern_backtest_reports(
+        paths,
+        report_date=date(2026, 4, 24),
+        detail=detail,
+        summary=summary,
+        forward_prices=forward_prices,
+        sampled_trade_dates=[date(2026, 4, 10)],
+        sample_seed=42,
+    )
 
     assert paths_map["detail_path"].exists()
     assert paths_map["summary_path"].exists()
     assert paths_map["json_path"].exists()
+    assert paths_map["forward_prices_path"].exists()
     assert "pattern_backtest_details_2026-04-24.csv" in str(paths_map["detail_path"])
 
 

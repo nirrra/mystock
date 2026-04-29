@@ -1,0 +1,10 @@
+{
+  "report_date": "2026-04-24",
+  "input_path": "reports\\backtests\\patterns\\pattern_forward_prices_2026-04-24.csv",
+  "trade_rows": 725760,
+  "summary_rows": 1296,
+  "best_rows": 24,
+  "summary_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\backtests\\patterns\\pattern_stop_grid_2026-04-24.csv",
+  "best_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\backtests\\patterns\\pattern_stop_grid_best_2026-04-24.csv",
+  "trades_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\backtests\\patterns\\pattern_stop_grid_trades_2026-04-24.csv"
+}

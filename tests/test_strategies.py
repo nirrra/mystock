@@ -6,7 +6,7 @@ from stocks_analyzer.config import load_config
 from stocks_analyzer.indicators import add_indicators
 from stocks_analyzer.strategies import (
     DOUBLE_VOLUME_SUPPORT_REBOUND,
-    PLATFORM_BREAKOUT,
+    DUCK_NOSTRIL_CROSS,
     TREND_PULLBACK,
     VOLUME_TOP_BREAKOUT,
     VOLUME_TOP_FOLLOW_THROUGH,
@@ -255,99 +255,106 @@ def test_evaluate_volume_top_follow_through_rejects_if_earlier_higher_high_exist
     assert result == []
 
 
-def test_evaluate_platform_breakout_returns_match() -> None:
+def test_evaluate_duck_nostril_cross_returns_match() -> None:
     config = _load_test_config()
-    _force_type4_20_day_platform(config)
 
-    dataframe, _, _ = _build_platform_breakout_frame()
+    dataframe = _build_duck_nostril_cross_frame()
 
-    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
 
-    assert [row["strategy_name"] for row in result] == [PLATFORM_BREAKOUT]
-    assert 20 <= result[0]["platform_window_days"] <= 30
-    assert 1 <= result[0]["transition_days"] <= 3
-    assert result[0]["breakout_close_position"] >= 0.60
-    assert result[0]["breakout_upper_shadow_pct"] <= 0.35
-    assert result[0]["breakout_body_pct"] >= 0.25
-    assert result[0]["breakout_turnover"] == 1.0
-    assert result[0]["breakout_turnover_state"] == "normal"
-    assert result[0]["platform_volume_contraction_ratio"] <= config.type4.platform_volume_contraction_max
-    assert result[0]["platform_range_contraction_ratio"] <= config.type4.platform_range_contraction_max
-    assert result[0]["platform_low_lift_pct"] >= config.type4.platform_low_lift_min_pct
+    assert [row["strategy_name"] for row in result] == [DUCK_NOSTRIL_CROSS]
+    assert result[0]["neck_return_pct"] >= config.type4.neck_min_return
+    assert result[0]["peak_to_pullback_drawdown_pct"] >= config.type4.peak_to_pullback_min_drawdown_pct
+    assert result[0]["pullback_volume_peak_tail_ratio"] <= config.type4.pullback_volume_max_peak_tail_ratio
+    assert result[0]["pullback_back_half_volume_ratio"] <= config.type4.pullback_back_half_volume_ratio
+    assert 0 <= result[0]["days_since_nostril_cross"] <= config.type4.cross_lookback_days
+    assert result[0]["nostril_volume_ma20_ratio"] <= config.type4.nostril_day_volume_ma20_max_ratio
 
 
-def test_evaluate_platform_breakout_rejects_without_platform_volume_contraction() -> None:
+def test_evaluate_duck_nostril_cross_rejects_without_pullback_volume_contraction() -> None:
     config = _load_test_config()
-    _force_type4_20_day_platform(config)
 
-    dataframe, platform_start, breakout_index = _build_platform_breakout_frame()
-    split_index = platform_start + (breakout_index - platform_start) // 2
-    dataframe.loc[split_index : breakout_index - 1, "volume"] = 900_000
+    dataframe = _build_duck_nostril_cross_frame()
+    peak_index = 109
+    dataframe.loc[peak_index + 1 :, "volume"] = 1_300_000
 
-    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
 
     assert result == []
 
 
-def test_evaluate_platform_breakout_rejects_without_range_contraction() -> None:
+def test_evaluate_duck_nostril_cross_rejects_without_prior_ma5_below_ma10() -> None:
     config = _load_test_config()
-    _force_type4_20_day_platform(config)
+    config.type4.prior_ma5_below_ma10_min_days = 20
 
-    dataframe, platform_start, breakout_index = _build_platform_breakout_frame()
-    split_index = platform_start + (breakout_index - platform_start) // 2
-    for index in range(split_index, breakout_index):
-        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 2.0
+    dataframe = _build_duck_nostril_cross_frame()
 
-    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
 
     assert result == []
 
 
-def test_evaluate_platform_breakout_rejects_without_low_lift() -> None:
+def test_evaluate_duck_nostril_cross_rejects_ma60_break() -> None:
     config = _load_test_config()
-    _force_type4_20_day_platform(config)
 
-    dataframe, platform_start, breakout_index = _build_platform_breakout_frame()
-    split_index = platform_start + (breakout_index - platform_start) // 2
-    front_low = float(dataframe.loc[platform_start : split_index - 1, "low"].min())
-    for index in range(split_index, breakout_index):
-        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 0.05
-    dataframe.loc[split_index, "low"] = front_low - 0.001
+    dataframe = _build_duck_nostril_cross_frame()
+    dataframe.loc[116, "low"] = 50.0
+    dataframe.loc[116, "close"] = 52.0
 
-    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
 
     assert result == []
 
 
-def test_evaluate_platform_breakout_rejects_large_bearish_volume_candle_inside_platform() -> None:
+def test_evaluate_duck_nostril_cross_rejects_large_bearish_volume_candle() -> None:
     config = _load_test_config()
-    _force_type4_20_day_platform(config)
 
-    dataframe, platform_start, _ = _build_platform_breakout_frame()
-    large_bearish_index = platform_start + 2
-    dataframe.loc[large_bearish_index, "open"] = 72.0
-    dataframe.loc[large_bearish_index, "close"] = 68.8
-    dataframe.loc[large_bearish_index, "high"] = 72.2
-    dataframe.loc[large_bearish_index, "low"] = 68.7
+    dataframe = _build_duck_nostril_cross_frame()
+    large_bearish_index = 114
+    dataframe.loc[large_bearish_index, "open"] = 76.0
+    dataframe.loc[large_bearish_index, "close"] = 72.5
+    dataframe.loc[large_bearish_index, "high"] = 76.2
+    dataframe.loc[large_bearish_index, "low"] = 72.3
     dataframe.loc[large_bearish_index, "volume"] = 2_000_000
 
-    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
 
     assert result == []
 
 
-def test_evaluate_platform_breakout_rejects_poor_breakout_candle_quality() -> None:
+def test_evaluate_duck_nostril_cross_rejects_failed_cross() -> None:
     config = _load_test_config()
-    _force_type4_20_day_platform(config)
 
-    dataframe, _, breakout_index = _build_platform_breakout_frame()
-    dataframe.loc[breakout_index, "open"] = 72.0
-    dataframe.loc[breakout_index, "close"] = 74.0
-    dataframe.loc[breakout_index, "high"] = 82.0
-    dataframe.loc[breakout_index, "low"] = 71.5
-    dataframe.loc[breakout_index, "volume"] = 3_200_000
+    dataframe = _build_duck_nostril_cross_frame()
+    for index, close_price in enumerate([65.0, 64.5, 64.0, 63.5], start=len(dataframe) - 4):
+        dataframe.loc[index, "open"] = close_price + 0.3
+        dataframe.loc[index, "close"] = close_price
+        dataframe.loc[index, "high"] = close_price + 0.4
+        dataframe.loc[index, "low"] = close_price - 0.3
 
-    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [PLATFORM_BREAKOUT])
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
+
+    assert result == []
+
+
+def test_evaluate_duck_nostril_cross_rejects_cross_before_pullback_low() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_duck_nostril_cross_frame()
+    dataframe.loc[128, "low"] = 62.6
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
+
+    assert result == []
+
+
+def test_evaluate_duck_nostril_cross_rejects_peak_without_20d_right_high() -> None:
+    config = _load_test_config()
+
+    dataframe = _build_duck_nostril_cross_frame()
+    dataframe.loc[115, "high"] = 83.0
+
+    result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DUCK_NOSTRIL_CROSS])
 
     assert result == []
 
@@ -583,24 +590,40 @@ def _load_test_config():
     config.type3.post_breakout_max_days = 10
     config.type3.post_breakout_max_high_extension_pct = 0.10
     config.type3.post_breakout_ma20_break_tolerance_pct = 0.02
-    config.type4.main_rise_window_days = 15
-    config.type4.main_rise_return_min = 0.20
-    config.type4.transition_min_days = 1
-    config.type4.transition_max_days = 5
-    config.type4.platform_min_days = 15
-    config.type4.platform_max_days = 30
-    config.type4.platform_range_max = 0.15
-    config.type4.platform_volume_contraction_max = 0.8
-    config.type4.platform_range_contraction_max = 0.85
-    config.type4.platform_low_lift_min_pct = 0.0
-    config.type4.platform_large_bearish_body_min_pct = 0.04
-    config.type4.platform_large_bearish_volume_ratio_min = 1.5
-    config.type4.breakout_volume_ratio_min = 1.3
-    config.type4.breakout_min_close_position = 0.60
-    config.type4.breakout_max_upper_shadow_pct = 0.35
-    config.type4.breakout_min_body_pct = 0.25
-    config.type4.post_breakout_max_days = 8
-    config.type4.post_breakout_max_distance_pct = 0.10
+    config.type4.max_peak_scan_days = 80
+    config.type4.min_peak_age_days = 20
+    config.type4.max_peak_age_days = 35
+    config.type4.peak_left_window_days = 20
+    config.type4.peak_right_window_days = 20
+    config.type4.neck_lookback_days = 30
+    config.type4.neck_min_return = 0.18
+    config.type4.neck_low_to_peak_min_return = 0.20
+    config.type4.require_peak_above_ma60 = True
+    config.type4.peak_close_above_ma20_min_pct = 0.0
+    config.type4.pullback_min_days = 5
+    config.type4.pullback_max_days = 25
+    config.type4.peak_to_pullback_min_drawdown_pct = 0.05
+    config.type4.pullback_low_ma60_tolerance_pct = 0.05
+    config.type4.forbid_effective_break_ma60 = True
+    config.type4.pullback_volume_max_peak_tail_ratio = 0.75
+    config.type4.pullback_back_half_volume_ratio = 0.85
+    config.type4.nostril_day_volume_ma20_max_ratio = 0.90
+    config.type4.pullback_max_single_day_volume_peak_tail_ratio = 1.20
+    config.type4.require_prior_ma5_below_ma10 = True
+    config.type4.prior_ma5_below_ma10_min_days = 2
+    config.type4.require_cross_after_pullback_low = True
+    config.type4.cross_lookback_days = 8
+    config.type4.cross_confirm_gap_min_pct = 0.0
+    config.type4.cross_confirm_gap_max_pct = 0.035
+    config.type4.require_post_cross_ma5_above_ma10 = True
+    config.type4.latest_close_ma10_tolerance_pct = 0.01
+    config.type4.current_below_peak_min_pct = -0.03
+    config.type4.current_above_ma20_min_pct = -0.02
+    config.type4.current_above_ma60_min_pct = -0.05
+    config.type4.max_today_return_pct = 0.07
+    config.type4.large_bearish_body_min_pct = 0.04
+    config.type4.large_bearish_volume_ratio_min = 1.5
+    config.type4.max_large_bearish_count = 0
     config.type5.recent_high_lookback_days = 10
     config.type5.high_pre_lookback_days = 20
     config.type5.high_peak_window_days = 5
@@ -613,11 +636,6 @@ def _load_test_config():
     config.type5.pullback_volume_contraction_max = 0.95
     config.type6.pullback_max_rise_tail_volume_ratio = 1.2
     return config
-
-
-def _force_type4_20_day_platform(config) -> None:
-    config.type4.platform_min_days = 20
-    config.type4.platform_max_days = 20
 
 
 def _build_volume_top_frame(*, final_closes: list[float], breakout_offset: int | None = None) -> pd.DataFrame:
@@ -658,49 +676,48 @@ def _build_slow_volume_top_frame() -> pd.DataFrame:
     return dataframe
 
 
-def _build_platform_breakout_frame() -> tuple[pd.DataFrame, int, int]:
-    prelude = [40.0] * 40
-    first_rise = [50.0, 52.0, 54.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 69.0, 70.0, 71.0, 72.0, 73.0]
-    transition = [72.5, 72.0]
-    platform = [
-        71.2,
-        70.8,
-        71.5,
+def _build_duck_nostril_cross_frame() -> pd.DataFrame:
+    prelude = [50.0] * 80
+    neck = [52.0 + index * (28.0 / 29.0) for index in range(30)]
+    pullback = [
+        78.0,
+        76.0,
+        74.0,
+        72.0,
+        70.0,
+        68.0,
+        66.0,
+        64.0,
+        63.0,
+        63.2,
+        63.5,
+        64.0,
+        64.5,
+        65.0,
+        65.5,
+        66.0,
+        67.0,
+        68.0,
+        69.0,
+        70.0,
         71.0,
-        70.9,
-        71.4,
-        71.1,
-        70.7,
-        71.3,
-        71.0,
-        70.8,
-        71.2,
-        71.0,
-        70.9,
-        71.4,
-        71.1,
-        70.8,
-        71.2,
-        71.0,
-        71.3,
+        72.0,
+        73.0,
     ]
-    breakout_and_follow = [74.0, 75.0, 74.6]
-    dataframe = _build_dataframe(prelude + first_rise + transition + platform + breakout_and_follow)
-    platform_start = len(prelude) + len(first_rise) + len(transition)
-    breakout_index = platform_start + len(platform)
-    split_index = platform_start + len(platform) // 2
-    for index in range(platform_start, split_index):
-        dataframe.loc[index, "volume"] = 1_000_000
-        dataframe.loc[index, "low"] = min(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) - 0.9
-        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 0.4
-    for index in range(split_index, breakout_index):
-        dataframe.loc[index, "volume"] = 650_000
-        dataframe.loc[index, "low"] = min(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) - 0.1
-        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 0.15
-    dataframe.loc[breakout_index, "high"] = 74.8
-    dataframe.loc[breakout_index, "close"] = 74.0
-    dataframe.loc[breakout_index, "volume"] = 3_200_000
-    return dataframe, platform_start, breakout_index
+    dataframe = _build_dataframe(prelude + neck + pullback)
+
+    peak_index = len(prelude) + len(neck) - 1
+    dataframe.loc[peak_index - 2 : peak_index, "volume"] = 1_500_000
+    dataframe.loc[peak_index, "high"] = 82.0
+    dataframe.loc[peak_index, "close"] = 80.0
+
+    for offset, index in enumerate(range(peak_index + 1, len(dataframe))):
+        volume = 650_000 if offset < 7 else 500_000
+        dataframe.loc[index, "volume"] = volume
+        dataframe.loc[index, "amount"] = volume * float(dataframe.loc[index, "close"])
+        dataframe.loc[index, "low"] = min(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) - 0.2
+        dataframe.loc[index, "high"] = max(float(dataframe.loc[index, "open"]), float(dataframe.loc[index, "close"])) + 0.3
+    return dataframe
 
 
 def _build_trend_pullback_frame() -> pd.DataFrame:

@@ -27,6 +27,20 @@ DISPLAY_COLUMNS = [
     "breakout_turnover",
     "breakout_turnover_state",
     "post_breakout_max_high_extension_pct",
+    "duck_peak_date",
+    "duck_peak_price",
+    "days_since_duck_peak",
+    "neck_return_pct",
+    "neck_low_to_peak_return_pct",
+    "nostril_cross_date",
+    "days_since_nostril_cross",
+    "cross_after_pullback_low_days",
+    "nostril_cross_ma5_ma10_gap_pct",
+    "nostril_volume_ma20_ratio",
+    "distance_to_duck_peak_pct",
+    "peak_to_pullback_drawdown_pct",
+    "pullback_volume_peak_tail_ratio",
+    "pullback_back_half_volume_ratio",
     "platform_volume_contraction_ratio",
     "platform_range_contraction_ratio",
     "platform_low_lift_pct",
@@ -59,6 +73,11 @@ def format_report(dataframe: pd.DataFrame, limit: int) -> str:
         "ma60_slope_long_pct",
         "platform_low_lift_pct",
         "platform_max_bearish_body_pct",
+        "neck_return_pct",
+        "neck_low_to_peak_return_pct",
+        "nostril_cross_ma5_ma10_gap_pct",
+        "distance_to_duck_peak_pct",
+        "peak_to_pullback_drawdown_pct",
     ):
         if column in display.columns:
             display[column] = display[column].map(lambda value: f"{value:.2%}" if pd.notna(value) else "nan")
@@ -72,6 +91,10 @@ def format_report(dataframe: pd.DataFrame, limit: int) -> str:
         "platform_volume_contraction_ratio",
         "platform_range_contraction_ratio",
         "platform_max_bearish_volume_ratio",
+        "duck_peak_price",
+        "nostril_volume_ma20_ratio",
+        "pullback_volume_peak_tail_ratio",
+        "pullback_back_half_volume_ratio",
         "pullback_max_rise_tail_volume_ratio",
     ):
         if column in display.columns:

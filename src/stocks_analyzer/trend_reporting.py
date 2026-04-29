@@ -266,28 +266,81 @@ def save_pattern_backtest_reports(
     report_date: date,
     detail: pd.DataFrame,
     summary: pd.DataFrame,
+    forward_prices: pd.DataFrame | None = None,
+    sampled_trade_dates: list[date] | None = None,
+    sample_seed: int | None = None,
     output: str | None = None,
 ) -> dict[str, Path]:
     target_dir = paths.reports_dir / "backtests" / "patterns"
     target_dir.mkdir(parents=True, exist_ok=True)
     detail_path = Path(output) if output else target_dir / f"pattern_backtest_details_{report_date.isoformat()}.csv"
     summary_path = target_dir / f"pattern_backtest_summary_{report_date.isoformat()}.csv"
+    forward_prices_path = target_dir / f"pattern_forward_prices_{report_date.isoformat()}.csv"
     json_path = target_dir / f"pattern_backtest_summary_{report_date.isoformat()}.json"
 
     detail.to_csv(detail_path, index=False, encoding="utf-8-sig")
     summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+    if forward_prices is not None:
+        forward_prices.to_csv(forward_prices_path, index=False, encoding="utf-8-sig")
     payload = {
         "report_date": report_date.isoformat(),
         "detail_rows": int(len(detail)),
         "summary_rows": int(len(summary)),
+        "forward_price_rows": int(len(forward_prices)) if forward_prices is not None else 0,
         "detail_path": str(detail_path),
         "summary_path": str(summary_path),
+        "forward_prices_path": str(forward_prices_path) if forward_prices is not None else None,
+        "sampled_trade_dates": [item.isoformat() for item in sampled_trade_dates] if sampled_trade_dates is not None else None,
+        "sampled_trade_date_count": len(sampled_trade_dates) if sampled_trade_dates is not None else None,
+        "sample_seed": sample_seed,
         "entry_note": detail["entry_note"].iloc[0] if not detail.empty and "entry_note" in detail.columns else None,
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {
+    paths_map = {
         "detail_path": detail_path,
         "summary_path": summary_path,
+        "json_path": json_path,
+    }
+    if forward_prices is not None:
+        paths_map["forward_prices_path"] = forward_prices_path
+    return paths_map
+
+
+def save_pattern_stop_research_reports(
+    paths: ProjectPaths,
+    *,
+    report_date: date,
+    trades: pd.DataFrame,
+    summary: pd.DataFrame,
+    best: pd.DataFrame,
+    input_path: Path,
+    output: str | None = None,
+) -> dict[str, Path]:
+    target_dir = paths.reports_dir / "backtests" / "patterns"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = Path(output) if output else target_dir / f"pattern_stop_grid_{report_date.isoformat()}.csv"
+    best_path = target_dir / f"pattern_stop_grid_best_{report_date.isoformat()}.csv"
+    trades_path = target_dir / f"pattern_stop_grid_trades_{report_date.isoformat()}.csv"
+    json_path = target_dir / f"pattern_stop_grid_{report_date.isoformat()}.json"
+
+    summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+    best.to_csv(best_path, index=False, encoding="utf-8-sig")
+    trades.to_csv(trades_path, index=False, encoding="utf-8-sig")
+    payload = {
+        "report_date": report_date.isoformat(),
+        "input_path": str(input_path),
+        "trade_rows": int(len(trades)),
+        "summary_rows": int(len(summary)),
+        "best_rows": int(len(best)),
+        "summary_path": str(summary_path),
+        "best_path": str(best_path),
+        "trades_path": str(trades_path),
+    }
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "summary_path": summary_path,
+        "best_path": best_path,
+        "trades_path": trades_path,
         "json_path": json_path,
     }
 

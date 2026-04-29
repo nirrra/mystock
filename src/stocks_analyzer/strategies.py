@@ -8,8 +8,6 @@ from .models import AppConfig, Type1Config, Type2Config, Type3Config, Type4Confi
 from .volume_top_breakout import (
     VolumeTopBreakoutConfig,
     VolumeTopBreakoutEvent,
-    breakout_candle_quality,
-    classify_turnover,
     detect_volume_top_breakout,
 )
 
@@ -17,7 +15,7 @@ from .volume_top_breakout import (
 VOLUME_TOP_PRE_BREAKOUT = "volume_top_pre_breakout"
 VOLUME_TOP_BREAKOUT = "volume_top_breakout"
 VOLUME_TOP_FOLLOW_THROUGH = "volume_top_follow_through"
-PLATFORM_BREAKOUT = "platform_breakout"
+DUCK_NOSTRIL_CROSS = "duck_nostril_cross"
 TREND_PULLBACK = "trend_pullback"
 DOUBLE_VOLUME_SUPPORT_REBOUND = "double_volume_support_rebound"
 
@@ -25,7 +23,7 @@ STRATEGY_NAMES = (
     VOLUME_TOP_PRE_BREAKOUT,
     VOLUME_TOP_BREAKOUT,
     VOLUME_TOP_FOLLOW_THROUGH,
-    PLATFORM_BREAKOUT,
+    DUCK_NOSTRIL_CROSS,
     TREND_PULLBACK,
     DOUBLE_VOLUME_SUPPORT_REBOUND,
 )
@@ -60,7 +58,7 @@ def evaluate_strategies(
         match = _apply_volume_top_follow_through(history_df, symbol, name, config.type3, volume_top_context)
         if match is not None:
             results.append(match)
-    if PLATFORM_BREAKOUT in selected:
+    if DUCK_NOSTRIL_CROSS in selected:
         match = _apply_type4(history_df, symbol, name, config.type4)
         if match is not None:
             results.append(match)
@@ -82,14 +80,15 @@ def required_history_days(config: AppConfig, selected: Sequence[str]) -> int:
         volume_top = _to_volume_top_config(config.type1)
         requirements.append(max(60, volume_top.min_old_high_gap_days + 2 * volume_top.peak_window_days + 1))
         requirements.append(volume_top.breakout_volume_high_lookback_days + 1)
-    if PLATFORM_BREAKOUT in selected:
+    if DUCK_NOSTRIL_CROSS in selected:
         requirements.append(
             max(
                 60,
-                config.type4.main_rise_window_days
-                + config.type4.transition_max_days
-                + config.type4.platform_max_days
+                config.type4.max_peak_age_days
+                + config.type4.peak_left_window_days
+                + config.type4.neck_lookback_days
                 + 1,
+                config.type4.max_peak_scan_days,
             )
         )
     if TREND_PULLBACK in selected:
@@ -319,62 +318,42 @@ def _apply_volume_top_follow_through(
 
 
 def _apply_type4(history_df: pd.DataFrame, symbol: str, name: str, config: Type4Config) -> dict[str, object] | None:
-    minimum_length = max(
-        60,
-        config.main_rise_window_days + config.transition_max_days + config.platform_min_days + 1,
-    )
-    if len(history_df) < minimum_length:
+    if len(history_df) < max(60, config.neck_lookback_days + config.pullback_min_days + config.peak_left_window_days + 1):
         return None
 
     latest = history_df.iloc[-1]
-    if pd.isna(latest["ma_10"]):
+    for column in ("ma_5", "ma_10", "ma_20", "ma_60"):
+        if pd.isna(latest.get(column)):
+            return None
+
+    close_price = float(latest["close"])
+    if close_price <= 0:
         return None
-    if float(latest["close"]) <= float(latest["ma_10"]):
+    if close_price < float(latest["ma_20"]) * (1.0 + config.current_above_ma20_min_pct):
+        return None
+    if close_price < float(latest["ma_60"]) * (1.0 + config.current_above_ma60_min_pct):
+        return None
+    if pd.notna(latest.get("return_1d")) and float(latest["return_1d"]) > config.max_today_return_pct:
         return None
 
-    breakout_event = _find_recent_platform_breakout(history_df, config)
-    if breakout_event is None:
-        return None
-
-    platform_high = float(breakout_event["platform_high"])
-    distance_pct = 0.0 if platform_high <= 0 else float(latest["close"]) / platform_high - 1.0
-    if distance_pct > config.post_breakout_max_distance_pct:
+    context = _find_recent_duck_nostril_cross(history_df, config)
+    if context is None:
         return None
 
     reason = (
-        f"first rise {breakout_event['main_rise_return_pct']:.2%} in {config.main_rise_window_days}d, "
-        f"platform={breakout_event['platform_window_days']}d range={breakout_event['platform_range_pct']:.2%}, "
-        f"breakout on {breakout_event['breakout_date']}, distance={distance_pct:.2%}"
+        f"duck peak {context['duck_peak_date']} at {float(context['duck_peak_price']):.2f}, "
+        f"neck={float(context['neck_return_pct']):.2%}, "
+        f"pullback={float(context['peak_to_pullback_drawdown_pct']):.2%}, "
+        f"cross={context['nostril_cross_date']}, "
+        f"vol/pk_tail={float(context['pullback_volume_peak_tail_ratio']):.2f}"
     )
     return _build_result(
         history_df=history_df,
         symbol=symbol,
         name=name,
-        strategy_name=PLATFORM_BREAKOUT,
+        strategy_name=DUCK_NOSTRIL_CROSS,
         reason=reason,
-        main_rise_start_date=breakout_event["main_rise_start_date"],
-        main_rise_end_date=breakout_event["main_rise_end_date"],
-        main_rise_return_pct=breakout_event["main_rise_return_pct"],
-        transition_days=breakout_event["transition_days"],
-        platform_start_date=breakout_event["platform_start_date"],
-        platform_end_date=breakout_event["platform_end_date"],
-        platform_high=platform_high,
-        breakout_volume_ratio=breakout_event["breakout_volume_ratio"],
-        breakout_close_position=breakout_event["breakout_close_position"],
-        breakout_upper_shadow_pct=breakout_event["breakout_upper_shadow_pct"],
-        breakout_body_pct=breakout_event["breakout_body_pct"],
-        breakout_turnover=breakout_event["breakout_turnover"],
-        breakout_turnover_state=breakout_event["breakout_turnover_state"],
-        days_after_breakout=breakout_event["days_after_breakout"],
-        platform_range_pct=breakout_event["platform_range_pct"],
-        platform_volume_contraction_ratio=breakout_event["platform_volume_contraction_ratio"],
-        platform_range_contraction_ratio=breakout_event["platform_range_contraction_ratio"],
-        platform_low_lift_pct=breakout_event["platform_low_lift_pct"],
-        platform_max_bearish_body_pct=breakout_event["platform_max_bearish_body_pct"],
-        platform_max_bearish_volume_ratio=breakout_event["platform_max_bearish_volume_ratio"],
-        platform_window_days=breakout_event["platform_window_days"],
-        breakout_date=breakout_event["breakout_date"],
-        distance_to_platform_high_pct=distance_pct,
+        **context,
     )
 
 
@@ -789,169 +768,311 @@ def _row_date(row: pd.Series) -> str:
     return pd.Timestamp(row["trade_date"]).date().isoformat()
 
 
-def _safe_float_or_none(value: object) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    return float(value)
-
-
-def _find_recent_platform_breakout(history_df: pd.DataFrame, config: Type4Config) -> dict[str, object] | None:
+def _find_recent_duck_nostril_cross(history_df: pd.DataFrame, config: Type4Config) -> dict[str, object] | None:
     latest_index = len(history_df) - 1
-    start_index = max(
-        config.main_rise_window_days + config.transition_max_days + config.platform_min_days,
-        latest_index - config.post_breakout_max_days,
+    first_peak_index = max(
+        config.peak_left_window_days,
+        latest_index - min(config.max_peak_age_days, config.max_peak_scan_days),
     )
+    last_peak_index = latest_index - config.min_peak_age_days
+    if last_peak_index < first_peak_index:
+        return None
 
-    for breakout_index in range(latest_index, start_index - 1, -1):
-        breakout_row = history_df.iloc[breakout_index]
-        if pd.isna(breakout_row["volume_ratio_20"]) or float(breakout_row["volume_ratio_20"]) < config.breakout_volume_ratio_min:
-            continue
-        quality = breakout_candle_quality(breakout_row)
-        if quality is None:
-            continue
-        if quality["close_position"] < config.breakout_min_close_position:
-            continue
-        if quality["upper_shadow_pct"] > config.breakout_max_upper_shadow_pct:
-            continue
-        if quality["body_pct"] < config.breakout_min_body_pct:
+    for peak_index in range(last_peak_index, first_peak_index - 1, -1):
+        context = _build_duck_peak_context(history_df, peak_index, config)
+        if context is None:
             continue
 
-        breakout_close = float(breakout_row["close"])
-        for platform_window_days in range(config.platform_max_days, config.platform_min_days - 1, -1):
-            platform_start = breakout_index - platform_window_days
-            if platform_start <= 0:
-                continue
+        cross = _find_duck_nostril_cross(history_df, context, config)
+        if cross is None:
+            continue
 
-            platform = history_df.iloc[platform_start:breakout_index]
-            if len(platform) < platform_window_days:
-                continue
+        latest = history_df.iloc[latest_index]
+        duck_peak_price = float(context["duck_peak_price"])
+        close_price = float(latest["close"])
+        distance_to_duck_peak_pct = close_price / duck_peak_price - 1.0 if duck_peak_price > 0 else float("inf")
+        if distance_to_duck_peak_pct > abs(config.current_below_peak_min_pct):
+            continue
 
-            platform_high = float(platform["high"].max())
-            platform_low = float(platform["low"].min())
-            if platform_low <= 0:
-                continue
-            platform_range_pct = (platform_high - platform_low) / platform_low
-            if platform_range_pct > config.platform_range_max:
-                continue
-            if breakout_close <= platform_high:
-                continue
-
-            stability = _platform_stability_metrics(platform, config)
-            if stability is None:
-                continue
-
-            for transition_days in range(config.transition_min_days, config.transition_max_days + 1):
-                main_rise_end = platform_start - transition_days - 1
-                main_rise_start = main_rise_end - config.main_rise_window_days + 1
-                if main_rise_start < 0:
-                    continue
-
-                main_rise = history_df.iloc[main_rise_start : main_rise_end + 1]
-                if len(main_rise) < config.main_rise_window_days:
-                    continue
-
-                main_rise_start_close = float(main_rise.iloc[0]["close"])
-                main_rise_end_close = float(main_rise.iloc[-1]["close"])
-                if main_rise_start_close <= 0:
-                    continue
-                main_rise_return_pct = main_rise_end_close / main_rise_start_close - 1.0
-                if main_rise_return_pct < config.main_rise_return_min:
-                    continue
-
-                return {
-                    "breakout_index": breakout_index,
-                    "breakout_date": pd.Timestamp(breakout_row["trade_date"]).date().isoformat(),
-                    "breakout_volume_ratio": float(breakout_row["volume_ratio_20"]),
-                    "breakout_close_position": quality["close_position"],
-                    "breakout_upper_shadow_pct": quality["upper_shadow_pct"],
-                    "breakout_body_pct": quality["body_pct"],
-                    "breakout_turnover": _safe_float_or_none(breakout_row.get("turnover")),
-                    "breakout_turnover_state": classify_turnover(breakout_row.get("turnover")),
-                    "days_after_breakout": latest_index - breakout_index,
-                    "platform_high": platform_high,
-                    "platform_range_pct": platform_range_pct,
-                    "platform_volume_contraction_ratio": stability["platform_volume_contraction_ratio"],
-                    "platform_range_contraction_ratio": stability["platform_range_contraction_ratio"],
-                    "platform_low_lift_pct": stability["platform_low_lift_pct"],
-                    "platform_max_bearish_body_pct": stability["platform_max_bearish_body_pct"],
-                    "platform_max_bearish_volume_ratio": stability["platform_max_bearish_volume_ratio"],
-                    "platform_window_days": platform_window_days,
-                    "platform_start_date": pd.Timestamp(platform.iloc[0]["trade_date"]).date().isoformat(),
-                    "platform_end_date": pd.Timestamp(platform.iloc[-1]["trade_date"]).date().isoformat(),
-                    "main_rise_start_date": pd.Timestamp(main_rise.iloc[0]["trade_date"]).date().isoformat(),
-                    "main_rise_end_date": pd.Timestamp(main_rise.iloc[-1]["trade_date"]).date().isoformat(),
-                    "main_rise_return_pct": main_rise_return_pct,
-                    "transition_days": transition_days,
-                }
+        extra = {key: value for key, value in context.items() if not key.endswith("_index")}
+        extra.update(cross)
+        extra["distance_to_duck_peak_pct"] = distance_to_duck_peak_pct
+        extra["latest_ma5_ma10_gap_pct"] = _ma_gap_pct(latest)
+        return extra
 
     return None
 
 
-def _platform_stability_metrics(platform: pd.DataFrame, config: Type4Config) -> dict[str, float] | None:
-    split_index = len(platform) // 2
-    if split_index <= 0 or split_index >= len(platform):
+def _build_duck_peak_context(history_df: pd.DataFrame, peak_index: int, config: Type4Config) -> dict[str, object] | None:
+    latest_index = len(history_df) - 1
+    days_since_peak = latest_index - peak_index
+    if days_since_peak < config.pullback_min_days or days_since_peak > config.pullback_max_days:
+        return None
+    if not _is_duck_peak(history_df, peak_index, config):
         return None
 
-    front = platform.iloc[:split_index]
-    back = platform.iloc[split_index:]
-
-    front_volume = pd.to_numeric(front["volume"], errors="coerce").mean()
-    back_volume = pd.to_numeric(back["volume"], errors="coerce").mean()
-    if pd.isna(front_volume) or pd.isna(back_volume) or float(front_volume) <= 0:
+    peak = history_df.iloc[peak_index]
+    peak_price = float(peak["high"])
+    peak_close = float(peak["close"])
+    if peak_price <= 0 or peak_close <= 0:
         return None
-    volume_contraction_ratio = float(back_volume) / float(front_volume)
-    if volume_contraction_ratio > config.platform_volume_contraction_max:
+    if config.require_peak_above_ma60 and (pd.isna(peak.get("ma_60")) or peak_close < float(peak["ma_60"])):
         return None
-
-    front_range = _window_range_pct(front)
-    back_range = _window_range_pct(back)
-    if front_range is None or back_range is None or front_range <= 0:
-        return None
-    range_contraction_ratio = back_range / front_range
-    if range_contraction_ratio > config.platform_range_contraction_max:
+    if pd.isna(peak.get("ma_20")) or peak_close < float(peak["ma_20"]) * (1.0 + config.peak_close_above_ma20_min_pct):
         return None
 
-    front_low = float(pd.to_numeric(front["low"], errors="coerce").min())
-    back_low = float(pd.to_numeric(back["low"], errors="coerce").min())
-    if pd.isna(front_low) or pd.isna(back_low) or front_low <= 0:
+    neck_start_index = max(0, peak_index - config.neck_lookback_days + 1)
+    neck = history_df.iloc[neck_start_index : peak_index + 1]
+    if len(neck) < max(2, min(config.neck_lookback_days, peak_index + 1)):
         return None
-    low_lift_pct = back_low / front_low - 1.0
-    if low_lift_pct < config.platform_low_lift_min_pct:
+    neck_start_close = float(neck.iloc[0]["close"])
+    neck_low = float(pd.to_numeric(neck["low"], errors="coerce").min())
+    if neck_start_close <= 0 or neck_low <= 0:
+        return None
+    neck_return_pct = peak_price / neck_start_close - 1.0
+    neck_low_to_peak_return_pct = peak_price / neck_low - 1.0
+    if neck_return_pct < config.neck_min_return:
+        return None
+    if neck_low_to_peak_return_pct < config.neck_low_to_peak_min_return:
         return None
 
-    bearish = platform.loc[platform["close"].astype(float) < platform["open"].astype(float)].copy()
-    max_bearish_body_pct = 0.0
-    max_bearish_volume_ratio = 0.0
-    platform_avg_volume = float(pd.to_numeric(platform["volume"], errors="coerce").mean())
-    if not bearish.empty and platform_avg_volume > 0:
-        open_price = pd.to_numeric(bearish["open"], errors="coerce")
-        close_price = pd.to_numeric(bearish["close"], errors="coerce")
-        volume = pd.to_numeric(bearish["volume"], errors="coerce")
-        body_pct = (open_price - close_price).div(open_price.where(open_price > 0)).fillna(0.0)
-        volume_ratio = volume.div(platform_avg_volume).fillna(0.0)
-        max_bearish_body_pct = float(body_pct.max())
-        max_bearish_volume_ratio = float(volume_ratio.max())
-        large_bearish = (body_pct >= config.platform_large_bearish_body_min_pct) & (
-            volume_ratio >= config.platform_large_bearish_volume_ratio_min
-        )
-        if bool(large_bearish.any()):
-            return None
+    pullback = history_df.iloc[peak_index + 1 : latest_index + 1].reset_index(drop=False)
+    if len(pullback) < config.pullback_min_days:
+        return None
+    pullback_low_offset = int(pullback["low"].astype(float).to_numpy().argmin())
+    pullback_low_row = pullback.iloc[pullback_low_offset]
+    pullback_low_index = int(pullback_low_row["index"])
+    pullback_low_price = float(pullback_low_row["low"])
+    peak_to_pullback_drawdown_pct = 1.0 - pullback_low_price / peak_price
+    if peak_to_pullback_drawdown_pct < config.peak_to_pullback_min_drawdown_pct:
+        return None
+
+    if config.forbid_effective_break_ma60 and not _pullback_respects_ma60_floor(history_df, peak_index + 1, latest_index, config):
+        return None
+
+    volume_metrics = _duck_pullback_volume_metrics(history_df, peak_index, latest_index, config)
+    if volume_metrics is None:
+        return None
+
+    bearish_metrics = _duck_large_bearish_metrics(pullback, config)
+    if bearish_metrics is None:
+        return None
 
     return {
-        "platform_volume_contraction_ratio": volume_contraction_ratio,
-        "platform_range_contraction_ratio": range_contraction_ratio,
-        "platform_low_lift_pct": low_lift_pct,
-        "platform_max_bearish_body_pct": max_bearish_body_pct,
-        "platform_max_bearish_volume_ratio": max_bearish_volume_ratio,
+        "duck_peak_index": peak_index,
+        "duck_peak_date": _row_date(peak),
+        "duck_peak_price": peak_price,
+        "days_since_duck_peak": days_since_peak,
+        "neck_start_date": _row_date(neck.iloc[0]),
+        "neck_return_pct": neck_return_pct,
+        "neck_low_to_peak_return_pct": neck_low_to_peak_return_pct,
+        "pullback_low_index": pullback_low_index,
+        "pullback_low_date": _row_date(history_df.iloc[pullback_low_index]),
+        "pullback_low_price": pullback_low_price,
+        "peak_to_pullback_drawdown_pct": peak_to_pullback_drawdown_pct,
+        **volume_metrics,
+        **bearish_metrics,
     }
 
 
-def _window_range_pct(frame: pd.DataFrame) -> float | None:
-    high = float(pd.to_numeric(frame["high"], errors="coerce").max())
-    low = float(pd.to_numeric(frame["low"], errors="coerce").min())
-    if pd.isna(high) or pd.isna(low) or low <= 0:
+def _is_duck_peak(history_df: pd.DataFrame, peak_index: int, config: Type4Config) -> bool:
+    left = peak_index - config.peak_left_window_days
+    right = peak_index + config.peak_right_window_days
+    if left < 0 or right >= len(history_df):
+        return False
+    peak_high = float(history_df.iloc[peak_index]["high"])
+    window_highs = history_df.iloc[left : right + 1]["high"].astype(float)
+    return bool(peak_high >= float(window_highs.max()))
+
+
+def _pullback_respects_ma60_floor(history_df: pd.DataFrame, start_index: int, end_index: int, config: Type4Config) -> bool:
+    window = history_df.iloc[start_index : end_index + 1].loc[:, ["low", "ma_60"]].copy()
+    window["low"] = pd.to_numeric(window["low"], errors="coerce")
+    window["ma_60"] = pd.to_numeric(window["ma_60"], errors="coerce")
+    window = window.dropna(subset=["low", "ma_60"])
+    if window.empty:
+        return False
+    return bool((window["low"] >= window["ma_60"] * (1.0 - config.pullback_low_ma60_tolerance_pct)).all())
+
+
+def _duck_pullback_volume_metrics(
+    history_df: pd.DataFrame,
+    peak_index: int,
+    latest_index: int,
+    config: Type4Config,
+) -> dict[str, float] | None:
+    peak_tail_start = max(0, peak_index - 2)
+    peak_tail = pd.to_numeric(history_df.iloc[peak_tail_start : peak_index + 1]["volume"], errors="coerce").dropna()
+    pullback = pd.to_numeric(history_df.iloc[peak_index + 1 : latest_index + 1]["volume"], errors="coerce").dropna()
+    if peak_tail.empty or pullback.empty:
         return None
-    return high / low - 1.0
+
+    peak_tail_avg_volume = float(peak_tail.mean())
+    pullback_avg_volume = float(pullback.mean())
+    pullback_max_volume = float(pullback.max())
+    if peak_tail_avg_volume <= 0:
+        return None
+    pullback_volume_peak_tail_ratio = pullback_avg_volume / peak_tail_avg_volume
+    pullback_max_single_day_peak_tail_ratio = pullback_max_volume / peak_tail_avg_volume
+    if pullback_volume_peak_tail_ratio > config.pullback_volume_max_peak_tail_ratio:
+        return None
+    if pullback_max_single_day_peak_tail_ratio > config.pullback_max_single_day_volume_peak_tail_ratio:
+        return None
+
+    pullback_frame = history_df.iloc[peak_index + 1 : latest_index + 1]
+    split_index = len(pullback_frame) // 2
+    if split_index <= 0 or split_index >= len(pullback_frame):
+        return None
+    front = pd.to_numeric(pullback_frame.iloc[:split_index]["volume"], errors="coerce").dropna()
+    back = pd.to_numeric(pullback_frame.iloc[split_index:]["volume"], errors="coerce").dropna()
+    if front.empty or back.empty:
+        return None
+    front_avg = float(front.mean())
+    back_avg = float(back.mean())
+    if front_avg <= 0:
+        return None
+    pullback_back_half_volume_ratio = back_avg / front_avg
+    if pullback_back_half_volume_ratio > config.pullback_back_half_volume_ratio:
+        return None
+
+    return {
+        "peak_tail_avg_volume": peak_tail_avg_volume,
+        "pullback_avg_volume": pullback_avg_volume,
+        "pullback_max_volume": pullback_max_volume,
+        "pullback_volume_peak_tail_ratio": pullback_volume_peak_tail_ratio,
+        "pullback_max_single_day_peak_tail_ratio": pullback_max_single_day_peak_tail_ratio,
+        "pullback_back_half_volume_ratio": pullback_back_half_volume_ratio,
+    }
+
+
+def _duck_large_bearish_metrics(pullback: pd.DataFrame, config: Type4Config) -> dict[str, float | int] | None:
+    avg_volume = float(pd.to_numeric(pullback["volume"], errors="coerce").mean())
+    if avg_volume <= 0:
+        return None
+
+    bearish = pullback.loc[pullback["close"].astype(float) < pullback["open"].astype(float)].copy()
+    if bearish.empty:
+        return {
+            "large_bearish_count": 0,
+            "max_bearish_body_pct": 0.0,
+            "max_bearish_volume_ratio": 0.0,
+        }
+
+    open_price = pd.to_numeric(bearish["open"], errors="coerce")
+    close_price = pd.to_numeric(bearish["close"], errors="coerce")
+    volume = pd.to_numeric(bearish["volume"], errors="coerce")
+    body_pct = (open_price - close_price).div(open_price.where(open_price > 0)).fillna(0.0)
+    volume_ratio = volume.div(avg_volume).fillna(0.0)
+    large_bearish = (body_pct >= config.large_bearish_body_min_pct) & (
+        volume_ratio >= config.large_bearish_volume_ratio_min
+    )
+    large_bearish_count = int(large_bearish.sum())
+    if large_bearish_count > config.max_large_bearish_count:
+        return None
+    return {
+        "large_bearish_count": large_bearish_count,
+        "max_bearish_body_pct": float(body_pct.max()),
+        "max_bearish_volume_ratio": float(volume_ratio.max()),
+    }
+
+
+def _find_duck_nostril_cross(
+    history_df: pd.DataFrame,
+    context: dict[str, object],
+    config: Type4Config,
+) -> dict[str, object] | None:
+    latest_index = len(history_df) - 1
+    peak_index = int(context["duck_peak_index"])
+    pullback_low_index = int(context["pullback_low_index"])
+    start_index = max(peak_index + config.pullback_min_days, latest_index - config.cross_lookback_days + 1)
+    if config.require_cross_after_pullback_low:
+        start_index = max(start_index, pullback_low_index)
+    for cross_index in range(latest_index, start_index - 1, -1):
+        if not _is_ma5_cross_above_ma10(history_df, cross_index):
+            continue
+        if config.require_prior_ma5_below_ma10 and not _has_prior_ma5_below_ma10(history_df, cross_index, config):
+            continue
+        if config.require_post_cross_ma5_above_ma10 and not _is_nostril_cross_still_valid(history_df, cross_index, config):
+            continue
+        cross = history_df.iloc[cross_index]
+        cross_gap_pct = _ma_gap_pct(cross)
+        if cross_gap_pct is None:
+            continue
+        if cross_gap_pct < config.cross_confirm_gap_min_pct or cross_gap_pct > config.cross_confirm_gap_max_pct:
+            continue
+        nostril_volume_ma20_ratio = _volume_ma20_ratio(cross)
+        if nostril_volume_ma20_ratio is None or nostril_volume_ma20_ratio > config.nostril_day_volume_ma20_max_ratio:
+            continue
+        return {
+            "nostril_cross_date": _row_date(cross),
+            "days_since_nostril_cross": latest_index - cross_index,
+            "nostril_cross_ma5_ma10_gap_pct": cross_gap_pct,
+            "nostril_volume_ma20_ratio": nostril_volume_ma20_ratio,
+            "cross_after_pullback_low_days": cross_index - pullback_low_index,
+        }
+    return None
+
+
+def _is_nostril_cross_still_valid(history_df: pd.DataFrame, cross_index: int, config: Type4Config) -> bool:
+    latest = history_df.iloc[-1]
+    latest_gap = _ma_gap_pct(latest)
+    if latest_gap is None or latest_gap < 0:
+        return False
+
+    latest_ma10 = float(latest["ma_10"])
+    latest_close = float(latest["close"])
+    if latest_ma10 <= 0 or latest_close < latest_ma10 * (1.0 - config.latest_close_ma10_tolerance_pct):
+        return False
+
+    post_cross = history_df.iloc[cross_index : len(history_df)].loc[:, ["ma_5", "ma_10"]].copy()
+    post_cross["ma_5"] = pd.to_numeric(post_cross["ma_5"], errors="coerce")
+    post_cross["ma_10"] = pd.to_numeric(post_cross["ma_10"], errors="coerce")
+    if post_cross.isna().any().any():
+        return False
+    return bool((post_cross["ma_5"] > post_cross["ma_10"]).all())
+
+
+def _is_ma5_cross_above_ma10(history_df: pd.DataFrame, index: int) -> bool:
+    if index <= 0:
+        return False
+    current = history_df.iloc[index]
+    previous = history_df.iloc[index - 1]
+    for row in (current, previous):
+        if pd.isna(row.get("ma_5")) or pd.isna(row.get("ma_10")):
+            return False
+    return float(previous["ma_5"]) <= float(previous["ma_10"]) and float(current["ma_5"]) > float(current["ma_10"])
+
+
+def _has_prior_ma5_below_ma10(history_df: pd.DataFrame, cross_index: int, config: Type4Config) -> bool:
+    start_index = cross_index - config.prior_ma5_below_ma10_min_days
+    if start_index < 0:
+        return False
+    prior = history_df.iloc[start_index:cross_index]
+    if len(prior) < config.prior_ma5_below_ma10_min_days:
+        return False
+    ma5 = pd.to_numeric(prior["ma_5"], errors="coerce")
+    ma10 = pd.to_numeric(prior["ma_10"], errors="coerce")
+    if ma5.isna().any() or ma10.isna().any():
+        return False
+    return bool((ma5 < ma10).all())
+
+
+def _ma_gap_pct(row: pd.Series) -> float | None:
+    if pd.isna(row.get("ma_5")) or pd.isna(row.get("ma_10")):
+        return None
+    ma10 = float(row["ma_10"])
+    if ma10 <= 0:
+        return None
+    return float(row["ma_5"]) / ma10 - 1.0
+
+
+def _volume_ma20_ratio(row: pd.Series) -> float | None:
+    if pd.isna(row.get("volume")) or pd.isna(row.get("volume_ma_20")):
+        return None
+    volume_ma20 = float(row["volume_ma_20"])
+    if volume_ma20 <= 0:
+        return None
+    return float(row["volume"]) / volume_ma20
 
 
 def _find_recent_pattern5_high(history_df: pd.DataFrame, config: Type5Config) -> dict[str, object] | None:

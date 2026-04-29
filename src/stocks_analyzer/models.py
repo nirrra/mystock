@@ -66,24 +66,40 @@ class Type3Config:
 
 @dataclass(slots=True)
 class Type4Config:
-    main_rise_window_days: int
-    main_rise_return_min: float
-    transition_min_days: int
-    transition_max_days: int
-    platform_min_days: int
-    platform_max_days: int
-    platform_range_max: float
-    platform_volume_contraction_max: float
-    platform_range_contraction_max: float
-    platform_low_lift_min_pct: float
-    platform_large_bearish_body_min_pct: float
-    platform_large_bearish_volume_ratio_min: float
-    breakout_volume_ratio_min: float
-    breakout_min_close_position: float
-    breakout_max_upper_shadow_pct: float
-    breakout_min_body_pct: float
-    post_breakout_max_days: int
-    post_breakout_max_distance_pct: float
+    max_peak_scan_days: int
+    min_peak_age_days: int
+    max_peak_age_days: int
+    peak_left_window_days: int
+    peak_right_window_days: int
+    neck_lookback_days: int
+    neck_min_return: float
+    neck_low_to_peak_min_return: float
+    require_peak_above_ma60: bool
+    peak_close_above_ma20_min_pct: float
+    pullback_min_days: int
+    pullback_max_days: int
+    peak_to_pullback_min_drawdown_pct: float
+    pullback_low_ma60_tolerance_pct: float
+    forbid_effective_break_ma60: bool
+    pullback_volume_max_peak_tail_ratio: float
+    pullback_back_half_volume_ratio: float
+    nostril_day_volume_ma20_max_ratio: float
+    pullback_max_single_day_volume_peak_tail_ratio: float
+    require_prior_ma5_below_ma10: bool
+    prior_ma5_below_ma10_min_days: int
+    require_cross_after_pullback_low: bool
+    cross_lookback_days: int
+    cross_confirm_gap_min_pct: float
+    cross_confirm_gap_max_pct: float
+    require_post_cross_ma5_above_ma10: bool
+    latest_close_ma10_tolerance_pct: float
+    current_below_peak_min_pct: float
+    current_above_ma20_min_pct: float
+    current_above_ma60_min_pct: float
+    max_today_return_pct: float
+    large_bearish_body_min_pct: float
+    large_bearish_volume_ratio_min: float
+    max_large_bearish_count: int
 
 
 @dataclass(slots=True)
