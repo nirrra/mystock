@@ -32,8 +32,7 @@ DISPLAY_COLUMNS = [
     "platform_low_lift_pct",
     "platform_max_bearish_body_pct",
     "platform_max_bearish_volume_ratio",
-    "pullback_max_bearish_body_pct",
-    "pullback_max_bearish_volume_ratio",
+    "pullback_max_rise_tail_volume_ratio",
     "volume_ratio_20",
     "reason",
 ]
@@ -60,7 +59,6 @@ def format_report(dataframe: pd.DataFrame, limit: int) -> str:
         "ma60_slope_long_pct",
         "platform_low_lift_pct",
         "platform_max_bearish_body_pct",
-        "pullback_max_bearish_body_pct",
     ):
         if column in display.columns:
             display[column] = display[column].map(lambda value: f"{value:.2%}" if pd.notna(value) else "nan")
@@ -74,7 +72,7 @@ def format_report(dataframe: pd.DataFrame, limit: int) -> str:
         "platform_volume_contraction_ratio",
         "platform_range_contraction_ratio",
         "platform_max_bearish_volume_ratio",
-        "pullback_max_bearish_volume_ratio",
+        "pullback_max_rise_tail_volume_ratio",
     ):
         if column in display.columns:
             display[column] = display[column].map(lambda value: f"{value:.2f}" if pd.notna(value) else "nan")

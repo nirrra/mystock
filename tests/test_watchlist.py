@@ -195,8 +195,7 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
                 "ma60_slope_short_pct": 0.004,
                 "ma60_slope_long_pct": 0.03,
                 "pullback_volume_contraction_ratio": 0.82,
-                "pullback_max_bearish_body_pct": 0.035,
-                "pullback_max_bearish_volume_ratio": 1.25,
+                "pullback_max_rise_tail_volume_ratio": 0.82,
                 "platform_volume_contraction_ratio": 0.72,
                 "platform_range_contraction_ratio": 0.64,
                 "platform_low_lift_pct": 0.018,
@@ -270,7 +269,7 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
     assert payload["candidates"][1]["ma20_slope_short_pct"] == 0.012
     assert payload["candidates"][1]["ma60_slope_long_pct"] == 0.03
     assert payload["candidates"][1]["pullback_volume_contraction_ratio"] == 0.82
-    assert payload["candidates"][1]["pullback_max_bearish_volume_ratio"] == 1.25
+    assert payload["candidates"][1]["pullback_max_rise_tail_volume_ratio"] == 0.82
     assert payload["candidates"][1]["platform_volume_contraction_ratio"] == 0.72
     assert payload["candidates"][1]["platform_range_contraction_ratio"] == 0.64
     assert payload["candidates"][1]["platform_low_lift_pct"] == 0.018

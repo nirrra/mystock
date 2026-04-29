@@ -433,9 +433,7 @@ def test_evaluate_double_volume_support_rebound_support_hold_returns_match() -> 
     assert result[0]["limit_up_like_count"] >= 2
     assert result[0]["anchor_to_peak_return_pct"] >= 0.18
     assert result[0]["pullback_back_half_volume_ratio"] <= 0.8
-    assert result[0]["pullback_max_bearish_body_pct"] < config.type6.pullback_large_bearish_body_min_pct or (
-        result[0]["pullback_max_bearish_volume_ratio"] < config.type6.pullback_large_bearish_volume_ratio_min
-    )
+    assert result[0]["pullback_max_rise_tail_volume_ratio"] <= config.type6.pullback_max_rise_tail_volume_ratio
 
 
 def test_evaluate_double_volume_support_rebound_break_reclaim_returns_match() -> None:
@@ -476,16 +474,14 @@ def test_evaluate_double_volume_support_rebound_rejects_high_volume_breakdown() 
     assert result == []
 
 
-def test_evaluate_double_volume_support_rebound_rejects_pullback_distribution_candle() -> None:
+def test_evaluate_double_volume_support_rebound_rejects_if_pullback_volume_exceeds_rise_tail() -> None:
     config = _load_test_config()
 
     dataframe = _build_pattern6_support_hold_frame()
-    large_bearish_index = 59
-    dataframe.loc[large_bearish_index, "open"] = 12.8
-    dataframe.loc[large_bearish_index, "close"] = 12.0
-    dataframe.loc[large_bearish_index, "high"] = 12.9
-    dataframe.loc[large_bearish_index, "low"] = 11.85
-    dataframe.loc[large_bearish_index, "volume"] = 900_000
+    peak_index = 58
+    pullback_index = peak_index + 1
+    rise_tail_avg_volume = float(dataframe.loc[peak_index - 2 : peak_index, "volume"].mean())
+    dataframe.loc[pullback_index, "volume"] = int(rise_tail_avg_volume * 1.21)
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
 
@@ -516,8 +512,8 @@ def test_evaluate_double_volume_support_rebound_rejects_close_outside_support_ra
 
     dataframe = _build_pattern6_support_hold_frame()
     latest_index = len(dataframe) - 1
-    dataframe.loc[latest_index, "close"] = 10.90
-    dataframe.loc[latest_index, "high"] = 10.95
+    dataframe.loc[latest_index, "close"] = 11.10
+    dataframe.loc[latest_index, "high"] = 11.15
 
     result = evaluate_strategies(add_indicators(dataframe), _instrument(), config, [DOUBLE_VOLUME_SUPPORT_REBOUND])
 
@@ -615,8 +611,7 @@ def _load_test_config():
     config.type5.ma_slope_short_lookback_days = 1
     config.type5.ma_slope_long_lookback_days = 10
     config.type5.pullback_volume_contraction_max = 0.95
-    config.type6.pullback_large_bearish_body_min_pct = 0.04
-    config.type6.pullback_large_bearish_volume_ratio_min = 1.5
+    config.type6.pullback_max_rise_tail_volume_ratio = 1.2
     return config
 
 

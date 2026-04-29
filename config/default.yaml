@@ -182,14 +182,13 @@ strategies:
     launch_limit_up_min_count: 2
     peak_to_pullback_min_drawdown_pct: 0.08
     pullback_max_days: 20
-    pullback_volume_max_anchor_ratio: 0.75
+    pullback_volume_max_anchor_ratio: 0.9
     pullback_volume_split_min_days: 4
     pullback_back_half_volume_ratio: 0.8
-    pullback_large_bearish_body_min_pct: 0.04
-    pullback_large_bearish_volume_ratio_min: 1.5
+    pullback_max_rise_tail_volume_ratio: 1.2
     support_tolerance_pct: 0.025
-    support_close_range_pct: 0.03
-    support_touch_lookback_days: 5
+    support_close_range_pct: 0.05
+    support_touch_lookback_days: 10
     support_break_tolerance_pct: 0.015
     break_reclaim_lookback_days: 8
     break_below_pct: 0.01

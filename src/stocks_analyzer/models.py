@@ -116,8 +116,7 @@ class Type6Config:
     pullback_volume_max_anchor_ratio: float
     pullback_volume_split_min_days: int
     pullback_back_half_volume_ratio: float
-    pullback_large_bearish_body_min_pct: float
-    pullback_large_bearish_volume_ratio_min: float
+    pullback_max_rise_tail_volume_ratio: float
     support_tolerance_pct: float
     support_close_range_pct: float
     support_touch_lookback_days: int

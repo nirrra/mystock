@@ -528,8 +528,8 @@ def _build_type6_context(history_df: pd.DataFrame, anchor_index: int, config: Ty
     if back_half_volume_ratio > config.pullback_back_half_volume_ratio:
         return None
 
-    selling_metrics = _type6_pullback_selling_metrics(pullback, config)
-    if selling_metrics is None:
+    pullback_volume_metrics = _type6_pullback_volume_metrics(history_df, peak_index, latest_index, config)
+    if pullback_volume_metrics is None:
         return None
 
     prev_volume = float(history_df.iloc[anchor_index - 1]["volume"])
@@ -564,32 +564,33 @@ def _build_type6_context(history_df: pd.DataFrame, anchor_index: int, config: Ty
         "pullback_front_half_avg_volume": front_half_avg_volume,
         "pullback_back_half_avg_volume": back_half_avg_volume,
         "pullback_back_half_volume_ratio": back_half_volume_ratio,
-        **selling_metrics,
+        **pullback_volume_metrics,
     }
 
 
-def _type6_pullback_selling_metrics(pullback: pd.DataFrame, config: Type6Config) -> dict[str, float] | None:
-    bearish = pullback.loc[pullback["close"].astype(float) < pullback["open"].astype(float)].copy()
-    max_bearish_body_pct = 0.0
-    max_bearish_volume_ratio = 0.0
-    pullback_avg_volume = float(pd.to_numeric(pullback["volume"], errors="coerce").mean())
-    if not bearish.empty and pullback_avg_volume > 0:
-        open_price = pd.to_numeric(bearish["open"], errors="coerce")
-        close_price = pd.to_numeric(bearish["close"], errors="coerce")
-        volume = pd.to_numeric(bearish["volume"], errors="coerce")
-        body_pct = (open_price - close_price).div(open_price.where(open_price > 0)).fillna(0.0)
-        volume_ratio = volume.div(pullback_avg_volume).fillna(0.0)
-        max_bearish_body_pct = float(body_pct.max())
-        max_bearish_volume_ratio = float(volume_ratio.max())
-        large_bearish = (body_pct >= config.pullback_large_bearish_body_min_pct) & (
-            volume_ratio >= config.pullback_large_bearish_volume_ratio_min
-        )
-        if bool(large_bearish.any()):
-            return None
+def _type6_pullback_volume_metrics(
+    history_df: pd.DataFrame,
+    peak_index: int,
+    latest_index: int,
+    config: Type6Config,
+) -> dict[str, float] | None:
+    rise_tail_start = max(0, peak_index - 2)
+    rise_tail = pd.to_numeric(history_df.iloc[rise_tail_start : peak_index + 1]["volume"], errors="coerce").dropna()
+    pullback = pd.to_numeric(history_df.iloc[peak_index + 1 : latest_index + 1]["volume"], errors="coerce").dropna()
+    if rise_tail.empty or pullback.empty:
+        return None
+    rise_tail_avg_volume = float(rise_tail.mean())
+    pullback_max_volume = float(pullback.max())
+    if rise_tail_avg_volume <= 0:
+        return None
+    pullback_max_rise_tail_volume_ratio = pullback_max_volume / rise_tail_avg_volume
+    if pullback_max_rise_tail_volume_ratio > config.pullback_max_rise_tail_volume_ratio:
+        return None
 
     return {
-        "pullback_max_bearish_body_pct": max_bearish_body_pct,
-        "pullback_max_bearish_volume_ratio": max_bearish_volume_ratio,
+        "rise_tail_avg_volume": rise_tail_avg_volume,
+        "pullback_max_volume": pullback_max_volume,
+        "pullback_max_rise_tail_volume_ratio": pullback_max_rise_tail_volume_ratio,
     }
 
 
@@ -747,7 +748,7 @@ def _build_type6_result(
             f"double-volume break reclaim: anchor={context['anchor_date']} support={float(context['support_price']):.2f}, "
             f"peak={float(context['peak_price']):.2f} on {context['peak_date']}, "
             f"launch={float(context['launch_confirm_return_pct']):.2%}, limit_up_like={context['limit_up_like_count']}, "
-            f"max_bear_vol={float(context['pullback_max_bearish_volume_ratio']):.2f}, "
+            f"pullback_max/rise_tail={float(context['pullback_max_rise_tail_volume_ratio']):.2f}, "
             f"broke={branch['breakdown_date']} vol_ratio={float(branch['breakdown_volume_ratio_to_anchor']):.2f}, "
             f"reclaimed={branch['reclaim_date']} in {branch['days_to_reclaim']}d"
         )
@@ -758,7 +759,7 @@ def _build_type6_result(
             f"launch={float(context['launch_confirm_return_pct']):.2%}, limit_up_like={context['limit_up_like_count']}, "
             f"pullback={float(context['peak_to_pullback_drawdown_pct']):.2%}, "
             f"vol_back/front={float(context['pullback_back_half_volume_ratio']):.2f}, "
-            f"max_bear_vol={float(context['pullback_max_bearish_volume_ratio']):.2f}, "
+            f"pullback_max/rise_tail={float(context['pullback_max_rise_tail_volume_ratio']):.2f}, "
             f"touch={branch['support_touch_date']}"
         )
 
