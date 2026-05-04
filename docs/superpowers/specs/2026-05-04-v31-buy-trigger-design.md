@@ -94,9 +94,9 @@ The first implementation uses transparent rule factors. Each component contribut
 
 Positive signals:
 
-- `distance_to_ma20 >= -3%`.
+- `distance_to_ma20 >= -1%`.
 - `ma20_slope_5d > 0`.
-- `distance_to_ma60 >= -8%`.
+- `distance_to_ma60 >= -5%`.
 - `ma20_to_ma60` improving or not deeply negative.
 
 Negative signals:
