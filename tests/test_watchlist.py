@@ -9,6 +9,7 @@ import pandas as pd
 from stocks_analyzer.watchlist import (
     apply_trend_filter_to_watchlist_payload,
     build_watchlist_candidates,
+    build_watchlist_candidates_from_patterns,
     build_watchlist_candidates_from_trend,
     extract_watchlist_symbols,
     find_latest_watchlist_before,
@@ -274,6 +275,95 @@ def test_build_watchlist_candidates_preserves_technical_rules() -> None:
     assert payload["candidates"][1]["platform_range_contraction_ratio"] == 0.64
     assert payload["candidates"][1]["platform_low_lift_pct"] == 0.018
     assert payload["candidates"][1]["platform_max_bearish_volume_ratio"] == 1.2
+
+
+def test_build_watchlist_candidates_from_patterns_uses_v42_gate_v4_rank_predictions() -> None:
+    pattern_frame = pd.DataFrame(
+        [
+            {"symbol": "600000", "name": "放行高分", "pattern_id": "1", "reason": "pattern ok"},
+            {"symbol": "600001", "name": "放行低分", "pattern_id": "2", "reason": "pattern ok"},
+            {"symbol": "600002", "name": "机会日否决", "pattern_id": "3", "reason": "no trade"},
+            {"symbol": "600003", "name": "风险否决", "pattern_id": "4", "reason": "avoid"},
+        ]
+    )
+    model_predictions = pd.DataFrame(
+        [
+            {
+                "model_version": "v42_gate_v4_rank",
+                "trade_date": "2026-04-12",
+                "symbol": "600000",
+                "action": "candidate",
+                "trade_permission": "allow",
+                "risk_tier": "low",
+                "risk_gate_reason": "passed",
+                "risk_score": 0.18,
+                "long_upside_score": 0.62,
+                "opportunity_rank_score": 0.62,
+                "final_score_v42": 0.62,
+                "buy_score_v42": 91.0,
+                "rank_source_v42": "v4_long_upside_score",
+            },
+            {
+                "model_version": "v42_gate_v4_rank",
+                "trade_date": "2026-04-12",
+                "symbol": "600001",
+                "action": "candidate",
+                "trade_permission": "allow",
+                "risk_tier": "low",
+                "risk_gate_reason": "passed",
+                "risk_score": 0.20,
+                "long_upside_score": 0.41,
+                "opportunity_rank_score": 0.41,
+                "final_score_v42": 0.41,
+                "buy_score_v42": 75.0,
+                "rank_source_v42": "v4_long_upside_score",
+            },
+            {
+                "model_version": "v42_gate_v4_rank",
+                "trade_date": "2026-04-12",
+                "symbol": "600002",
+                "action": "no_trade",
+                "trade_permission": "no_trade",
+                "risk_tier": "low",
+                "risk_gate_reason": "passed",
+                "risk_score": 0.16,
+                "long_upside_score": 0.80,
+                "opportunity_rank_score": 0.80,
+                "final_score_v42": 0.80,
+                "buy_score_v42": 99.0,
+                "rank_source_v42": "v4_long_upside_score",
+            },
+            {
+                "model_version": "v42_gate_v4_rank",
+                "trade_date": "2026-04-12",
+                "symbol": "600003",
+                "action": "avoid",
+                "trade_permission": "allow",
+                "risk_tier": "high",
+                "risk_gate_reason": "down20_cap",
+                "risk_score": 0.72,
+                "long_upside_score": 0.90,
+                "opportunity_rank_score": 0.90,
+                "final_score_v42": 0.90,
+                "buy_score_v42": 100.0,
+                "rank_source_v42": "v4_long_upside_score",
+            },
+        ]
+    )
+
+    payload = build_watchlist_candidates_from_patterns(
+        pattern_frame,
+        source_file="patterns.csv",
+        limit=10,
+        model_predictions=model_predictions,
+    )
+
+    assert payload["candidate_count"] == 2
+    assert [item["symbol"] for item in payload["candidates"]] == ["600000", "600001"]
+    assert payload["candidates"][0]["model_version"] == "v42_gate_v4_rank"
+    assert payload["candidates"][0]["final_score_v42"] == 0.62
+    assert payload["candidates"][0]["buy_score_v42"] == 91.0
+    assert payload["candidates"][0]["stable_score"] == 0.62
 
 
 def test_build_watchlist_candidates_from_trend_applies_thresholds_and_risk_filter() -> None:

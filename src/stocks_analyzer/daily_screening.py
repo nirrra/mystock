@@ -11,6 +11,7 @@ from pathlib import Path
 from time import perf_counter
 
 from .config import load_config
+from .predict_model import predict_model_predictions_path
 from .trading_calendar import is_trading_day
 from .watchlist import load_watchlist, watchlist_path, watchlist_pattern_path, watchlist_trend_path
 
@@ -36,7 +37,7 @@ def run_daily_screening(
 ) -> ScreeningResult:
     _ = picks_filename  # kept only for backward compatibility with existing callers
     config = load_config(project_root / "config" / "default.yaml")
-    total_stages = 7
+    total_stages = 8
     print(f"[0/{total_stages}] 检查 {trade_date.isoformat()} 是否为交易日...", flush=True)
     trading_day = is_trading_day(config.provider, trade_date)
     if not trading_day:
@@ -50,11 +51,12 @@ def run_daily_screening(
 
     _run_project_stage(1, total_stages, "update", project_root, ["update", "--start-date", start_date])
     _run_project_stage(2, total_stages, "tradingview", project_root, ["tradingview", "--date", trade_date.isoformat()])
-    _run_project_stage(3, total_stages, "macd", project_root, ["macd", "--date", trade_date.isoformat()])
-    _run_project_stage(4, total_stages, "atr", project_root, ["atr", "--date", trade_date.isoformat()])
-    _run_project_stage(5, total_stages, "trend-universe", project_root, ["trend-universe", "--date", trade_date.isoformat()])
-    _run_project_stage(6, total_stages, "trend", project_root, ["trend", "--date", trade_date.isoformat()])
-    _run_project_stage(7, total_stages, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
+    _run_project_stage(3, total_stages, "predict_model", project_root, ["predict-model", "--date", trade_date.isoformat()])
+    _run_project_stage(4, total_stages, "macd", project_root, ["macd", "--date", trade_date.isoformat()])
+    _run_project_stage(5, total_stages, "atr", project_root, ["atr", "--date", trade_date.isoformat()])
+    _run_project_stage(6, total_stages, "trend-universe", project_root, ["trend-universe", "--date", trade_date.isoformat()])
+    _run_project_stage(7, total_stages, "trend", project_root, ["trend", "--date", trade_date.isoformat()])
+    _run_project_stage(8, total_stages, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
 
     generated_watchlist_path = watchlist_path(project_root, trade_date)
     watchlist_payload = load_watchlist(project_root=project_root, trade_date=trade_date)
@@ -62,6 +64,7 @@ def run_daily_screening(
     watchlist_trend = watchlist_trend_path(project_root, trade_date)
     trend_universe_path: Path | None = _trend_universe_report_path(project_root, trade_date)
     trend_path: Path | None = _trend_report_path(project_root, trade_date)
+    predict_model_path = predict_model_predictions_path(project_root, trade_date)
     macd_path = _macd_report_path(project_root, trade_date)
     atr_path = _atr_report_path(project_root, trade_date)
     pattern_path = _pattern_report_path(project_root, trade_date)
@@ -77,6 +80,7 @@ def run_daily_screening(
         pattern_path=pattern_path if pattern_path.exists() else None,
         trend_path=trend_path if trend_path is not None and trend_path.exists() else None,
         trend_universe_path=trend_universe_path if trend_universe_path.exists() else None,
+        predict_model_path=predict_model_path if predict_model_path.exists() else None,
     )
     return ScreeningResult(
         trade_date=trade_date,
@@ -124,6 +128,7 @@ def _write_run_report(
     pattern_path: Path | None,
     trend_path: Path | None,
     trend_universe_path: Path | None,
+    predict_model_path: Path | None,
 ) -> Path:
     target = project_root / "reports" / "daily_screening"
     target.mkdir(parents=True, exist_ok=True)
@@ -139,6 +144,7 @@ def _write_run_report(
         "pattern_path": str(pattern_path) if pattern_path is not None else None,
         "trend_path": str(trend_path) if trend_path is not None else None,
         "trend_universe_path": str(trend_universe_path) if trend_universe_path is not None else None,
+        "predict_model_path": str(predict_model_path) if predict_model_path is not None else None,
         "candidate_count": len(watchlist_payload.get("candidates", []))
         if isinstance(watchlist_payload.get("candidates"), list)
         else 0,

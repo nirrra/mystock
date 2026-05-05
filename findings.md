@@ -84,10 +84,51 @@
 ## Resources
 
 - 设计文档: `C:\Users\wdyab\Desktop\wdy\stocks\docs\superpowers\specs\2026-04-09-a-share-analysis-design.md`
+- 20 日止盈概率设计文档: `C:\Users\wdyab\Desktop\wdy\stocks\docs\superpowers\specs\2026-05-01-mainboard-20d-tp-probability-design.md`
 - AKShare 股票数据文档: https://akshare.akfamily.xyz/data/stock/stock.html
 - AKShare 数据说明: https://akshare.akfamily.xyz/data_tips.html
 - Tushare 分钟数据说明: https://tushare.pro/document/1?doc_id=234
 - 项目入口: `C:\Users\wdyab\Desktop\wdy\stocks\main.py`
+
+## Session: 2026-05-01 Mainboard 20d TP Probability
+
+### Requirements
+
+- 新方法用于替代 TradingView 聚合分数，目标是得到未来 20 日上涨概率高的主板股票选法。
+- 股票池仅限 A 股主板。
+- 标签采用路径规则：`t+1` 开盘价入场，20 个交易日内先触发 +10% 止盈为成功。
+- 先触发 -8% 止损为失败；20 日内没有触发 +10% 也算失败。
+- 同一日同时触发 +10% 止盈与 -8% 止损时，日线无法判断先后，样本剔除。
+- TradingView 聚合分数不参与训练和排序。
+- TradingView 组成指标的原始指标值可以作为普通技术指标候选特征。
+- “当前价格距离近期高点过近且过热”和“长期下降趋势未修复”不能作为硬过滤，只能作为模型特征。
+- 日线、周线、月线都需要加入成交量和成交额特征。
+- 月线需要加入 RSI。
+- 每日输出需要包含关键解释字段，帮助人工复核概率排序。
+
+### Codebase Findings
+
+- 当时的概率链路包括：`labels.py`、`features.py`、`ml_dataset.py`、`ml_models.py`、`ml_evaluation.py`、`probability_reporting.py` 和 `train-prob / predict-prob` CLI。
+- 当时 `labels.py` 的 `add_forward_labels` 是收盘收益 + 最大回撤标签，不是路径感知止盈止损标签。
+- 当时 `ProbabilityConfig` 只有 `horizon_days`、`min_future_return`、`max_future_drawdown`、`min_history_days`、`top_n_list`，需要补充止盈止损语义字段。
+- 当时 `features.py` 会调用 `add_technical_ratings`，且 `numeric_feature_columns` 会把数值型聚合评分列纳入训练特征，必须显式排除。
+- 当时 `ml_models.py` 只支持 XGBoost，符合主模型方向，但还没有解释性基线模型。
+- 当时 `ml_evaluation.py` 的 Top N 评估只统计 hit rate、未来收益和回撤，需要扩展到止盈率、止损率、timeout、outcome days 和 lift。
+- 当时 `probability_reporting.py` 的预测摘要还会展示 `all_rating`，需要移除并改为关键解释字段。
+- 当时 `tests/test_probability_workflow.py` 已经覆盖 train/predict 流程，可作为新标签和新特征改造后的回归入口。
+
+Note as of 2026-05-05: this probability workflow has been superseded and removed from active source. The current project no longer has `labels.py`, `ml_dataset.py`, `ml_models.py`, `ml_evaluation.py`, `probability_reporting.py`, `train-prob`, or `predict-prob`.
+
+### Implementation Findings
+
+- `add_take_profit_stop_loss_labels` now implements the path-aware +10%/-8%/20-day label while preserving the legacy `add_forward_labels` API.
+- `build_probability_dataset` now uses the new configured label column and excludes same-day TP/SL conflict samples.
+- `numeric_feature_columns` now explicitly excludes TradingView aggregate scores and path-label target fields.
+- Weekly and monthly feature generation uses period bars aligned by the period's last available trade date, so a daily row does not receive a later week/month aggregate.
+- Prediction reports now remove `all_rating` from the probability summary and include daily/weekly/monthly explanation fields plus descriptive `risk_notes`.
+- The implementation keeps XGBoost as the primary model. Logistic regression baseline support is deferred to a later model-comparison pass.
+- The probability dataset now expands each stock-date into configured horizon targets, allowing one model to learn 5/10/20/40 day path behavior through `horizon_days`, `take_profit_return`, and `stop_loss_return`.
+- Prediction now scores every configured horizon per stock and aggregates per-horizon risk-adjusted scores into `ensemble_score`.
 
 ## Visual/Browser Findings
 
@@ -95,3 +136,69 @@
 - AKShare 文档同时提示部分数据接口存在字段或复权层面的使用注意事项，因此上层不能直接耦合其原始字段。
 - Tushare 官方文档显示分钟数据属于更明确的专业数据能力，适合在后续升级阶段接入，而不是 V1 的主依赖。
 - 官方文档显示 `stock_zh_a_hist_min_em` 的 1 分钟数据只返回近 5 个交易日且不复权，因此分钟线应保持辅助定位。
+
+## Session: 2026-05-02 Project File Cleanup
+
+### Inventory Findings
+
+- Worktree is already dirty with active source, config, README, planning, probability-report, and new TradingView factor research changes; cleanup must avoid reverting those.
+- `.gitignore` ignores common Python artifacts, `data/`, CSV/parquet outputs, `.env.local`, and `command.txt`, but it does not yet ignore `.tmp_tests/`, `.pytest_tmp/`, `tmp_pytest_run/`, or root `.tmp_*` diagnostics.
+- `command.txt` / `runcmd` was previously treated as a command-entry convenience, but the active `runcmd` code path has now been removed.
+- Root `.tmp_baostock_login_stack.txt`, `.tmp_is_trading_day_stack.txt`, `.tmp_rdns_false.txt`, and `.tmp_rdns_true.txt` are diagnostic scratch files and safe cleanup candidates.
+- `__pycache__`, `.pytest_cache`, `.pytest_tmp`, `.tmp_tests`, `tmp_pytest_run`, and `src/a_share_analyzer.egg-info` are reproducible generated artifacts.
+- `reports/tradingview_factor/` has compact final JSON and summary CSVs plus a 603 MB `tradingview_factor_samples_2024-01-01_2026-04-30.csv`; the sample CSV is an intermediate behind the final research summary.
+- `reports/backtests/patterns/` has final summary JSON/CSV and stop-grid summary/best CSVs, plus large detail/forward/trade CSVs that are intermediate analysis inputs already reflected by summaries.
+- `data/xueqiu/1155695148/browser_profile` was previously retained for possible archive refreshes, but the active Xueqiu archive code path has now been removed.
+- After cleanup, the largest remaining files are model artifacts and retained data/report outputs rather than large research CSV intermediates.
+- `.pytest_tmp`, `tmp_pytest_run`, and `.tmp_tests/pytest-temp/pytest-of-wdyab` remain because both normal and escalated deletion attempts returned Windows `Access denied`.
+
+## Session: 2026-05-05 V4.2 Opportunity-Gated Ranker
+
+### Requirements
+
+- Keep V4 risk filtering as a hard first-stage gate.
+- Add a date-level opportunity model so the system can choose no-trade days.
+- Optimize for higher Top20/Top50 20-day average return, higher buy-day win rate, and balanced risk.
+- Allow lower trading coverage; target useful coverage is at least 30% of evaluable days.
+- Avoid label leakage: date-level labels may use future returns as targets, but the TopN set used for labels must be selected from OOF or historical-available scores.
+
+### Baseline Findings
+
+- V4 risk filter still works: validation/test risk AUC about 0.706/0.704.
+- V4 test Top20 baseline: average 20-day return 0.779%, win rate 26.88%, stop-loss rate 5.16%.
+- V4.1 did not solve ranking: test candidate-pool Spearman about -0.009 and Top20 outcomes worse than V4.
+
+### Implementation Findings
+
+- V4.2 is now implemented as: V4 risk hard gate -> date-level opportunity gate -> conditional stock ranker.
+- The opportunity gate is trained on daily aggregated candidate-pool conditions and selects a conservative threshold on validation Top20 outcomes.
+- The conditional ranker is trained only on risk-passed samples from opportunity-allowed days, using long-quality style 20d/60d return targets.
+- The selected threshold is intentionally strict: validation coverage is 51/128 days, test coverage is 34/128 days.
+- The gate improves trade discipline but does not yet solve stock selection. On test, Top50 improved average 20d return and win rate versus V4 baseline, but Top20 deteriorated and the stock-level rank correlation is still negative.
+- Current best interpretation: keep the date-level opportunity gate as a promising component, but do not promote the V4.2 conditional ranker as the main buy selector without another iteration.
+- Follow-up hybrid test supports this interpretation: using the opportunity gate with V4 `long_upside_score` ranking outperforms both the V4 all-day baseline and the V4.2 conditional ranker on test Top20/Top50 average return and take-profit rate.
+- Hybrid trade-off: coverage drops to 31/128 test days, and Top20 bad-risk rate is 15.00%, slightly worse than V4 baseline. The next risk work should tune the opportunity gate/risk gate jointly rather than train another stock ranker first.
+- Daily screening should use the hybrid through the generic `predict-model` layer, not by adding a separate daily-screening stage. This preserves the existing daily sequence and lets watchlist consume the model through its existing `reports/predict_model/predictions_<date>.csv` contract.
+
+## Session: 2026-05-05 Project Code Cleanup and Current Architecture
+
+### Current Architecture
+
+- The active daily flow is now `daily-screening -> update -> tradingview -> predict-model -> macd -> atr -> trend-universe -> trend -> pattern -> watchlist`.
+- `predict-model` is the stable integration name for the current model. It writes `reports/predict_model/predictions_YYYY-MM-DD.csv`.
+- The current model version is `v42_gate_v4_rank`: V4.2 opportunity gate decides whether the day is tradable, and V4 `long_upside_score` ranks the low-risk candidate pool.
+- `watchlist_pattern` treats model output as a hard gate: `trade_permission = allow` and `action = candidate` are required before a pattern candidate can enter the watchlist.
+- `final_score_v42` and `buy_score_v42` are now the model ranking fields used by watchlist sorting. TradingView aggregate scores remain as technical context, not the primary ranking layer.
+
+### Removed / Superseded Code Paths
+
+- Deleted old probability workflow modules and tests: `labels.py`, `ml_dataset.py`, `ml_models.py`, `ml_evaluation.py`, `probability_reporting.py`, and the related probability tests.
+- Deleted old utility/archive modules and tests: `runcmd.py`, `tools/runcmd.py`, `plotting.py`, `pattern_scan.py`, `xueqiu_archive.py`, `xueqiu_rendering.py`.
+- Removed obsolete V3/V3.1/V4 wrapper CLI paths from the active command surface, including old buy-trigger, clean-win, alpha-ranker, risk-gated, long-quality, and stacked-value entry points.
+- The remaining model commands are `train-opportunity-ranker`, `predict-opportunity-ranker`, and `predict-model`.
+
+### Verification Findings
+
+- Core compile check passed for `cli.py`, `config.py`, `models.py`, `paths.py`, `watchlist.py`, and `stacked_trade_value.py`.
+- Targeted regression passed: `tests/test_cli.py`, `tests/test_watchlist.py`, and `tests/test_stacked_trade_value.py` reported `62 passed`.
+- Full test run reached `181 passed`; the remaining `2 errors` were Windows pytest temporary-directory `PermissionError` failures, not business assertion failures.

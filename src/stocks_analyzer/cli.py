@@ -20,9 +20,6 @@ from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
 from .intraday_ranking import save_intraday_rankings
-from .ml_dataset import build_probability_dataset, infer_split_dates, split_probability_dataset
-from .ml_evaluation import evaluate_trained_artifact
-from .ml_models import load_model_artifact, normalize_model_names, predict_with_model, train_and_save_models
 from .models import NetworkConfig
 from .pattern_backtest import (
     build_pattern_forward_price_frame,
@@ -38,17 +35,19 @@ from .pattern_stop_research import (
     select_best_pattern_stop_grid,
 )
 from .paths import ProjectPaths
-from .plotting import default_start_date, filter_by_date, load_or_fetch_daily, plot_candles_and_volume
-from .probability_reporting import (
-    format_evaluation_summary,
-    format_prediction_summary,
-    format_tradingview_summary,
-    format_training_summary,
-    save_evaluation_reports,
-    save_predictions_report,
+from .predict_model import (
+    load_predict_model_predictions,
+    save_predict_model_predictions,
 )
 from .reporting import format_multi_pattern_summary, format_report
 from .screener import Screener, parse_as_of
+from .stacked_trade_value import (
+    format_metric_table,
+    format_opportunity_ranker_prediction_table,
+    opportunity_ranker_report_dir,
+    predict_opportunity_ranker,
+    train_opportunity_ranker_model,
+)
 from .storage import DailyBarsReadError, Storage
 from .strategies import STRATEGY_NAMES
 from .trend_backtest import backtest_portfolios, backtest_signal_returns, summarize_signal_backtest
@@ -79,6 +78,14 @@ from .trend_threshold_research import (
     evaluate_threshold_candidates,
     summarize_indicator_distributions,
 )
+from .tradingview_factor_research import (
+    DEFAULT_FACTOR_FIELDS,
+    DEFAULT_HORIZONS,
+    DEFAULT_RANK_FIELDS,
+    DEFAULT_TOP_N,
+    run_tradingview_factor_research,
+    save_tradingview_factor_research_reports,
+)
 from .trend_universe import scan_trend_universe
 from .universe import build_main_board_universe
 from .watchlist import (
@@ -90,7 +97,6 @@ from .watchlist import (
     watchlist_path as build_watchlist_path,
     write_watchlist,
 )
-from .xueqiu_archive import archive_xueqiu_user_1155695148
 
 
 def _localize_argparse() -> None:
@@ -140,8 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
             "     更新主板股票池并拉取本地日线数据。\n"
             "  2. mystock pattern\n"
             "     扫描本地全部股票，识别 1 到 6 号模式并生成 CSV。\n"
-            "  3. mystock plot 603588\n"
-            "     查看单只股票近两年的 K 线和成交量图。\n\n"
+            "  3. mystock predict-model --date 2026-04-10\n"
+            "     生成当前主版本模型预测文件。\n\n"
             "常见示例：\n"
             "  mystock update 603588 --start-date 20240101\n"
             "  mystock pattern --1 --4\n"
@@ -149,8 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  mystock tradingview --date 2026-04-10\n"
             "  mystock macd --date 2026-04-10\n"
             "  mystock atr --date 2026-04-10\n"
-            "  mystock train-prob\n"
-            "  mystock predict-prob --date 2026-04-10\n"
+            "  mystock predict-model --date 2026-04-10\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -193,7 +198,6 @@ def build_parser() -> argparse.ArgumentParser:
             "  mystock pattern --1\n"
             "  mystock pattern --2 --5\n"
             "  mystock pattern --as-of 2026-04-10 --output reports/my_patterns.csv\n"
-            "  mystock pattern --plot-all\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -206,24 +210,6 @@ def build_parser() -> argparse.ArgumentParser:
     pattern.add_argument("--as-of", default=None, help="分析截止日期，格式 YYYY-MM-DD")
     pattern.add_argument("--limit", type=int, default=None, help="终端最多显示多少行")
     pattern.add_argument("--output", default=None, help="可选的 CSV 输出路径")
-    pattern.add_argument("--plot-all", action="store_true", help="为所有命中股票批量生成图形")
-
-    plot = subparsers.add_parser(
-        "plot",
-        help="绘制单只股票的 K 线和成交量图",
-        description="绘制单只股票的日 K 线和成交量图。默认时间范围为近两年。",
-        epilog=(
-            "常见示例：\n"
-            "  mystock plot 603588\n"
-            "  mystock plot 603588 --start-date 20240101 --end-date 20260410\n"
-            "  mystock plot 603588 --output reports/plots/603588_custom.png\n"
-        ),
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    plot.add_argument("symbol", help="6 位股票代码，例如 603588")
-    plot.add_argument("--start-date", default=default_start_date(), help="开始日期，格式 YYYYMMDD，默认近两年")
-    plot.add_argument("--end-date", default=datetime.today().strftime("%Y%m%d"), help="结束日期，格式 YYYYMMDD，默认今天")
-    plot.add_argument("--output", default=None, help="可选的 PNG 输出路径")
 
     report = subparsers.add_parser(
         "report",
@@ -269,39 +255,51 @@ def build_parser() -> argparse.ArgumentParser:
     atr.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
     atr.add_argument("--output", default=None, help="可选的 CSV 输出路径")
 
-    train_prob = subparsers.add_parser(
-        "train-prob",
-        help="训练中短期上涨概率模型",
-        description="基于本地主板日线数据构建样本，并训练 XGBoost 模型。",
+    train_opportunity = subparsers.add_parser(
+        "train-opportunity-ranker",
+        help="训练 V4.2 日期机会过滤 + 条件收益排序模型",
+        description=(
+            "复用 V4 风险过滤器，先训练日期级 opportunity gate 允许 no-trade，"
+            "再只在历史好机会日训练低风险池内的条件排序器。"
+        ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    train_prob.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
-    train_prob.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
-    train_prob.add_argument("--train-end", default=None, help="训练集结束日期，格式 YYYY-MM-DD")
-    train_prob.add_argument("--valid-end", default=None, help="验证集结束日期，格式 YYYY-MM-DD")
-    train_prob.add_argument("--test-end", default=None, help="测试集结束日期，格式 YYYY-MM-DD")
-    train_prob.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    train_opportunity.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    train_opportunity.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    train_opportunity.add_argument("--train-end", default=None, help="训练集结束日期，格式 YYYY-MM-DD")
+    train_opportunity.add_argument("--valid-end", default=None, help="验证集结束日期，格式 YYYY-MM-DD")
+    train_opportunity.add_argument("--test-end", default=None, help="测试集结束日期，格式 YYYY-MM-DD")
+    train_opportunity.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    train_opportunity.add_argument("--max-iter", type=int, default=80, help="每个模型的最大迭代轮数")
+    train_opportunity.add_argument("--top-n", default="20,50", help="评估 TopN 列表，逗号分隔，默认 20,50")
+    train_opportunity.add_argument("--predict-date", default=None, help="训练后顺便生成该日期的预测排序，格式 YYYY-MM-DD")
 
-    predict_prob = subparsers.add_parser(
-        "predict-prob",
-        help="生成指定日期的全市场上涨概率排序",
-        description="读取已训练模型，对指定日期的主板股票生成概率排序结果。",
+    predict_opportunity = subparsers.add_parser(
+        "predict-opportunity-ranker",
+        help="生成 V4.2 opportunity-gated 排序结果",
+        description="读取已训练的 V4.2 opportunity ranker，对指定日期先判断是否交易，再生成低风险池排序。",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    predict_prob.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
-    predict_prob.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
-    predict_prob.add_argument("--output", default=None, help="可选的预测结果输出路径")
+    predict_opportunity.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
+    predict_opportunity.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    predict_opportunity.add_argument("--output", default=None, help="可选的预测结果输出路径")
+    predict_opportunity.add_argument(
+        "--rank-source",
+        choices=["v42", "v4"],
+        default="v42",
+        help="排序来源：v42 使用条件排序器；v4 使用原 long_upside_score，默认 v42",
+    )
 
-    xueqiu_archive = subparsers.add_parser(
-        "xueqiu-archive",
-        help="归档雪球博主 1155695148 的公开历史帖子",
-        description="使用浏览器驱动抓取雪球博主 1155695148 的公开帖子，并导出为 Markdown。",
+    predict_model = subparsers.add_parser(
+        "predict-model",
+        aliases=["predict_model"],
+        help="生成每日通用模型预测结果",
+        description="当前使用 V4.2 opportunity gate + V4 long-upside 排序生成每日预测文件，供 daily-screening 与 watchlist 复用。",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    xueqiu_archive.add_argument("--output", default=None, help="可选的 Markdown 输出路径")
-    xueqiu_archive.add_argument("--max-posts", type=int, default=None, help="仅抓取前 N 条帖子，便于测试")
-    xueqiu_archive.add_argument("--refresh", action="store_true", help="忽略本地链接缓存并重新发现帖子")
-    xueqiu_archive.add_argument("--headed", action="store_true", help="打开可见浏览器，便于手动完成滑动验证")
+    predict_model.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
+    predict_model.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    predict_model.add_argument("--output", default=None, help="可选的预测结果输出路径")
 
     daily_screening = subparsers.add_parser(
         "daily-screening",
@@ -494,6 +492,40 @@ def build_parser() -> argparse.ArgumentParser:
     research_thresholds.add_argument("--output", default=None, help="可选的样本明细 CSV 输出路径")
     research_thresholds.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
 
+    research_tradingview_factor = subparsers.add_parser(
+        "research-tradingview-factor",
+        help="验证 TradingView 分数的单因子有效性",
+        description=(
+            "基于本地日线回算 TradingView 风格评分，按 t+1 开盘买入评估未来收益，"
+            "并输出分组、Rank IC、标签表现和每日 TopN 后续表现。"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    research_tradingview_factor.add_argument("--start-date", required=True, help="研究开始日期，格式 YYYY-MM-DD")
+    research_tradingview_factor.add_argument("--end-date", required=True, help="研究结束日期，格式 YYYY-MM-DD")
+    research_tradingview_factor.add_argument(
+        "--horizons",
+        default=",".join(str(item) for item in DEFAULT_HORIZONS),
+        help="逗号分隔的观察周期，默认 1,5,10,20",
+    )
+    research_tradingview_factor.add_argument(
+        "--factor-fields",
+        default=",".join(DEFAULT_FACTOR_FIELDS),
+        help="逗号分隔的单因子字段，默认 all_rating,avg_all_rating_5d,ma_rating,osc_rating",
+    )
+    research_tradingview_factor.add_argument(
+        "--rank-fields",
+        default=",".join(DEFAULT_RANK_FIELDS),
+        help="逗号分隔的 TopN 排序字段，默认 all_rating,avg_all_rating_5d",
+    )
+    research_tradingview_factor.add_argument("--top-n", type=int, default=DEFAULT_TOP_N, help="每日最高分股票数量，默认 10")
+    research_tradingview_factor.add_argument("--quantiles", type=int, default=5, help="每日横截面分组数量，默认 5")
+    research_tradingview_factor.add_argument(
+        "--symbols",
+        default=None,
+        help="可选的逗号分隔股票代码列表，用于小样本验证，例如 600000,000001",
+    )
+
     return parser
 
 
@@ -533,11 +565,7 @@ def main() -> None:
     if args.command == "pattern":
         selected = _selected_patterns(args)
         as_of = parse_as_of(args.as_of)
-        _run_pattern(storage, config.provider, config, as_of, selected, args.limit, args.output, args.plot_all)
-        return
-
-    if args.command == "plot":
-        _run_plot(storage, config, args.symbol, args.start_date, args.end_date, args.output)
+        _run_pattern(storage, config.provider, config, as_of, selected, args.limit, args.output)
         return
 
     if args.command == "report":
@@ -577,31 +605,44 @@ def main() -> None:
         )
         return
 
-    if args.command == "train-prob":
-        _run_train_prob(
+    if args.command == "train-opportunity-ranker":
+        _run_train_opportunity_ranker(
             storage=storage,
             config=config,
+            project_root=project_root,
             start_date=_parse_optional_date(args.start_date),
             end_date=_parse_optional_date(args.end_date),
             train_end=_parse_optional_date(args.train_end),
             valid_end=_parse_optional_date(args.valid_end),
             test_end=_parse_optional_date(args.test_end),
             limit=args.limit,
+            max_iter=args.max_iter,
+            top_n_list=tuple(_parse_int_list(args.top_n)),
+            prediction_date=_parse_optional_date(args.predict_date),
         )
         return
 
-    if args.command == "predict-prob":
-        _run_predict_prob(
+    if args.command == "predict-opportunity-ranker":
+        _run_predict_opportunity_ranker(
             storage=storage,
             config=config,
+            project_root=project_root,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+            rank_source=args.rank_source,
+        )
+        return
+
+    if args.command in {"predict-model", "predict_model"}:
+        _run_predict_model(
+            storage=storage,
+            config=config,
+            project_root=project_root,
             trade_date=datetime.fromisoformat(args.date).date(),
             top_n=args.top_n,
             output=args.output,
         )
-        return
-
-    if args.command == "xueqiu-archive":
-        _run_xueqiu_archive(paths, output=args.output, max_posts=args.max_posts, refresh=args.refresh, headed=args.headed)
         return
 
     if args.command == "daily-screening":
@@ -782,6 +823,21 @@ def main() -> None:
         )
         return
 
+    if args.command == "research-tradingview-factor":
+        _run_research_tradingview_factor(
+            storage=storage,
+            paths=paths,
+            start_date=datetime.fromisoformat(args.start_date).date(),
+            end_date=datetime.fromisoformat(args.end_date).date(),
+            horizons=tuple(_parse_int_list(args.horizons)),
+            factor_fields=tuple(_parse_str_list(args.factor_fields)),
+            rank_fields=tuple(_parse_str_list(args.rank_fields)),
+            top_n=args.top_n,
+            quantiles=args.quantiles,
+            symbols=_parse_optional_symbol_list(args.symbols),
+        )
+        return
+
     parser.error(f"Unknown command: {args.command}")
 
 
@@ -927,7 +983,6 @@ def _run_pattern(
     selected_patterns: list[str],
     limit: int | None,
     output: str | None,
-    plot_all: bool,
     symbols: list[str] | None = None,
 ) -> None:
     _ensure_universe(storage, provider_name, config.universe.exclude_st)
@@ -953,10 +1008,12 @@ def _run_pattern(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     exported.to_csv(output_path, index=False, encoding="utf-8-sig")
+    model_predictions = None if exported.empty else load_predict_model_predictions(project_root=storage.paths.root, trade_date=as_of)
     watchlist_payload = build_watchlist_candidates_from_patterns(
         exported,
         source_file=str(output_path),
         limit=config.screening.output_limit,
+        model_predictions=model_predictions,
     )
     write_watchlist(
         project_root=storage.paths.root,
@@ -983,38 +1040,8 @@ def _run_pattern(
         print(multi_pattern_summary)
         print()
     print(format_report(exported, limit=limit or config.screening.output_limit))
-    if plot_all:
-        plots_dir = _plot_pattern_matches(storage, config, as_of, results)
-        print(f"\n已生成图形目录: {plots_dir}")
     print(f"\nSaved pattern watchlist to {pattern_watchlist_target}")
     logging.info("Saved %s pattern rows to %s", len(exported), output_path)
-
-
-def _run_plot(
-    storage: Storage,
-    config,
-    symbol: str,
-    start_date: str,
-    end_date: str,
-    output: str | None,
-) -> None:
-    normalized_symbol = str(symbol).zfill(6)
-    dataframe = load_or_fetch_daily(
-        storage=storage,
-        provider_name=config.provider,
-        symbol=normalized_symbol,
-        start_date=start_date,
-        end_date=end_date,
-        adjust=config.adjustment,
-    )
-    filtered = filter_by_date(dataframe, start_date, end_date)
-    if filtered.empty:
-        raise RuntimeError(f"No data available for {normalized_symbol} in {start_date} to {end_date}")
-
-    output_path = Path(output) if output else storage.paths.reports_dir / "plots" / f"{normalized_symbol}_2y.png"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    plot_candles_and_volume(filtered, normalized_symbol, output_path)
-    print(f"Saved plot to {output_path}")
 
 
 def _run_report(storage: Storage, config, trade_date: date, limit: int | None) -> None:
@@ -1728,117 +1755,207 @@ def _run_intraday_screening(
     }
 
 
-def _run_train_prob(
+def _run_train_opportunity_ranker(
+    *,
     storage: Storage,
     config,
+    project_root: Path,
     start_date: date | None,
     end_date: date | None,
     train_end: date | None,
     valid_end: date | None,
     test_end: date | None,
     limit: int | None,
+    max_iter: int,
+    top_n_list: tuple[int, ...],
+    prediction_date: date | None,
 ) -> None:
     _ensure_universe(storage, config.provider, config.universe.exclude_st)
-    started_at = perf_counter()
-    logging.info("Building probability dataset from local daily bars")
-    dataset = build_probability_dataset(
+    result = train_opportunity_ranker_model(
         storage=storage,
         config=config,
+        project_root=project_root,
         start_date=start_date,
         end_date=end_date,
+        train_end=train_end,
+        valid_end=valid_end,
+        test_end=test_end,
         limit=limit,
+        max_iter=max_iter,
+        top_n_list=top_n_list,
+        prediction_date=prediction_date,
     )
-    if dataset.empty:
-        raise RuntimeError("No probability dataset could be built from the current local data.")
-    logging.info("Built probability dataset with %s rows", len(dataset))
-
-    resolved_train_end, resolved_valid_end, resolved_test_end = _resolve_probability_split_dates(
-        dataset,
-        train_end,
-        valid_end,
-        test_end,
-    )
-    split = split_probability_dataset(
-        dataset=dataset,
-        train_end=resolved_train_end,
-        valid_end=resolved_valid_end,
-        test_end=resolved_test_end,
-    )
-    logging.info(
-        "Probability split resolved: train<=%s valid<=%s test<=%s",
-        resolved_train_end.isoformat(),
-        resolved_valid_end.isoformat(),
-        resolved_test_end.isoformat(),
-    )
-    logging.info(
-        "Probability split sizes: train=%s valid=%s test=%s features=%s",
-        len(split.train),
-        len(split.valid),
-        len(split.test),
-        len(split.feature_columns),
-    )
-    artifacts = train_and_save_models(
-        split=split,
-        model_names=["xgboost"],
-        output_dir=storage.paths.ml_models_dir,
-    )
-    print(format_training_summary(artifacts))
-    evaluation_reports = [
-        evaluate_trained_artifact(artifact, split=split, top_n_list=config.probability.top_n_list) for artifact in artifacts
-    ]
+    print("[V4.2 Opportunity Ranker] Selected risk params")
+    print(json.dumps(result.selected_risk_params, ensure_ascii=False, indent=2))
     print()
-    print(format_evaluation_summary(evaluation_reports))
-    saved_reports = save_evaluation_reports(evaluation_reports, storage.paths.probability_reports_dir)
-    logging.info("Saved %s probability evaluation reports to %s", len(saved_reports), storage.paths.probability_reports_dir)
-    logging.info("Probability training finished in %.2fs", perf_counter() - started_at)
+    print("[V4.2 Opportunity Ranker] Selected opportunity params")
+    print(json.dumps(result.selected_opportunity_params, ensure_ascii=False, indent=2))
+    print()
+    print("[V4.2 Opportunity Ranker] Selected hybrid V4-rank opportunity params")
+    print(json.dumps(result.selected_hybrid_opportunity_params, ensure_ascii=False, indent=2))
+    print()
+    print("[V4.2 Opportunity Ranker] Split metrics")
+    print(format_metric_table(result.split_metrics))
+    print()
+    print("[V4.2 Opportunity Ranker] TopN metrics")
+    print(format_metric_table(result.topn_metrics))
+    print()
+    print("[V4.2 Opportunity Ranker] Risk filter metrics")
+    print(format_metric_table(result.risk_filter_metrics))
+    print()
+    print("[V4.2 Opportunity Ranker] Opportunity metrics")
+    print(format_metric_table(result.opportunity_metrics))
+    print()
+    print("[V4.2 Opportunity Ranker] Ranker metrics")
+    print(format_metric_table(result.ranker_metrics))
+    print()
+    print("[V4.2 Opportunity Ranker] V4 baseline comparison")
+    print(format_metric_table(result.comparison_metrics))
+    print()
+    print("[V4.2 Opportunity Ranker] Threshold grid")
+    if result.threshold_grid.empty:
+        print("No threshold grid.")
+    else:
+        print(format_metric_table(result.threshold_grid.sort_values("objective", ascending=False).head(10)))
+    if result.prediction_path is not None:
+        print()
+        print("[V4.2 Opportunity Ranker] Latest predictions")
+        print(format_opportunity_ranker_prediction_table(result.latest_predictions, limit=20))
+        print(f"\nSaved V4.2 opportunity predictions to {result.prediction_path}")
+    print(f"\nSaved V4.2 opportunity model to {result.model_path}")
+    print(f"Saved V4.2 opportunity metadata to {result.metadata_path}")
+    print(f"Saved V4.2 opportunity reports to {opportunity_ranker_report_dir(project_root)}")
 
 
-def _run_predict_prob(
+def _run_predict_opportunity_ranker(
+    *,
     storage: Storage,
     config,
+    project_root: Path,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+    rank_source: str,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    predictions = predict_opportunity_ranker(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        trade_date=trade_date,
+        rank_source=rank_source,
+    )
+    if predictions.empty:
+        raise RuntimeError(f"No V4.2 opportunity predictions generated for {trade_date.isoformat()}")
+    output_path = (
+        Path(output)
+        if output
+        else opportunity_ranker_report_dir(project_root)
+        / (
+            f"predictions_{trade_date.isoformat()}.csv"
+            if rank_source == "v42"
+            else f"predictions_v4_rank_{trade_date.isoformat()}.csv"
+        )
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(output_path, index=False, encoding="utf-8-sig")
+    print(format_opportunity_ranker_prediction_table(predictions, limit=top_n))
+    print(f"\nSaved V4.2 opportunity ranking to {output_path}")
+
+
+def _run_predict_model(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
     trade_date: date,
     top_n: int,
     output: str | None,
 ) -> None:
     _ensure_universe(storage, config.provider, config.universe.exclude_st)
-    model_name = "xgboost"
-    model_path = storage.paths.ml_models_dir / f"{model_name}.pkl"
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model file not found: {model_path}")
-    artifact = load_model_artifact(model_path)
+    predictions = predict_opportunity_ranker(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        trade_date=trade_date,
+        rank_source="v4",
+    )
+    if predictions.empty:
+        raise RuntimeError(f"No predict_model predictions generated for {trade_date.isoformat()}")
+    output_path = save_predict_model_predictions(
+        predictions,
+        project_root=project_root,
+        trade_date=trade_date,
+        output=output,
+        model_version="v42_gate_v4_rank",
+    )
+    print(format_opportunity_ranker_prediction_table(predictions, limit=top_n))
+    print(f"\nSaved predict_model ranking to {output_path}")
 
-    universe = storage.load_universe()
-    rows: list[pd.DataFrame] = []
-    for instrument in universe.to_dict("records"):
-        symbol = str(instrument["symbol"])
-        try:
-            bars = storage.load_daily_bars(symbol)
-        except (FileNotFoundError, DailyBarsReadError) as exc:
-            if isinstance(exc, DailyBarsReadError):
-                logging.warning("Skip prediction for %s because cached daily bars are unreadable: %s", symbol, exc)
-            continue
 
-        feature_frame = build_feature_frame(bars)
-        feature_frame["trade_date"] = pd.to_datetime(feature_frame["trade_date"])
-        current = feature_frame[feature_frame["trade_date"].dt.date == trade_date].copy()
-        if current.empty:
-            continue
-        if pd.isna(current.iloc[-1]["amount_ma_20"]) or current.iloc[-1]["amount_ma_20"] < config.universe.min_avg_amount_20d:
-            continue
-
-        current["symbol"] = symbol
-        current["name"] = instrument["name"]
-        rows.append(current)
-
-    if not rows:
-        raise RuntimeError(f"No feature rows found for prediction date {trade_date.isoformat()}")
-
-    frame = pd.concat(rows, ignore_index=True)
-    predictions = predict_with_model(artifact, frame)
-    output_path = Path(output) if output else storage.paths.probability_reports_dir / f"probability_{trade_date.isoformat()}_{model_name}.csv"
-    save_predictions_report(predictions, output_path)
-    print(format_prediction_summary(predictions, limit=top_n))
-    print(f"\nSaved probability ranking to {output_path}")
+def _run_research_tradingview_factor(
+    *,
+    storage: Storage,
+    paths: ProjectPaths,
+    start_date: date,
+    end_date: date,
+    horizons: tuple[int, ...],
+    factor_fields: tuple[str, ...],
+    rank_fields: tuple[str, ...],
+    top_n: int,
+    quantiles: int,
+    symbols: list[str] | None,
+) -> None:
+    result = run_tradingview_factor_research(
+        storage,
+        start_date=start_date,
+        end_date=end_date,
+        horizons=horizons,
+        factor_fields=factor_fields,
+        rank_fields=rank_fields,
+        top_n=top_n,
+        quantiles=quantiles,
+        symbols=symbols,
+        progress_callback=lambda current, total: _log_scan_progress("TradingView-factor", current, total),
+    )
+    report_paths = save_tradingview_factor_research_reports(
+        paths,
+        result=result,
+        start_date=start_date,
+        end_date=end_date,
+        top_n=top_n,
+    )
+    print("TradingView 单因子研究完成")
+    print(f"样本数：{len(result.samples)}")
+    print("\nRank IC 汇总：")
+    print(
+        _format_dataframe(
+            result.ic_summary,
+            ["factor", "horizon_days", "ic_days", "mean_rank_ic", "positive_ic_rate", "avg_sample_count"],
+            top_n=50,
+        )
+    )
+    print("\nTopN 汇总：")
+    print(
+        _format_dataframe(
+            result.topn_summary,
+            [
+                "rank_field",
+                "top_count",
+                "horizon_days",
+                "trade_days",
+                "avg_daily_equal_weight_return",
+                "daily_win_rate",
+                "avg_stock_return",
+                "stock_win_rate",
+            ],
+            top_n=80,
+        )
+    )
+    print(f"\n样本明细：{report_paths['samples_path']}")
+    print(f"IC 汇总：{report_paths['ic_summary_path']}")
+    print(f"Top{top_n} 明细：{report_paths['topn_detail_path']}")
+    print(f"Top{top_n} 汇总：{report_paths['topn_summary_path']}")
 
 
 def _load_daily_history_map(storage: Storage, symbols: list[str]) -> dict[str, pd.DataFrame]:
@@ -1862,25 +1979,29 @@ def _format_dataframe(dataframe: pd.DataFrame, columns: list[str], top_n: int) -
     return dataframe.loc[:, available].head(top_n).to_string(index=False)
 
 
-def _run_xueqiu_archive(
-    paths: ProjectPaths,
-    *,
-    output: str | None,
-    max_posts: int | None,
-    refresh: bool,
-    headed: bool,
-) -> None:
-    started_at = perf_counter()
-    result = archive_xueqiu_user_1155695148(paths, output=output, max_posts=max_posts, refresh=refresh, headed=headed)
-    elapsed = perf_counter() - started_at
-    cache_text = "yes" if result.used_cache else "no"
-    print("雪球归档完成")
-    print(f"候选链接数：{result.candidate_count}")
-    print(f"成功归档数：{result.archived_count}")
-    print(f"失败数：{result.failed_count}")
-    print(f"使用缓存：{cache_text}")
-    print(f"输出文件：{result.output_path}")
-    print(f"耗时：{elapsed:.1f}s")
+def format_tradingview_summary(scores: pd.DataFrame, limit: int) -> str:
+    if scores.empty:
+        return "No TradingView ratings generated."
+    rating_date_columns = sorted(column for column in scores.columns if column.startswith("all_rating_20"))
+    columns = [
+        column
+        for column in (
+            "symbol",
+            "name",
+            *rating_date_columns,
+            "avg_all_rating_5d",
+            "ma_rating",
+            "osc_rating",
+            "all_rating",
+            "all_rating_label",
+        )
+        if column in scores.columns
+    ]
+    display = scores.loc[:, columns].head(limit).copy()
+    for column in ("ma_rating", "osc_rating", "all_rating", "avg_all_rating_5d", *rating_date_columns):
+        if column in display.columns:
+            display[column] = display[column].map(lambda value: f"{value:.4f}" if pd.notna(value) else "")
+    return display.to_string(index=False)
 
 
 def _selected_patterns(args: argparse.Namespace) -> list[str]:
@@ -2682,37 +2803,6 @@ def _load_instruments(storage: Storage, symbols: list[str] | None = None) -> lis
     return universe.to_dict("records")
 
 
-def _plot_pattern_matches(storage: Storage, config, as_of: date, results: pd.DataFrame) -> Path:
-    plots_dir = storage.paths.reports_dir / "plots" / as_of.isoformat()
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    if results.empty:
-        return plots_dir
-
-    grouped = results.groupby("symbol", sort=True)
-    start_date = (as_of - timedelta(days=365 * 2)).strftime("%Y%m%d")
-    end_date = as_of.strftime("%Y%m%d")
-
-    for symbol, frame in grouped:
-        normalized_symbol = str(symbol).zfill(6)
-        try:
-            daily_bars = storage.load_daily_bars(normalized_symbol)
-        except (FileNotFoundError, DailyBarsReadError) as exc:
-            if isinstance(exc, DailyBarsReadError):
-                logging.warning("Skip plot for %s because cached daily bars are unreadable: %s", normalized_symbol, exc)
-            else:
-                logging.warning("Skip plot for %s because local daily bars are missing", normalized_symbol)
-            continue
-        filtered = filter_by_date(daily_bars, start_date, end_date)
-        if filtered.empty:
-            continue
-
-        pattern_ids = "-".join(sorted({PATTERN_LABEL_MAP[str(item)] for item in frame["strategy_name"].tolist()}))
-        output_path = plots_dir / f"{normalized_symbol}_pattern_{pattern_ids}.png"
-        plot_candles_and_volume(filtered, normalized_symbol, output_path)
-
-    return plots_dir
-
-
 def _parse_optional_date(value: str | None) -> date | None:
     if value is None:
         return None
@@ -2733,6 +2823,19 @@ def _parse_float_list(value: str) -> list[float]:
     return [float(item) for item in items]
 
 
+def _parse_str_list(value: str) -> list[str]:
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    if not items:
+        raise ValueError("Expected at least one text value")
+    return items
+
+
+def _parse_optional_symbol_list(value: str | None) -> list[str] | None:
+    if value is None or not str(value).strip():
+        return None
+    return [item.zfill(6) for item in _parse_str_list(value)]
+
+
 def _infer_report_date_from_path(path: Path) -> date:
     stem = path.stem
     for token in reversed(stem.split("_")):
@@ -2741,17 +2844,6 @@ def _infer_report_date_from_path(path: Path) -> date:
         except ValueError:
             continue
     raise ValueError(f"Cannot infer report date from input path: {path}")
-
-
-def _resolve_probability_split_dates(
-    dataset: pd.DataFrame,
-    train_end: date | None,
-    valid_end: date | None,
-    test_end: date | None,
-) -> tuple[date, date, date]:
-    if train_end and valid_end and test_end:
-        return train_end, valid_end, test_end
-    return infer_split_dates(dataset)
 
 
 def _proxy_env_value(name: str) -> str | None:
@@ -2824,7 +2916,7 @@ def _load_local_env(path: Path) -> None:
 
 
 def _command_needs_network(command_name: str) -> bool:
-    return command_name in {"update", "plot", "intraday-screening", "xueqiu-archive"}
+    return command_name in {"update", "intraday-screening"}
 
 
 def _resolve_update_provider_name(provider_name: str) -> str:

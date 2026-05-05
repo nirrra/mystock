@@ -171,15 +171,6 @@ class PickTrendWatchlistConfig:
 
 
 @dataclass(slots=True)
-class ProbabilityConfig:
-    horizon_days: int
-    min_future_return: float
-    max_future_drawdown: float
-    min_history_days: int
-    top_n_list: tuple[int, ...]
-
-
-@dataclass(slots=True)
 class TrendUniverseConfig:
     min_history_days: int
     ma_short_window: int
@@ -284,7 +275,6 @@ class AppConfig:
     screening: ScreeningConfig
     watchlist_trend_filter: WatchlistTrendFilterConfig
     pick_trend_watchlist: PickTrendWatchlistConfig
-    probability: ProbabilityConfig
     trend_universe: TrendUniverseConfig
     trend_signals: TrendSignalsConfig
     trend_indicator_weights: TrendIndicatorWeightsConfig

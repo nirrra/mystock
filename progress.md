@@ -240,3 +240,242 @@
 | 日常筛选链路回归 | `pytest tests/test_daily_screening.py tests/test_intraday_screening.py -q` | 新模式映射未破坏 daily / intraday screening | 3 passed | pass |
 | CLI 相关子集回归 | `pytest tests/test_cli.py -k 'pattern or watchlist or daily_screening or intraday_screening or build_parser_accepts_pattern_flags or trend_summary or atr_summary or macd_summary or trend_universe_summary' -q` | 新 `pattern` 映射、导出和 watchlist 更新正常 | 8 passed | pass |
 | 组合子集回归 | `pytest tests/test_strategies.py tests/test_watchlist.py tests/test_intraday_ranking.py tests/test_daily_screening.py tests/test_intraday_screening.py tests/test_cli.py -k 'pattern or watchlist or daily_screening or intraday_screening or build_parser_accepts_pattern_flags or trend_summary or atr_summary or macd_summary or trend_universe_summary' -q` | 相关链路组合运行正常 | 23 passed, 38 deselected | pass |
+
+## Session: 2026-05-01
+
+### Feature: Mainboard 20d Take-Profit Probability Model
+
+- **Status:** implemented
+- Actions taken:
+  - Confirmed user objective: mainboard-only probability ranking for stocks likely to hit +10% within 20 trading days under a -8% stop-loss path rule.
+  - Confirmed same-day take-profit/stop-loss conflict samples should be excluded.
+  - Confirmed TradingView aggregate scores must not participate, while raw component indicators can remain candidate features.
+  - Confirmed high-position/overheated and long-downtrend-unrepaired states should be model features, not hard filters.
+  - Confirmed daily, weekly, and monthly volume/amount features are required, and monthly RSI is required.
+  - Wrote and committed design spec `docs/superpowers/specs/2026-05-01-mainboard-20d-tp-probability-design.md` at commit `b0a87fa`.
+  - Added active implementation phases to `task_plan.md`.
+  - Recorded codebase findings in `findings.md`.
+  - Implemented path-aware `label_tp10_sl8_20d` with `t+1` open entry, +10% take-profit, -8% stop-loss, timeout failure, and same-day conflict exclusion.
+  - Added probability config fields for take-profit, stop-loss, entry mode, conflict handling, and label column.
+  - Added daily high-position/downtrend-repair features and weekly/monthly OHLCV/amount/indicator features.
+  - Excluded TradingView aggregate scores and path-label target fields from model features.
+  - Updated dataset building, evaluation summaries, prediction reports, and model metadata for the new label.
+  - Updated README probability command semantics.
+- Files created/modified:
+  - `C:\Users\wdyab\Desktop\wdy\stocks\docs\superpowers\specs\2026-05-01-mainboard-20d-tp-probability-design.md` (created and committed)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\config\default.yaml` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\labels.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\features.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\ml_dataset.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\ml_evaluation.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\ml_models.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\probability_reporting.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\models.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\config.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\src\stocks_analyzer\cli.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_labels.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_features.py` (created)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_ml_dataset.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\tests\test_probability_workflow.py` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\README.md` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\task_plan.md` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\findings.md` (updated)
+  - `C:\Users\wdyab\Desktop\wdy\stocks\progress.md` (updated)
+
+## Test Results (2026-05-01)
+
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Targeted probability suite | `pytest tests/test_labels.py tests/test_features.py tests/test_ml_dataset.py tests/test_ml_evaluation.py tests/test_ml_models.py tests/test_probability_workflow.py tests/test_cli.py -k "prob or train_prob or predict_prob or build_parser" -q` | Label, features, dataset, model, evaluation, workflow, and CLI probability paths pass | 26 passed, 33 deselected; one XGBoost device warning | pass |
+| TradingView compatibility | `pytest tests/test_tradingview_command.py tests/test_pattern_tradingview_scores.py tests/test_technical_ratings.py -q` | Existing TradingView command and scoring tests still pass | 6 passed | pass |
+| Compile check | `python -m compileall src tests` | Source and tests compile | pass | pass |
+
+### Residual Notes
+
+- XGBoost emitted a device mismatch warning on this machine when CUDA is available but input data is on CPU. It is a performance warning, not a correctness failure.
+- Logistic regression baseline support was deferred; the current trained probability model remains XGBoost.
+
+## Session: 2026-05-01 Risk-Adjusted Path Model
+
+### Feature: Three-Class Take-Profit / Stop-Loss / Timeout Model
+
+- **Status:** implemented
+- Actions taken:
+  - Added `outcome_class` alongside the existing binary take-profit label.
+  - Changed default probability training label to `outcome_class`.
+  - Updated XGBoost training to use multiclass probabilities when the label has three classes.
+  - Added prediction columns `take_profit_prob`, `stop_loss_prob`, `timeout_prob`, `risk_adjusted_score`, and `expected_score`.
+  - Changed prediction sorting and TopN evaluation to use `risk_adjusted_score` when available.
+  - Updated evaluation to compute actual take-profit, stop-loss, and timeout rates from path outcomes.
+  - Updated README to describe the three-class path model and risk-adjusted ranking.
+
+## Test Results (2026-05-01, Risk-Adjusted Path Model)
+
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Core multiclass suite | `pytest tests/test_labels.py tests/test_ml_models.py tests/test_ml_evaluation.py tests/test_ml_dataset.py tests/test_probability_workflow.py -q` | Labels, multiclass model, evaluation, dataset, and workflow pass | 16 passed; one XGBoost device warning | pass |
+| CLI probability workflow | `pytest tests/test_features.py tests/test_probability_workflow.py tests/test_cli.py -k "prob or train_prob or predict_prob or build_parser" -q` | Feature generation and train/predict CLI paths pass | 25 passed, 20 deselected; one XGBoost device warning | pass |
+
+## Session: 2026-05-01 Horizon-Conditioned Ensemble Model
+
+### Feature: Single Model Across 5/10/20/40 Day Targets
+
+- **Status:** implemented
+- Actions taken:
+  - Added `probability.horizon_targets` config with default 5d `+5%/-5%`, 10d `+7%/-6%`, 20d `+10%/-8%`, and 40d `+15%/-10%`.
+  - Expanded probability datasets from one row per stock-date to one row per stock-date-horizon.
+  - Added `horizon_days`, `take_profit_return`, and `stop_loss_return` as model features.
+  - Added `horizon_weight` for training sample weighting and prediction ensemble weighting.
+  - Normalized future outcome fields so evaluation can compare mixed horizons.
+  - Updated prediction to score all configured horizons per stock and aggregate them into `ensemble_score`.
+  - Updated prediction CSV to include per-horizon probability and score columns such as `take_profit_prob_5d` and `risk_adjusted_score_20d`.
+  - Updated README to describe the horizon-conditioned model.
+
+## Test Results (2026-05-01, Horizon-Conditioned Ensemble Model)
+
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Horizon workflow suite | `pytest tests/test_ml_dataset.py tests/test_probability_workflow.py tests/test_ml_models.py tests/test_ml_evaluation.py -q` | Dataset expansion, workflow, model, and evaluation pass | 11 passed; one XGBoost device warning | pass |
+| CLI/features suite | `pytest tests/test_labels.py tests/test_features.py tests/test_cli.py -k "prob or train_prob or predict_prob or build_parser" -q` | Labels, features, and probability CLI parser pass | 24 passed, 26 deselected | pass |
+| Compile check | `python -m compileall src tests` | Source and tests compile | pass | pass |
+
+## Session: 2026-05-02 Project File Cleanup
+
+### Discovery
+
+- Checked session catchup; native Codex parsing is not implemented, so there was no previous cleanup context to import.
+- Checked `git status --short`; repository already has many active modified/untracked files, so cleanup is scoped to generated artifacts and selected report intermediates only.
+- Inspected root files, `.gitignore`, planning files, largest artifacts, report directories, and references to candidate files.
+- Historical decision: `command.txt` was kept during the first cleanup because it belonged to the old `runcmd` entrypoint. The active `runcmd` code has since been removed.
+- Decision: remove reproducible caches/test scratch directories and selected large intermediate CSVs whose compact JSON/summary outputs are already present.
+
+### Cleanup Actions
+
+- Updated `.gitignore` to ignore `.pytest_tmp/`, `.tmp_tests/`, `tmp_pytest_run/`, and `.tmp_*`.
+- Removed root diagnostic `.tmp_*` files, Python/pytest caches, `src/a_share_analyzer.egg-info`, selected TradingView factor sample/detail CSVs, selected pattern backtest detail/forward/trade CSVs, entry backtest detail CSV, and threshold sample CSV.
+- Removed 498 accessible children under `.tmp_tests`; only the ACL-blocked `pytest-temp/pytest-of-wdyab` path remains.
+- Removed Xueqiu browser cache directories/files while keeping likely session state such as `Local State`, `Default/Local Storage`, `Default/Network`, and `Sessions`.
+- Normal and escalated deletion attempts both failed for `.pytest_tmp`, `tmp_pytest_run`, and `.tmp_tests/pytest-temp/pytest-of-wdyab` with Windows `Access denied`.
+
+### Verification
+
+- Confirmed selected intermediate files and `src/a_share_analyzer.egg-info` no longer exist.
+- Confirmed remaining `.tmp_tests` contains only the ACL-blocked `pytest-temp` directory.
+- Largest remaining files are retained model artifacts, retained Xueqiu profile state, and normal report CSV outputs.
+- Final `git status --porcelain` summary: `895` tracked deletions, `27` modified files, and `13` untracked paths. Most deletions are previously tracked `.tmp_tests` artifacts plus root diagnostic `.tmp_*` files.
+- Tests were not run after cleanup because doing so would recreate the same cache and temporary directories.
+
+## Session: 2026-05-05 V4.2 Opportunity-Gated Ranker
+
+### Start
+
+- User approved V4.2 direction and asked to start implementation.
+- Wrote and committed the V4.2 design spec at `docs/superpowers/specs/2026-05-05-v42-opportunity-gated-ranker-design.md`.
+- Added V4.2 working plan and findings to planning files.
+- Implemented V4.2 core functions in `stacked_trade_value.py`: opportunity-day aggregation, gate model, conditional ranker, threshold selection, evaluation, prediction reporting, artifact save/load.
+- Added CLI parser and run handlers for `train-opportunity-ranker` and `predict-opportunity-ranker`.
+- Syntax check passed for `src/stocks_analyzer/stacked_trade_value.py` and `src/stocks_analyzer/cli.py`.
+
+### Completion
+
+- Added focused V4.2 tests for opportunity-day labels, day-level no-trade blocking, CLI parser coverage, and train/predict workflow.
+- Verification passed:
+  - `python -m pytest tests\test_cli.py -q`: 43 passed.
+  - `python -m pytest tests\test_stacked_trade_value.py -q`: 28 passed.
+  - `python -m py_compile src\stocks_analyzer\stacked_trade_value.py src\stocks_analyzer\cli.py tests\test_stacked_trade_value.py tests\test_cli.py`: passed.
+- Full V4.2 training completed with `train-opportunity-ranker --max-iter 80 --top-n 20,50 --predict-date 2026-04-30`.
+- Artifacts written:
+  - `data/ml/v42_opportunity_ranker/v42_opportunity_ranker.pkl`
+  - `data/ml/v42_opportunity_ranker/v42_opportunity_ranker_metadata.json`
+  - `reports/v42_opportunity_ranker/v42_topn_metrics.csv`
+  - `reports/v42_opportunity_ranker/v42_opportunity_metrics.csv`
+  - `reports/v42_opportunity_ranker/v42_ranker_metrics.csv`
+  - `reports/v42_opportunity_ranker/v42_comparison.csv`
+  - `reports/v42_opportunity_ranker/predictions_2026-04-30.csv`
+- Main result:
+  - V4.2 opportunity gate has usable signal, but the conditional stock ranker still fails to generalize.
+  - Test Top20 under V4.2: avg 20d return 0.14%, win rate 23.68%, stop-loss rate 6.91%, bad-risk rate 12.06%, coverage 34/128 days.
+  - Test Top50 under V4.2: avg 20d return 1.08%, win rate 31.35%, stop-loss rate 6.41%, bad-risk rate 11.82%, coverage 34/128 days.
+  - V4 baseline test Top50: avg 20d return 0.84%, win rate 27.33%, stop-loss rate 5.48%, bad-risk rate 13.19%.
+  - Date-level test opportunity AUC is 0.5720; precision is 58.82%, recall is 32.26%.
+  - Candidate ranker test Spearman is -0.1144, so the new stock-level ranker should not become the primary stock selector yet.
+- Prediction for 2026-04-30:
+  - `opportunity_score` 0.5645 is below selected threshold 0.9103.
+  - Final daily decision is `no_trade`; ranked rows are diagnostics, not buy signals for that date.
+
+### Hybrid Follow-Up: Opportunity Gate + V4 Rank
+
+- User approved testing the next direction: keep V4.2 opportunity gate but replace the stock-level ranker with V4 `long_upside_score`.
+- Implemented `score_v42_v4_rank_frame` and added `--rank-source v4` for `predict-opportunity-ranker`.
+- V4.2 training now writes a third comparison group: `v42_gate_v4_rank`.
+- Added and passed tests for the hybrid score path, comparison inclusion, workflow prediction, and CLI parser.
+- Verification:
+  - `python -m pytest tests\test_cli.py -q`: 43 passed.
+  - `python -m pytest tests\test_stacked_trade_value.py -q`: 30 passed.
+  - `python -m py_compile src\stocks_analyzer\stacked_trade_value.py src\stocks_analyzer\cli.py`: passed.
+- Full retraining completed with `train-opportunity-ranker --max-iter 80 --top-n 20,50 --predict-date 2026-04-30`.
+- Hybrid selected opportunity threshold:
+  - `opportunity_threshold`: 0.9333753680987827
+  - validation coverage: 39/128 days
+  - selected on validation Top20 objective
+- Test comparison:
+  - V4 baseline Top20: avg 20d return 0.779%, win rate 26.88%, TP 6.41%, SL 5.16%, bad-risk 14.45%, coverage 128 days.
+  - V4.2 ranker Top20: avg 20d return 0.137%, win rate 23.68%, TP 5.29%, SL 6.91%, bad-risk 12.06%, coverage 34 days.
+  - Hybrid Top20: avg 20d return 1.502%, win rate 32.90%, TP 11.13%, SL 6.61%, bad-risk 15.00%, coverage 31 days.
+  - V4 baseline Top50: avg 20d return 0.839%, win rate 27.33%, TP 6.47%, SL 5.48%, bad-risk 13.19%, coverage 128 days.
+  - V4.2 ranker Top50: avg 20d return 1.077%, win rate 31.35%, TP 6.76%, SL 6.41%, bad-risk 11.82%, coverage 34 days.
+  - Hybrid Top50: avg 20d return 1.658%, win rate 31.81%, TP 10.26%, SL 5.81%, bad-risk 13.48%, coverage 31 days.
+- Generated hybrid prediction:
+  - `reports/v42_opportunity_ranker/predictions_v4_rank_2026-04-30.csv`
+  - 2026-04-30 remains `no_trade` because `opportunity_score` 0.5645 is below hybrid threshold 0.9334.
+
+### Daily Screening Predict Model Replacement
+
+- Replaced the generic `predict-model` command with the current best model: V4.2 opportunity gate + V4 `long_upside_score` ranking.
+- `predict-model` now saves `model_version=v42_gate_v4_rank` to `reports/predict_model/predictions_<date>.csv`.
+- Old V3.1 buy-trigger compatibility was removed during the subsequent project cleanup; `predict-model` is now the active daily model integration point.
+- Updated watchlist model-join logic:
+  - V4.2 hybrid predictions use `trade_permission == allow` and `action == candidate` as hard model gates.
+  - V4.2 hybrid watchlist sorting uses `final_score_v42` then `buy_score_v42`.
+  - Old V3.1 prediction fields are no longer accepted by the active watchlist model join.
+- Generated `reports/predict_model/predictions_2026-04-30.csv` with `v42_gate_v4_rank`; that date remains `no_trade`.
+- Verification:
+  - `python -m py_compile src\stocks_analyzer\cli.py src\stocks_analyzer\watchlist.py src\stocks_analyzer\predict_model.py`: passed.
+  - `python -m pytest tests\test_cli.py -q`: 43 passed.
+  - `python -m pytest tests\test_watchlist.py -q`: 10 passed.
+  - `tests\test_daily_screening.py` could not run in this environment because pytest temp directory cleanup fails with Windows `PermissionError`; the failure happens during pytest temp setup/cleanup, not in a daily-screening assertion.
+
+### Project Code Cleanup
+
+- Removed obsolete strong-candidate and medium-candidate code paths after promoting `v42_gate_v4_rank` through `predict-model`.
+- Deleted old modules:
+  - `src/stocks_analyzer/pattern_scan.py`
+  - `src/stocks_analyzer/runcmd.py`
+  - `src/stocks_analyzer/plotting.py`
+  - `src/stocks_analyzer/xueqiu_archive.py`
+  - `src/stocks_analyzer/xueqiu_rendering.py`
+  - `tools/runcmd.py`
+- Deleted old probability workflow:
+  - `src/stocks_analyzer/labels.py`
+  - `src/stocks_analyzer/ml_dataset.py`
+  - `src/stocks_analyzer/ml_evaluation.py`
+  - `src/stocks_analyzer/ml_models.py`
+  - `src/stocks_analyzer/probability_reporting.py`
+- Removed old model CLI paths and public wrappers for stacked-value, risk-gated, clean-win, alpha-ranker, risk-upside, long-quality, and buy-trigger variants.
+- Kept current model commands:
+  - `train-opportunity-ranker`
+  - `predict-opportunity-ranker`
+  - `predict-model`
+- Updated watchlist model join to require V4.2/V4 hybrid fields: `trade_permission`, `action`, `risk_score`, `long_upside_score`, `opportunity_rank_score`, `final_score_v42`, and `buy_score_v42`.
+- Verification:
+  - `python -m py_compile src\stocks_analyzer\cli.py src\stocks_analyzer\config.py src\stocks_analyzer\models.py src\stocks_analyzer\paths.py src\stocks_analyzer\watchlist.py src\stocks_analyzer\stacked_trade_value.py`: passed.
+  - `python -m pytest tests\test_cli.py tests\test_watchlist.py tests\test_stacked_trade_value.py -q`: 62 passed.
+  - Full `python -m pytest tests -q --basetemp C:\tmp\pytest-stocks-cleanup`: 181 passed, 2 Windows temp-directory `PermissionError` setup/cleanup errors.
+
+### Documentation Status Sync
+
+- Updated README to describe the current `daily-screening -> predict-model -> watchlist` architecture.
+- Updated `task_plan.md` to mark V4.2 hybrid implementation complete and add the cleanup/documentation sync phase.
+- Updated `findings.md` with the current active architecture and removed code paths.
+- Updated this progress log with cleanup scope and verification results.
+- Updated `docs/picks-writing-guide.md` so final pick writing treats model output as a hard filter and uses V4.2/V4 hybrid fields as soft ranking context.

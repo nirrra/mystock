@@ -33,6 +33,14 @@ def test_run_daily_screening_generates_watchlist_without_touching_picks(monkeypa
             target = tmp_path / "reports" / "atr" / "atr_2026-04-11.csv"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("代码,ATR14\n002579,1.2\n", encoding="utf-8")
+        if args[:2] == ["predict-model", "--date"]:
+            target = tmp_path / "reports" / "predict_model" / "predictions_2026-04-11.csv"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "symbol,trade_date,action,trade_permission,risk_tier,risk_gate_reason,risk_score,long_upside_score,opportunity_rank_score,final_score_v42,buy_score_v42\n"
+                "002579,2026-04-11,candidate,allow,low,passed,0.2,0.7,0.7,0.7,88.0\n",
+                encoding="utf-8",
+            )
         if args[:2] == ["trend", "--date"]:
             trend_target = tmp_path / "reports" / "trend" / "trend_2026-04-11.csv"
             trend_target.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +99,7 @@ def test_run_daily_screening_generates_watchlist_without_touching_picks(monkeypa
     assert commands == [
         ["update", "--start-date", "20240101"],
         ["tradingview", "--date", "2026-04-11"],
+        ["predict-model", "--date", "2026-04-11"],
         ["macd", "--date", "2026-04-11"],
         ["atr", "--date", "2026-04-11"],
         ["trend-universe", "--date", "2026-04-11"],
@@ -105,12 +114,13 @@ def test_run_daily_screening_generates_watchlist_without_touching_picks(monkeypa
     assert report["watchlist_path"] == str(result.watchlist_path)
     assert report["watchlist_pattern_path"].endswith("watchlist_pattern_2026-04-11.json")
     assert report["watchlist_trend_path"].endswith("watchlist_trend_2026-04-11.json")
+    assert report["predict_model_path"].endswith("predictions_2026-04-11.csv")
     assert report["macd_path"].endswith("macd_2026-04-11.csv")
     assert report["atr_path"].endswith("atr_2026-04-11.csv")
     assert report["pattern_path"].endswith("patterns_all_2026-04-11.csv")
     assert report["trend_path"].endswith("trend_2026-04-11.csv")
-    assert "[0/7] 检查 2026-04-11 是否为交易日..." in output
-    assert "[7/7] pattern 完成" in output
+    assert "[0/8] 检查 2026-04-11 是否为交易日..." in output
+    assert "[8/8] pattern 完成" in output
 
 
 def test_run_daily_screening_uses_trend_universe_stage_when_enabled(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -186,6 +196,14 @@ def test_run_daily_screening_uses_trend_universe_stage_when_enabled(monkeypatch,
                 ),
                 encoding="utf-8",
             )
+        if args[:2] == ["predict-model", "--date"]:
+            target = tmp_path / "reports" / "predict_model" / "predictions_2026-04-11.csv"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "symbol,trade_date,action,trade_permission,risk_tier,risk_gate_reason,risk_score,long_upside_score,opportunity_rank_score,final_score_v42,buy_score_v42\n"
+                "002579,2026-04-11,candidate,allow,low,passed,0.2,0.7,0.7,0.7,88.0\n",
+                encoding="utf-8",
+            )
         if args[:2] == ["macd", "--date"]:
             target = tmp_path / "reports" / "macd" / "macd_2026-04-11.csv"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -204,6 +222,7 @@ def test_run_daily_screening_uses_trend_universe_stage_when_enabled(monkeypatch,
     assert commands == [
         ["update", "--start-date", "20240101"],
         ["tradingview", "--date", "2026-04-11"],
+        ["predict-model", "--date", "2026-04-11"],
         ["macd", "--date", "2026-04-11"],
         ["atr", "--date", "2026-04-11"],
         ["trend-universe", "--date", "2026-04-11"],
@@ -216,10 +235,11 @@ def test_run_daily_screening_uses_trend_universe_stage_when_enabled(monkeypatch,
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
     assert report["watchlist_pattern_path"].endswith("watchlist_pattern_2026-04-11.json")
     assert report["watchlist_trend_path"].endswith("watchlist_trend_2026-04-11.json")
+    assert report["predict_model_path"].endswith("predictions_2026-04-11.csv")
     assert report["macd_path"].endswith("macd_2026-04-11.csv")
     assert report["atr_path"].endswith("atr_2026-04-11.csv")
     assert report["pattern_path"].endswith("patterns_all_2026-04-11.csv")
     assert report["trend_path"].endswith("trend_2026-04-11.csv")
     assert report["trend_universe_path"].endswith("trend_universe_2026-04-11.csv")
-    assert "[0/7] 检查 2026-04-11 是否为交易日..." in output
-    assert "[7/7] pattern 完成" in output
+    assert "[0/8] 检查 2026-04-11 是否为交易日..." in output
+    assert "[8/8] pattern 完成" in output

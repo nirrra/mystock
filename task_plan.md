@@ -6,9 +6,154 @@
 
 ## Current Phase
 
-Phase 3
+Project consolidation after V4.2 hybrid deployment: old model paths removed, daily screening now uses `predict-model`, and documentation is being synced to the current state.
+
+## Active Initiative: Project Code Cleanup and Documentation Sync
+
+### Goal
+
+Remove obsolete strong-candidate and medium-candidate code paths, keep only the current daily-screening model flow, and update local project documentation so future work resumes from the correct architecture.
+
+### Cleanup / Documentation Phases
+
+- [x] Delete obsolete probability-model modules, old V3/V3.1/V4 wrapper entry points, `runcmd`, plotting, and Xueqiu archive code.
+- [x] Remove tests that only covered deleted modules.
+- [x] Keep current model flow: `train-opportunity-ranker`, `predict-opportunity-ranker`, `predict-model`, `daily-screening`, `watchlist`.
+- [x] Verify core compile and targeted tests.
+- [x] Update README, findings, progress, task plan, and picks writing guide.
+- **Status:** complete
+
+## Active Initiative: V4.2 Opportunity-Gated Ranker
+
+### Goal
+
+Implement V4.2 as a two-step model: reuse the V4 risk filter, add a date-level opportunity gate that can choose no-trade days, then train a conditional stock ranker only on historical good-opportunity days.
+
+### Implementation Phases
+
+- [x] Inspect current V4/V4.1 training, prediction, report, and test structure.
+- [x] Add V4.2 result dataclass, dirs, labels, opportunity aggregation, model fitting, threshold selection, and scoring utilities.
+- [x] Add V4.2 train/predict workflow and model artifact persistence.
+- [x] Wire CLI commands `train-opportunity-ranker` and `predict-opportunity-ranker`.
+- [x] Add focused tests for opportunity labels/features, threshold behavior, no-trade/allow predictions, and CLI parsing.
+- [x] Run targeted tests and full training / prediction comparison.
+- [x] Promote the hybrid variant `v42_gate_v4_rank` through the generic `predict-model` layer.
+- **Status:** complete
+
+## Active Initiative: Project File Cleanup
+
+### Goal
+
+整理项目根目录、测试临时目录和报告产物，保留源码、配置、文档、最终报告、模型和可复用数据缓存；删除已由最终摘要覆盖的中间样本文件以及明确的缓存/临时测试输出。
+
+### Cleanup Phases
+
+- [x] Inventory current Git state, root files, largest artifacts, and generated directories.
+- [x] Identify no-regret cleanup targets: `__pycache__`, `.pytest_cache`, `.pytest_tmp`, `.tmp_tests`, `tmp_pytest_run`, root `.tmp_*` diagnostics, and `src/a_share_analyzer.egg-info`.
+- [x] Identify report intermediates with final summaries: large TradingView factor sample/detail CSVs and pattern backtest detail/trade/forward-price CSVs.
+- [x] Delete safe temporary artifacts and selected intermediate CSVs.
+- [x] Update `.gitignore` so future test scratch directories and `.tmp_*` files stay out of the worktree.
+- [x] Verify resulting Git status and remaining large files.
+- **Status:** complete
+
+### Cleanup Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| `runcmd` is no longer active | The code path and tests were deleted during model/project cleanup; any old `command.txt` usage is historical only. |
+| Keep source/config/docs/model artifacts | Current worktree contains active feature changes and trained model outputs. |
+| Keep final report JSON/summary files | They are the compact results used by later review and documentation. |
+| Delete cache/test scratch directories | They are reproducible, noisy, and not project source. |
+| Delete sample/detail CSVs only where summary outputs exist | This follows the user's instruction to remove middle results when a route already has final results. |
+| Xueqiu profile is historical | The active archive code path has been removed; retained data/profile state is no longer part of the current execution flow. |
+| Remove obsolete source modules after model cleanup | `runcmd`, Xueqiu archive, old probability workflow, old V3/V3.1/V4 wrappers, and their tests are no longer part of the active project. |
 
 ## Phases
+
+## Historical Initiative: Mainboard 20d TP Probability Model
+
+### Goal
+
+Build a replacement for TradingView aggregate scoring that ranks A-share mainboard stocks by `success_prob`: the probability of hitting +10% take-profit within 20 trading days before a -8% stop-loss, using only data available at the signal date.
+
+Status as of 2026-05-05: superseded by the V4.2/V4 hybrid `predict-model` flow and removed from active source.
+
+### Implementation Phases
+
+### Phase 1: Label and Configuration Foundation
+
+- [x] Add path-aware `label_tp10_sl8_20d` generation using `t+1` open as entry price.
+- [x] Mark success, stop-loss failure, timeout failure, and same-day take-profit/stop-loss conflict.
+- [x] Exclude conflict samples from model training and evaluation.
+- [x] Add probability config fields for `take_profit_return`, `stop_loss_return`, `entry_price_mode`, and conflict handling.
+- [x] Preserve compatibility with existing `label_stable_up` tests or migrate tests intentionally.
+- **Status:** complete
+
+### Phase 2: Daily Feature Revision
+
+- [x] Keep raw daily price, volume, amount, moving-average, volatility, drawdown, RSI, MACD, ADX, CCI, Williams %R, Stochastic, and Stochastic RSI features.
+- [x] Add explicit recent-high proximity and long downtrend repair features as model inputs, not hard filters.
+- [x] Remove TradingView aggregate score columns from probability feature selection.
+- [x] Add tests ensuring `all_rating`, `ma_rating`, `osc_rating`, and `avg_all_rating_5d` do not enter training features.
+- **Status:** complete
+
+### Phase 3: Weekly and Monthly Features
+
+- [x] Build weekly OHLCV/amount features aligned to each sample date without future full-week leakage.
+- [x] Build monthly OHLCV/amount features aligned to each sample date without future full-month leakage.
+- [x] Add weekly returns, MA distances, RSI, MACD, ADX, volume ratios, amount ratios, range position, and drawdown features.
+- [x] Add monthly returns, MA distances, RSI, MACD, volume ratios, amount ratios, range position, and drawdown features.
+- [x] Add tests that higher-timeframe features do not use future rows inside the same week.
+- **Status:** complete
+
+### Phase 4: Dataset and Model Training
+
+- [x] Update `build_probability_dataset` to use the new path label and conflict exclusion.
+- [x] Keep hard filters limited to mainboard scope, data quality, history length, and liquidity.
+- [x] Keep XGBoost as the primary model; defer an interpretable baseline until model comparison is needed.
+- [x] Persist the label column and feature columns with the model artifact.
+- **Status:** complete
+
+### Phase 5: Evaluation
+
+- [x] Replace stable-up evaluation with take-profit/stop-loss evaluation.
+- [x] Report Top 10 / Top 20 take-profit hit rate, stop-loss rate, timeout rate, average outcome days, average 20-day return, and lift versus baseline.
+- [x] Keep ROC-AUC, PR-AUC, Brier score, and log loss as secondary diagnostics.
+- [x] Add probability-bucket outputs for monotonicity checks.
+- **Status:** complete
+
+### Phase 6: Prediction Output and Reporting
+
+- [x] Output `success_prob` ranking with key explanation fields.
+- [x] Include daily, weekly, and monthly explanation fields in CSV and terminal summary.
+- [x] Add `risk_notes` as descriptive hints only, not as filters.
+- [x] Ensure prediction uses the same feature columns saved during training.
+- **Status:** complete
+
+### Phase 7: Verification and Documentation
+
+- [x] Run targeted label, feature, dataset, model, evaluation, and probability workflow tests.
+- [x] Run a smoke train/predict workflow through `tests/test_probability_workflow.py`.
+- [x] Update README command descriptions and field explanations.
+- [x] Record test results and residual risks in `progress.md`.
+- **Status:** complete
+
+### Active Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Mainboard only | User confirmed scope; avoids expanding universe complexity |
+| Entry price is `t+1` open | Avoids future leakage and matches practical next-day execution |
+| Success means +10% take-profit within 20 trading days | User wants high-probability 20-day upside selections |
+| Stop-loss threshold is -8% | Models stable upside under a defined adverse path constraint |
+| Timeout without +10% is failure | User selected strict objective |
+| Same-day TP/SL conflict is excluded | Daily bars cannot identify intraday order |
+| TradingView aggregate scores are forbidden features | Historical validation showed negative usefulness |
+| TradingView component indicators may be used as raw indicators | RSI/MACD/ADX/etc. can still carry useful information |
+| High-position/overheated and long-downtrend-unrepaired states are features, not filters | User explicitly rejected these as hard filters |
+| Daily, weekly, and monthly volume/amount features are required | User requested all three timeframes include volume information |
+| Train three path classes and sort by risk-adjusted score | Binary take-profit probability raised stop-loss risk; ranking now penalizes stop-loss probability |
+| Use one horizon-conditioned model across 5/10/20/40 day targets | User wants a single model that jointly considers multiple horizons and target combinations |
 
 ### Phase 1: Requirements & Discovery
 
@@ -98,3 +243,15 @@ Phase 3
 - 若用户后续要求接入付费分钟线，应先保持当前接口不变再替换底层实现
 - 趋势复核第一版只影响 `watchlist` 准入，不改 `watchlist` 现有排序逻辑
 - `pattern` 体系已进入六模式阶段：新 `1/2/3` 为 `量顶天立地` 三阶段，旧 `2/3/4` 已顺延为新 `4/5/6`
+
+## V4.2 Opportunity-Gated Ranker Plan
+
+- [x] 写入 V4.2 设计规格
+- [x] 实现机会日标签、机会门模型和条件排序模型
+- [x] 接入 `train-opportunity-ranker` / `predict-opportunity-ranker` CLI
+- [x] 增加单测和 CLI 回归测试
+- [x] 跑完整 V4.2 训练与 V4 基线对比
+- [x] 记录结论：机会门有价值，个股排序器仍未泛化
+- [x] 增加 `v42_gate_v4_rank` 对照：机会门 + V4 原排序
+- [x] 重训并验证 hybrid 优于 V4.2 ranker
+- **Status:** complete

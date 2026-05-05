@@ -8,7 +8,6 @@ from .models import (
     AppConfig,
     HistoryMomentumFilterConfig,
     NetworkConfig,
-    ProbabilityConfig,
     PickTrendWatchlistConfig,
     ScreeningConfig,
     StorageConfig,
@@ -41,7 +40,6 @@ def load_config(config_path: str | Path) -> AppConfig:
     screening = raw["screening"]
     watchlist_trend_filter = raw.get("watchlist_trend_filter", {})
     pick_trend_watchlist = raw.get("pick_trend_watchlist", {})
-    probability = raw.get("probability", {})
     trend_universe = raw.get("trend_universe", {})
     trend_signals = raw.get("trend_signals", {})
     trend_breakout = trend_signals.get("breakout", {})
@@ -91,13 +89,6 @@ def load_config(config_path: str | Path) -> AppConfig:
         pick_trend_watchlist=PickTrendWatchlistConfig(
             buy_score_min=float(pick_trend_watchlist.get("buy_score_min", 70.0)),
             price_action_score_min=float(pick_trend_watchlist.get("price_action_score_min", 55.0)),
-        ),
-        probability=ProbabilityConfig(
-            horizon_days=int(probability.get("horizon_days", 20)),
-            min_future_return=float(probability.get("min_future_return", 0.03)),
-            max_future_drawdown=float(probability.get("max_future_drawdown", 0.08)),
-            min_history_days=int(probability.get("min_history_days", 200)),
-            top_n_list=tuple(int(item) for item in probability.get("top_n_list", [10, 20, 50])),
         ),
         trend_universe=TrendUniverseConfig(
             min_history_days=int(trend_universe.get("min_history_days", 180)),

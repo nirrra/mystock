@@ -37,13 +37,6 @@ pick_trend_watchlist:
   buy_score_min: 70.0
   price_action_score_min: 55.0
 
-probability:
-  horizon_days: 20
-  min_future_return: 0.03
-  max_future_drawdown: 0.08
-  min_history_days: 200
-  top_n_list: [10, 20, 50]
-
 trend_universe:
   min_history_days: 180
   ma_short_window: 20

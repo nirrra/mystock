@@ -47,40 +47,13 @@ def test_build_parser_accepts_update_with_symbol() -> None:
 
 def test_build_parser_accepts_pattern_flags() -> None:
     parser = build_parser()
-    args = parser.parse_args(["pattern", "--1", "--5", "--6", "--plot-all", "--as-of", "2026-04-10"])
+    args = parser.parse_args(["pattern", "--1", "--5", "--6", "--as-of", "2026-04-10"])
 
     assert args.command == "pattern"
     assert args.pattern1 is True
     assert args.pattern5 is True
     assert args.pattern6 is True
-    assert args.plot_all is True
     assert args.as_of == "2026-04-10"
-
-
-def test_build_parser_accepts_plot_command() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["plot", "603588", "--start-date", "20240101"])
-
-    assert args.command == "plot"
-    assert args.symbol == "603588"
-    assert args.start_date == "20240101"
-
-
-def test_build_parser_accepts_train_prob_command() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["train-prob", "--train-end", "2025-12-31"])
-
-    assert args.command == "train-prob"
-    assert args.train_end == "2025-12-31"
-
-
-def test_build_parser_accepts_predict_prob_command() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["predict-prob", "--date", "2026-04-10", "--top-n", "15"])
-
-    assert args.command == "predict-prob"
-    assert args.date == "2026-04-10"
-    assert args.top_n == 15
 
 
 def test_build_parser_accepts_tradingview_command() -> None:
@@ -108,16 +81,6 @@ def test_build_parser_accepts_atr_command() -> None:
     assert args.command == "atr"
     assert args.date == "2026-04-10"
     assert args.top_n == 18
-
-
-def test_build_parser_accepts_xueqiu_archive_command() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["xueqiu-archive", "--max-posts", "10", "--refresh", "--headed"])
-
-    assert args.command == "xueqiu-archive"
-    assert args.max_posts == 10
-    assert args.refresh is True
-    assert args.headed is True
 
 
 def test_build_parser_accepts_daily_screening_command() -> None:
@@ -287,9 +250,7 @@ def test_build_parser_accepts_research_pattern_stops_command() -> None:
 
 def test_command_needs_network_only_for_networked_commands() -> None:
     assert _command_needs_network("update") is True
-    assert _command_needs_network("plot") is True
     assert _command_needs_network("intraday-screening") is True
-    assert _command_needs_network("xueqiu-archive") is True
     assert _command_needs_network("macd") is False
     assert _command_needs_network("atr") is False
     assert _command_needs_network("trend-universe") is False
@@ -318,6 +279,52 @@ def test_build_parser_accepts_research_thresholds_command() -> None:
     assert args.start_date == "2025-01-01"
     assert args.sample_mode == "weekly"
     assert args.train_end_date == "2025-12-31"
+
+
+def test_build_parser_accepts_research_tradingview_factor_command() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "research-tradingview-factor",
+            "--start-date",
+            "2024-01-01",
+            "--end-date",
+            "2026-04-30",
+            "--horizons",
+            "1,5,10,20",
+            "--top-n",
+            "10",
+        ]
+    )
+
+    assert args.command == "research-tradingview-factor"
+    assert args.start_date == "2024-01-01"
+    assert args.end_date == "2026-04-30"
+    assert args.horizons == "1,5,10,20"
+    assert args.top_n == 10
+
+
+def test_build_parser_accepts_current_model_commands() -> None:
+    parser = build_parser()
+    train_opportunity_args = parser.parse_args(
+        ["train-opportunity-ranker", "--max-iter", "4", "--top-n", "20", "--predict-date", "2026-04-30"]
+    )
+    predict_opportunity_args = parser.parse_args(
+        ["predict-opportunity-ranker", "--date", "2026-04-30", "--top-n", "10", "--rank-source", "v4"]
+    )
+    predict_model_args = parser.parse_args(["predict-model", "--date", "2026-04-30", "--top-n", "15"])
+
+    assert train_opportunity_args.command == "train-opportunity-ranker"
+    assert train_opportunity_args.max_iter == 4
+    assert train_opportunity_args.top_n == "20"
+    assert train_opportunity_args.predict_date == "2026-04-30"
+    assert predict_opportunity_args.command == "predict-opportunity-ranker"
+    assert predict_opportunity_args.date == "2026-04-30"
+    assert predict_opportunity_args.top_n == 10
+    assert predict_opportunity_args.rank_source == "v4"
+    assert predict_model_args.command == "predict-model"
+    assert predict_model_args.date == "2026-04-30"
+    assert predict_model_args.top_n == 15
 
 
 def test_load_local_env_sets_missing_env_vars_only() -> None:
@@ -754,6 +761,26 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
         "stocks_analyzer.cli._append_recent_trend_summary",
         lambda storage, config, exported, as_of, symbols=None: exported,
     )
+    predict_model_dir = tmp_path / "reports" / "predict_model"
+    predict_model_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "model_version": "v42_gate_v4_rank",
+                "trade_date": "2026-04-10",
+                "symbol": "600000",
+                "action": "candidate",
+                "trade_permission": "allow",
+                "risk_tier": "low",
+                "risk_gate_reason": "passed",
+                "risk_score": 0.20,
+                "long_upside_score": 0.72,
+                "opportunity_rank_score": 0.72,
+                "final_score_v42": 0.72,
+                "buy_score_v42": 88.0,
+            }
+        ]
+    ).to_csv(predict_model_dir / "predictions_2026-04-10.csv", index=False)
 
     _run_pattern(
         storage=storage,
@@ -763,7 +790,6 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
         selected_patterns=["volume_top_pre_breakout"],
         limit=20,
         output=None,
-        plot_all=False,
     )
 
     watchlist = json.loads((tmp_path / "reports" / "watchlists" / "watchlist_2026-04-10.json").read_text(encoding="utf-8"))
@@ -771,6 +797,8 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
     assert watchlist["trade_date"] == "2026-04-10"
     assert watchlist["candidate_count"] == 1
     assert watchlist["candidates"][0]["symbol"] == "600000"
+    assert watchlist["candidates"][0]["model_version"] == "v42_gate_v4_rank"
+    assert watchlist["candidates"][0]["final_score_v42"] == 0.72
     assert pattern_watchlist["candidate_count"] == 1
     assert pattern_watchlist["candidates"][0]["symbol"] == "600000"
 
@@ -873,7 +901,6 @@ def test_run_pattern_passes_progress_callback_to_screener(monkeypatch) -> None:
         selected_patterns=["volume_top_pre_breakout"],
         limit=20,
         output=None,
-        plot_all=False,
     )
 
     assert callback_seen == [True]

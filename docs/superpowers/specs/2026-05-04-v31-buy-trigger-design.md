@@ -154,8 +154,6 @@ trigger_score =
   + momentum_score
   + volume_score
   - overheat_penalty
-  + 0.15 * normalized_clean_win_score
-  - 0.10 * normalized_risk_score
 ```
 
 Scores should be normalized by daily cross-section where practical. This avoids comparing raw indicator scales across dates.

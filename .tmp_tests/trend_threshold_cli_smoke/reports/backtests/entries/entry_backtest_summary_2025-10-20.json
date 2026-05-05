@@ -1,8 +1,0 @@
-{
-  "report_date": "2025-10-20",
-  "detail_rows": 32,
-  "summary_rows": 12,
-  "detail_path": ".tmp_tests\\trend_threshold_cli_smoke\\reports\\custom_backtest_entries_2025-10-20.csv",
-  "summary_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\.tmp_tests\\trend_threshold_cli_smoke\\reports\\backtests\\entries\\entry_backtest_summary_2025-10-20.csv",
-  "entry_note": "Research entry assumption: score calculated at close and entered at the next open."
-}

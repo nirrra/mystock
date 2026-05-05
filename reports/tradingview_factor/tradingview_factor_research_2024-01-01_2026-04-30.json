@@ -1,0 +1,15 @@
+{
+  "start_date": "2024-01-01",
+  "end_date": "2026-04-30",
+  "sample_rows": 1670684,
+  "daily_ic_rows": 8976,
+  "topn_detail_rows": 11022,
+  "samples_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_factor_samples_2024-01-01_2026-04-30.csv",
+  "daily_ic_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_factor_daily_ic_2024-01-01_2026-04-30.csv",
+  "ic_summary_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_factor_ic_summary_2024-01-01_2026-04-30.csv",
+  "quantile_returns_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_factor_quantile_returns_2024-01-01_2026-04-30.csv",
+  "label_returns_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_factor_label_returns_2024-01-01_2026-04-30.csv",
+  "topn_detail_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_top10_forward_returns_2024-01-01_2026-04-30.csv",
+  "topn_daily_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_top10_daily_portfolio_2024-01-01_2026-04-30.csv",
+  "topn_summary_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\tradingview_factor\\tradingview_top10_summary_2024-01-01_2026-04-30.csv"
+}

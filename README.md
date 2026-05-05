@@ -2,29 +2,33 @@
 
 面向 A 股主板的命令行技术分析工具。
 
-当前项目聚焦三件事：
+当前项目聚焦四件事：
 
 - 更新主板股票池和本地日线缓存
-- 生成 pattern、TradingView、MACD/量价状态、ATR 风险辅助等技术结果
-- 基于技术规则生成 `watchlist`，并在次日盘中做小范围复筛和排序
+- 生成 pattern、TradingView 风格指标、MACD/量价状态、ATR 风险辅助、趋势评分等技术结果
+- 通过 `predict-model` 输出当前主模型预测，再生成经过风险过滤和机会日过滤的 `watchlist`
+- 在次日盘中只对 `watchlist` 做小范围复筛和排序
 
 项目不包含交易执行，也不会替你自动决定最终买入标的。
 
 ## 当前定位
 
-当前流程里有两层结果：
+当前流程里有三层结果：
 
-- 技术结果层：`pattern`、`tradingview`、`macd`、`atr`
+- 技术结果层：`pattern`、`tradingview`、`macd`、`atr`、`trend`
+- 模型过滤层：`predict-model`
 - 候选池层：`watchlist`、`watchlist_pattern`、`watchlist_trend`
 
 其中：
 
-- `daily-screening` 负责跑完整技术链路，并生成当日 `watchlist`、`watchlist_pattern`、`watchlist_trend`
+- `daily-screening` 负责跑完整技术链路，并生成当日 `predict_model`、`watchlist`、`watchlist_pattern`、`watchlist_trend`
+- 当前 `predict-model` 使用 `v42_gate_v4_rank`：先用 V4.2 机会日模型判断当天是否值得交易，再用 V4 `long_upside_score` 在低风险池里排序
+- `watchlist_pattern` 会把 `predict-model` 作为硬过滤：只保留 `trade_permission = allow` 且 `action = candidate` 的股票
 - 主 `watchlist` 和 `watchlist_pattern` 会补入 ATR 辅助字段，并写入 `连续上榜天数`
 - `intraday-screening` 负责读取上一交易日或指定日期的 `watchlist`，直接抓取候选股当日 5 分钟线做盘中复筛，并生成一份盘中排序 CSV
 - `选股.md` 不在自动命令链里更新，留给你手动整理和最终决策
 
-另外，项目现在新增了一条独立于 `pattern/watchlist` 的趋势交易研究链路：
+另外，项目保留一条独立于 `pattern/watchlist` 的趋势交易研究链路：
 
 - `trend`：输出指定交易日的 `breakout/pullback` 趋势评分结果，主要用于研究和展示
 - `trend-universe`：定义并生成日 K 趋势股池，供 `pattern` 结果补充第一层趋势字段
@@ -75,6 +79,8 @@ config/                      配置文件
 data/                        本地缓存数据
 reports/patterns/            模式扫描结果
 reports/tradingview/         TradingView 技术评分结果
+reports/predict_model/       当前主模型每日预测结果
+reports/v42_opportunity_ranker/ V4.2 机会日模型训练、评估和预测报告
 reports/macd/                MACD/量价统一状态表
 reports/atr/                 ATR 风险辅助表
 reports/watchlists/          日终 watchlist
@@ -89,6 +95,7 @@ reports/backtests/portfolio/ setup 层组合回测
 reports/backtests/entries/   次日开盘单信号回测
 reports/backtests/entries_portfolio/ 次日开盘组合回测
 reports/threshold_research/  阈值研究样本、分布、候选阈值和回测对比
+data/ml/v42_opportunity_ranker/ 当前主模型 artifact
 选股.md                      你手动维护的选股记录
 主线.md                      你手动维护的主线记录
 ```
@@ -104,8 +111,9 @@ python -m stocks_analyzer --project-root . update --start-date 20240101
 查看核心技术结果：
 
 ```bash
-python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10
 python -m stocks_analyzer --project-root . tradingview --date 2026-04-10
+python -m stocks_analyzer --project-root . predict-model --date 2026-04-10
+python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10
 python -m stocks_analyzer --project-root . macd --date 2026-04-10
 python -m stocks_analyzer --project-root . atr --date 2026-04-10
 ```
@@ -183,15 +191,16 @@ python -m stocks_analyzer --project-root . update --start-date 20240101 --end-da
 作用：
 
 - 扫描本地日线缓存，识别 1 到 6 号模式
+- 在日常主流程中合并同日 `predict-model` 结果后生成 `watchlist_pattern`
 
 常用示例：
 
 ```bash
-python -m stocks_analyzer --project-root . pattern
-python -m stocks_analyzer --project-root . pattern --1
-python -m stocks_analyzer --project-root . pattern --2 --6
+python -m stocks_analyzer --project-root . predict-model --date 2026-04-10
+python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10
+python -m stocks_analyzer --project-root . pattern --1 --as-of 2026-04-10
+python -m stocks_analyzer --project-root . pattern --2 --6 --as-of 2026-04-10
 python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10 --output reports/my_patterns.csv
-python -m stocks_analyzer --project-root . pattern --plot-all
 ```
 
 主要参数：
@@ -200,7 +209,6 @@ python -m stocks_analyzer --project-root . pattern --plot-all
 - `--as-of`：分析截止日期，格式 `YYYY-MM-DD`
 - `--limit`：终端展示上限
 - `--output`：自定义 CSV 输出路径
-- `--plot-all`：为命中股票批量生成图形
 
 默认输出：
 
@@ -362,20 +370,6 @@ python -m stocks_analyzer --project-root . pattern --plot-all
 
 模式6在本次补充回测中已生成完整持有样本，短周期表现优于 20/40 日，内部最佳结果为 5 日胜率 `47.80%`。
 
-### `plot`
-
-作用：
-
-- 绘制单只股票 K 线和成交量图
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . plot 603588
-python -m stocks_analyzer --project-root . plot 603588 --start-date 20240101 --end-date 20260410
-python -m stocks_analyzer --project-root . plot 603588 --output reports/plots/603588_custom.png
-```
-
 ### `report`
 
 作用：
@@ -448,12 +442,80 @@ python -m stocks_analyzer --project-root . atr --date 2026-04-10 --output report
 - `reports/atr/atr_YYYY-MM-DD.csv`
 - `reports/atr/atr_YYYY-MM-DD.json`
 
+### `train-opportunity-ranker`
+
+作用：
+
+- 训练当前主模型的底层 artifact
+- 模型结构是 V4.2 机会日模型 + V4 `long_upside_score` 排序
+- 训练报告会同时输出机会门、条件排序器和 hybrid 对照结果
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . train-opportunity-ranker --max-iter 80 --top-n 20,50
+python -m stocks_analyzer --project-root . train-opportunity-ranker --max-iter 80 --top-n 20,50 --predict-date 2026-04-30
+```
+
+默认输出：
+
+- `data/ml/v42_opportunity_ranker/v42_opportunity_ranker.pkl`
+- `data/ml/v42_opportunity_ranker/v42_opportunity_ranker_metadata.json`
+- `reports/v42_opportunity_ranker/v42_topn_metrics.csv`
+- `reports/v42_opportunity_ranker/v42_opportunity_metrics.csv`
+- `reports/v42_opportunity_ranker/v42_ranker_metrics.csv`
+- `reports/v42_opportunity_ranker/v42_comparison.csv`
+
+### `predict-opportunity-ranker`
+
+作用：
+
+- 读取已训练的 V4.2 artifact
+- 对指定日期先判断是否允许交易，再生成候选排序
+- `--rank-source v4` 会使用当前主版本的 hybrid 排序，即机会日模型 + V4 `long_upside_score`
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . predict-opportunity-ranker --date 2026-04-30 --rank-source v4
+```
+
+默认输出：
+
+- `reports/v42_opportunity_ranker/predictions_v4_rank_YYYY-MM-DD.csv`
+
+### `predict-model`
+
+作用：
+
+- 当前每日筛选的通用模型入口
+- 默认使用 `v42_gate_v4_rank`
+- 生成供 `pattern` / `watchlist` 合并的标准预测文件
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . predict-model --date 2026-04-10
+```
+
+默认输出：
+
+- `reports/predict_model/predictions_YYYY-MM-DD.csv`
+
+重要字段：
+
+- `trade_permission`：机会日硬门槛，`allow` 才允许进入 `watchlist_pattern`
+- `action`：个股动作，当前只保留 `candidate`
+- `risk_score`：风险模型分数
+- `long_upside_score`：V4 长周期收益排序分
+- `final_score_v42`、`buy_score_v42`：当前 watchlist 排序使用的主分数
+
 ### `daily-screening`
 
 作用：
 
 - 判断指定日期是否为交易日
-- 串行执行 `update -> tradingview -> macd -> atr -> trend-universe -> trend -> pattern`
+- 串行执行 `update -> tradingview -> predict-model -> macd -> atr -> trend-universe -> trend -> pattern`
 - `trend` 生成 `watchlist_trend`
 - `pattern` 生成 `watchlist_pattern`
 - 兼容保留一份通用 `watchlist`，当前与 `watchlist_pattern` 同步
@@ -476,13 +538,14 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --s
 1. 判断交易日
 2. `update`
 3. `tradingview`
-4. `macd`
-5. `atr`
-6. `trend-universe`
-7. `trend`
-8. `pattern`
-9. 生成 `watchlist_pattern`、`watchlist_trend` 和兼容用 `watchlist`
-10. 写入 `daily_screening_YYYY-MM-DD.json`
+4. `predict-model`
+5. `macd`
+6. `atr`
+7. `trend-universe`
+8. `trend`
+9. `pattern`
+10. 生成 `watchlist_pattern`、`watchlist_trend` 和兼容用 `watchlist`
+11. 写入 `daily_screening_YYYY-MM-DD.json`
 
 默认输出：
 
@@ -490,6 +553,7 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --s
 - `reports/watchlists/watchlist_pattern_YYYY-MM-DD.json`
 - `reports/watchlists/watchlist_trend_YYYY-MM-DD.json`
 - `reports/daily_screening/daily_screening_YYYY-MM-DD.json`
+- `reports/predict_model/predictions_YYYY-MM-DD.csv`
 - `reports/patterns/patterns_all_YYYY-MM-DD.csv`
 - `reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
 - `reports/macd/macd_YYYY-MM-DD.csv`
@@ -501,6 +565,7 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --s
 
 - `daily-screening` **不会修改** `选股.md`
 - 同一日期重复执行时，会覆盖同日期的 `watchlist` 和运行摘要
+- `pattern` 阶段会读取同日 `predict-model` 结果；如果模型判断 `trade_permission = no_trade`，`watchlist_pattern` 会为空或明显收缩
 - `watchlist_pattern` 不再强制要求 `trend-universe` 交集
 - `watchlist_pattern` 和 `watchlist_trend` 都会先剔除 `MACD顶背离 / 量价看空 / dead_cross`
 - `watchlist_trend` 只保留 `buy_score / price_action_score` 高于 `pick_trend_watchlist` 阈值的票
@@ -781,48 +846,6 @@ buy_score = trend_base_score * 0.35 + trigger_score * 0.65
 - 如果个别股票的 5 分钟线抓取失败，盘中复筛会在 JSON 摘要里记录失败股票并跳过，不会中断整轮
 - 同一日期重复执行时，会覆盖同日期的盘中结果文件
 
-### `train-prob`
-
-作用：
-
-- 基于本地主板日线数据构建样本
-- 训练中短期上涨概率模型
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . train-prob
-python -m stocks_analyzer --project-root . train-prob --start-date 2023-01-01 --end-date 2025-12-31
-python -m stocks_analyzer --project-root . train-prob --limit 500
-```
-
-### `predict-prob`
-
-作用：
-
-- 读取已训练模型，对指定日期生成全市场概率排序
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . predict-prob --date 2026-04-10
-python -m stocks_analyzer --project-root . predict-prob --date 2026-04-10 --top-n 30
-```
-
-### `xueqiu-archive`
-
-作用：
-
-- 归档雪球博主 `1155695148` 的公开历史帖子
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . xueqiu-archive --headed --refresh
-python -m stocks_analyzer --project-root . xueqiu-archive --max-posts 20
-python -m stocks_analyzer --project-root . xueqiu-archive --output reports/xueqiu/custom.md
-```
-
 ## watchlist 的生成规则
 
 当前有两套候选池：
@@ -843,12 +866,14 @@ python -m stocks_analyzer --project-root . xueqiu-archive --output reports/xueqi
 
 核心规则包括：
 
-- 只保留 `TradingView` 标签为 `buy` 或 `strong_buy` 的标的
-- 不同 `pattern_id` 使用不同的 5 日均分阈值
+- 日常主流程优先使用 `predict-model`：只保留 `trade_permission = allow` 且 `action = candidate` 的标的
+- `watchlist_pattern` 按 `final_score_v42`、`buy_score_v42`、`pattern_priority` 排序
+- `TradingView` 仍作为技术解释字段保留，但不再作为主排序逻辑
+- 日常 CLI 下，`pattern` 应先有同日 `predict-model` 文件；旧的 TradingView 阈值逻辑只作为底层兼容口径，不是当前推荐流程
 - 过滤指数类名称
-- 计算 `stable_score`
+- 计算 `stable_score`；在模型流程里它等于 `final_score_v42`
 - 输出 `第一梯队 / 第二梯队 / 第三梯队`
-- 最终按梯队、`stable_score`、`tradingview_avg_5d` 排序
+- 最终按模型分、买入分和模式优先级排序
 
 `watchlist_pattern` / `watchlist_trend` 适合做：
 
@@ -879,7 +904,10 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
 这一步会得到：
 
 - 当日全市场技术结果
-- 当日 `watchlist`
+- 当日 `reports/predict_model/predictions_YYYY-MM-DD.csv`
+- 当日 `watchlist`、`watchlist_pattern`、`watchlist_trend`
+
+其中 `watchlist_pattern` 已经过 `predict-model` 的机会日和个股动作过滤，不需要再按 TradingView 分数重新排序。
 
 ### 3. 次日盘中做小范围复筛
 
@@ -921,11 +949,12 @@ python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 
 ## 注意事项
 
 - `daily-screening` 更适合盘后或定时任务，不适合盘中全市场快速执行
+- `daily-screening` 需要已有的 V4.2 模型 artifact；如果缺失，先运行 `train-opportunity-ranker`
 - `intraday-screening` 依赖已有 `watchlist`
 - 如果没有可用 `watchlist`，盘中复筛会报错
 - 当前推荐的数据源选择是：先 `sina`，如果 `sina` 不稳定，再尝试 `baostock`
 - 交易日判断当前优先走 `akshare` 的交易日历接口，失败后退化到工作日判断
-- 雪球归档属于最佳努力抓取，不保证完整覆盖
+- 旧的概率模型、V3.1 买点模型、雪球归档和 `runcmd` 代码已经下线；当前文档以 `predict-model` 主流程为准
 
 ## 兼容入口
 
@@ -939,52 +968,3 @@ python -m stocks_analyzer --project-root . <subcommand>
 
 - `mystock`
 - `stocks-analyzer`
-
-## `runcmd` 固定入口
-
-如果你希望通过对话只修改一个本地文本文件，然后在终端里始终执行同一个固定命令，可以使用项目内置的 `runcmd` 方案。
-
-约定如下：
-
-- 命令文件固定为项目根目录的 `command.txt`
-- 执行器脚本固定为 [`tools/runcmd.py`](/C:/Users/wdyab/Desktop/wdy/stocks/tools/runcmd.py)
-- `command.txt` 建议只放一条完整 PowerShell 命令
-
-例如，`command.txt` 可以写成：
-
-```powershell
-python -m stocks_analyzer --project-root . daily-screening --date 2026-04-14
-```
-
-直接运行脚本的方式：
-
-```powershell
-python .\tools\runcmd.py
-```
-
-如果你希望以后只输入 `runcmd`，更实用的做法是在 PowerShell 配置文件里加一个函数：
-
-```powershell
-function runcmd { python "C:\Users\wdyab\Desktop\wdy\stocks\tools\runcmd.py" }
-```
-
-写入配置文件的一种方式：
-
-```powershell
-if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force | Out-Null }
-Add-Content $PROFILE 'function runcmd { python "C:\Users\wdyab\Desktop\wdy\stocks\tools\runcmd.py" }'
-```
-
-重开一个 PowerShell 窗口后，你就可以固定使用：
-
-```powershell
-runcmd
-```
-
-运行行为：
-
-- `runcmd` 会读取项目根目录的 `command.txt`
-- 如果文件不存在或为空，会直接报错退出
-- 执行前会先打印当前将要执行的命令
-- 实际命令始终在项目根目录下运行
-- 执行结束后不会清空 `command.txt`

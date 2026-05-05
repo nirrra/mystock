@@ -29,6 +29,51 @@ LABEL_BONUS = {
     "sell": -0.6,
     "strong_sell": -1.0,
 }
+V42_PREDICT_MODEL_REQUIRED_FIELDS = (
+    "symbol",
+    "trade_date",
+    "action",
+    "trade_permission",
+    "risk_tier",
+    "risk_gate_reason",
+    "risk_score",
+    "long_upside_score",
+    "opportunity_rank_score",
+    "final_score_v42",
+    "buy_score_v42",
+)
+PREDICT_MODEL_CANDIDATE_FIELDS = (
+    "model_version",
+    "action",
+    "final_action",
+    "trade_permission",
+    "opportunity_score",
+    "opportunity_threshold",
+    "opportunity_quality",
+    "risk_tier",
+    "risk_gate_reason",
+    "risk_score",
+    "long_upside_score",
+    "opportunity_rank_score",
+    "opportunity_rank_score_pct",
+    "final_score_v42",
+    "buy_score_v42",
+    "rank_source_v42",
+    "top_risk_horizon",
+    "top_upside_horizon",
+    "up_prob_5d",
+    "down_prob_5d",
+    "neutral_prob_5d",
+    "up_prob_10d",
+    "down_prob_10d",
+    "neutral_prob_10d",
+    "up_prob_20d",
+    "down_prob_20d",
+    "neutral_prob_20d",
+    "up_prob_60d",
+    "down_prob_60d",
+    "neutral_prob_60d",
+)
 INDEX_NAME_MARKERS = {
     "指数",
     "上证综指",
@@ -189,6 +234,7 @@ def build_watchlist_candidates_from_patterns(
     *,
     source_file: str,
     limit: int = 30,
+    model_predictions: pd.DataFrame | None = None,
 ) -> dict[str, object]:
     frame = pattern_frame.copy()
     if frame.empty:
@@ -200,6 +246,13 @@ def build_watchlist_candidates_from_patterns(
 
     frame["symbol"] = frame["symbol"].map(_normalize_symbol)
     frame = frame[~frame["name"].map(_is_true_index_name)].copy()
+    if model_predictions is not None:
+        return _build_watchlist_candidates_from_patterns_with_model(
+            frame,
+            model_predictions=model_predictions,
+            source_file=source_file,
+            limit=limit,
+        )
 
     daily_columns = _daily_rating_columns(frame)
     required = {"symbol", "name", "pattern_id", "tradingview_avg_all_rating_5d", "tradingview_all_rating_label"}
@@ -228,6 +281,76 @@ def build_watchlist_candidates_from_patterns(
             "stable_score": round(float(row["stable_score"]), 4),
             "reason": row.get("reason", ""),
         }
+        _append_supported_fields(candidate, row)
+        candidates.append(candidate)
+
+    return {
+        "source_file": source_file,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def _build_watchlist_candidates_from_patterns_with_model(
+    pattern_frame: pd.DataFrame,
+    *,
+    model_predictions: pd.DataFrame,
+    source_file: str,
+    limit: int,
+) -> dict[str, object]:
+    prediction_frame = _prepare_model_predictions_for_join(model_predictions)
+    model_columns = [column for column in prediction_frame.columns if column != "symbol"]
+    frame = pattern_frame.drop(columns=[column for column in model_columns if column in pattern_frame.columns], errors="ignore")
+    frame = frame.merge(prediction_frame, on="symbol", how="left")
+    frame["stable_score"] = pd.to_numeric(frame["final_score_v42"], errors="coerce")
+    frame["model_buy_score"] = pd.to_numeric(frame["buy_score_v42"], errors="coerce")
+    frame = frame[
+        frame["trade_permission"].astype(str).str.strip().str.lower().eq("allow")
+        & frame["action"].astype(str).str.strip().str.lower().eq("candidate")
+        & frame["stable_score"].notna()
+        & frame["model_buy_score"].notna()
+    ].copy()
+    if frame.empty:
+        return {
+            "source_file": source_file,
+            "candidate_count": 0,
+            "candidates": [],
+        }
+
+    frame = frame[~frame.apply(_is_row_risk_excluded, axis=1)].copy()
+    if frame.empty:
+        return {
+            "source_file": source_file,
+            "candidate_count": 0,
+            "candidates": [],
+        }
+
+    frame["pattern_priority"] = frame["pattern_id"].astype(str).map(PATTERN_PRIORITY).fillna(0.0)
+    frame["base_tier"] = frame.apply(_model_base_tier, axis=1)
+    frame = frame.sort_values(
+        ["stable_score", "model_buy_score", "pattern_priority"],
+        ascending=[False, False, False],
+    )
+
+    daily_columns = _daily_rating_columns(frame)
+    candidates: list[dict[str, object]] = []
+    for _, row in frame.head(limit).iterrows():
+        candidate = {
+            "tier": row["base_tier"],
+            "symbol": row["symbol"],
+            "name": row["name"],
+            "pattern_id": str(row["pattern_id"]),
+            "macd_top_divergence_15d": bool(row.get("macd_top_divergence_15d", False)),
+            "macd_bottom_divergence_15d": bool(row.get("macd_bottom_divergence_15d", False)),
+            "stable_score": round(float(row["stable_score"]), 4),
+            "reason": row.get("reason", ""),
+        }
+        if "tradingview_all_rating_label" in row.index and pd.notna(row.get("tradingview_all_rating_label")):
+            candidate["tradingview_label"] = str(row["tradingview_all_rating_label"]).strip().lower()
+        if "tradingview_avg_all_rating_5d" in row.index and pd.notna(row.get("tradingview_avg_all_rating_5d")):
+            candidate["tradingview_avg_5d"] = round(float(row["tradingview_avg_all_rating_5d"]), 4)
+        if daily_columns:
+            candidate["five_day_scores"] = [round(float(row[column]), 4) for column in daily_columns if pd.notna(row.get(column))]
         _append_supported_fields(candidate, row)
         candidates.append(candidate)
 
@@ -508,6 +631,38 @@ def _base_tier(row: pd.Series) -> str | None:
     return "第三梯队"
 
 
+def _prepare_model_predictions_for_join(model_predictions: pd.DataFrame) -> pd.DataFrame:
+    frame = model_predictions.copy()
+    required = V42_PREDICT_MODEL_REQUIRED_FIELDS
+    missing = sorted(set(required) - set(frame.columns))
+    if missing:
+        raise RuntimeError(f"Predict model frame is missing required columns: {missing}")
+    if frame.empty:
+        return frame
+
+    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
+    frame["final_score_v42"] = pd.to_numeric(frame["final_score_v42"], errors="coerce")
+    frame["buy_score_v42"] = pd.to_numeric(frame["buy_score_v42"], errors="coerce")
+    frame = frame.sort_values(["final_score_v42", "buy_score_v42"], ascending=[False, False])
+    frame = frame.drop_duplicates(subset=["symbol"], keep="first")
+    if "trade_date" in frame.columns:
+        frame = frame.rename(columns={"trade_date": "model_trade_date"})
+    columns = []
+    for column in ("symbol", "model_trade_date", *PREDICT_MODEL_CANDIDATE_FIELDS):
+        if column in frame.columns and column not in columns:
+            columns.append(column)
+    return frame.loc[:, columns].copy()
+
+
+def _model_base_tier(row: pd.Series) -> str:
+    pattern_id = str(row.get("pattern_id", ""))
+    if pattern_id in {"1", "2", "3"}:
+        return "第一梯队"
+    if pattern_id in {"4", "5", "6"}:
+        return "第二梯队"
+    return "第三梯队"
+
+
 def _is_true_index_name(name: object) -> bool:
     normalized = str(name).strip().replace(" ", "")
     return any(marker in normalized for marker in INDEX_NAME_MARKERS)
@@ -523,6 +678,12 @@ def _resolve_watchlist_target(project_root: Path, trade_date: date, kind: str | 
 
 def _append_supported_fields(candidate: dict[str, object], row: pd.Series | dict[str, object]) -> None:
     for field in PATTERN_CANDIDATE_FIELDS:
+        value = _row_value(row, field, pd.NA)
+        if pd.isna(value):
+            continue
+        candidate[field] = _normalize_candidate_value(value)
+
+    for field in PREDICT_MODEL_CANDIDATE_FIELDS:
         value = _row_value(row, field, pd.NA)
         if pd.isna(value):
             continue
