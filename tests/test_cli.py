@@ -7,6 +7,7 @@ from uuid import uuid4
 import pandas as pd
 from stocks_analyzer.cli import (
     PATTERN_LABEL_MAP,
+    _append_predict_model_risk_summary,
     _append_recent_atr_summary,
     _append_recent_macd_summary,
     _append_recent_trend_universe_summary,
@@ -312,7 +313,65 @@ def test_build_parser_accepts_current_model_commands() -> None:
     predict_opportunity_args = parser.parse_args(
         ["predict-opportunity-ranker", "--date", "2026-04-30", "--top-n", "10", "--rank-source", "v4"]
     )
+    train_v5_args = parser.parse_args(
+        [
+            "train-volume-price-fusion",
+            "--max-iter",
+            "4",
+            "--top-n",
+            "20",
+            "--predict-date",
+            "2026-04-30",
+            "--reuse-base-artifact",
+        ]
+    )
+    predict_v5_args = parser.parse_args(["predict-volume-price-fusion", "--date", "2026-04-30", "--top-n", "10"])
+    train_v51_args = parser.parse_args(
+        ["train-candidate-ranker", "--max-iter", "4", "--top-n", "20", "--predict-date", "2026-04-30"]
+    )
+    walkforward_args = parser.parse_args(
+        [
+            "validate-model-walkforward",
+            "--model",
+            "v42",
+            "--windows",
+            "3",
+            "--train-days",
+            "80",
+            "--valid-days",
+            "20",
+            "--test-days",
+            "20",
+            "--max-iter",
+            "4",
+            "--top-n",
+            "20",
+        ]
+    )
+    predict_v51_args = parser.parse_args(["predict-candidate-ranker", "--date", "2026-04-30", "--top-n", "10"])
     predict_model_args = parser.parse_args(["predict-model", "--date", "2026-04-30", "--top-n", "15"])
+    build_event_args = parser.parse_args(
+        ["build-event-labels", "--start-date", "2024-01-01", "--end-date", "2026-04-30", "--limit", "5"]
+    )
+    train_event_args = parser.parse_args(
+        [
+            "train-event-risk-ranker",
+            "--start-date",
+            "2022-01-01",
+            "--end-date",
+            "2026-04-30",
+            "--top-n",
+            "10,20",
+            "--stop-atr-grid",
+            "1.0,1.2",
+            "--take-atr-grid",
+            "2.0,2.5",
+            "--holding-days-grid",
+            "10,20",
+        ]
+    )
+    predict_event_args = parser.parse_args(["predict-event-risk-ranker", "--date", "2026-05-06", "--top-n", "10"])
+    validate_event_args = parser.parse_args(["validate-event-risk-ranker", "--windows", "2", "--top-n", "10"])
 
     assert train_opportunity_args.command == "train-opportunity-ranker"
     assert train_opportunity_args.max_iter == 4
@@ -322,9 +381,41 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert predict_opportunity_args.date == "2026-04-30"
     assert predict_opportunity_args.top_n == 10
     assert predict_opportunity_args.rank_source == "v4"
+    assert train_v5_args.command == "train-volume-price-fusion"
+    assert train_v5_args.max_iter == 4
+    assert train_v5_args.top_n == "20"
+    assert train_v5_args.predict_date == "2026-04-30"
+    assert train_v5_args.reuse_base_artifact is True
+    assert predict_v5_args.command == "predict-volume-price-fusion"
+    assert predict_v5_args.date == "2026-04-30"
+    assert predict_v5_args.top_n == 10
+    assert train_v51_args.command == "train-candidate-ranker"
+    assert train_v51_args.max_iter == 4
+    assert train_v51_args.top_n == "20"
+    assert train_v51_args.predict_date == "2026-04-30"
+    assert walkforward_args.command == "validate-model-walkforward"
+    assert walkforward_args.model == "v42"
+    assert walkforward_args.windows == 3
+    assert walkforward_args.train_days == 80
+    assert walkforward_args.valid_days == 20
+    assert walkforward_args.test_days == 20
+    assert walkforward_args.max_iter == 4
+    assert walkforward_args.top_n == "20"
+    assert predict_v51_args.command == "predict-candidate-ranker"
+    assert predict_v51_args.date == "2026-04-30"
+    assert predict_v51_args.top_n == 10
     assert predict_model_args.command == "predict-model"
     assert predict_model_args.date == "2026-04-30"
     assert predict_model_args.top_n == 15
+    assert build_event_args.command == "build-event-labels"
+    assert build_event_args.limit == 5
+    assert train_event_args.command == "train-event-risk-ranker"
+    assert train_event_args.top_n == "10,20"
+    assert train_event_args.holding_days_grid == "10,20"
+    assert predict_event_args.command == "predict-event-risk-ranker"
+    assert predict_event_args.date == "2026-05-06"
+    assert validate_event_args.command == "validate-event-risk-ranker"
+    assert validate_event_args.windows == 2
 
 
 def test_load_local_env_sets_missing_env_vars_only() -> None:
@@ -464,11 +555,12 @@ def test_prepare_pattern_results_maps_internal_type_to_pattern_id() -> None:
 
     assert prepared["pattern_id"].tolist() == [PATTERN_LABEL_MAP["volume_top_pre_breakout"]]
     assert "strategy_name" not in prepared.columns
-    assert prepared.columns[:9].tolist() == [
+    assert prepared.columns[:10].tolist() == [
         "trade_date",
         "symbol",
         "name",
         "pattern_id",
+        "风险情况",
         "close",
         "old_high_date",
         "old_high_price",
@@ -511,6 +603,61 @@ def test_prepare_pattern_results_deduplicates_same_symbol_and_pattern() -> None:
 
     assert len(prepared) == 2
     assert prepared["pattern_id"].tolist() == ["1", "5"]
+
+
+def test_append_predict_model_risk_summary_inserts_risk_column_after_pattern_id() -> None:
+    exported = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-04-10",
+                "symbol": '="600000"',
+                "name": "低风险模式",
+                "pattern_id": "1",
+                "close": 10.0,
+            },
+            {
+                "trade_date": "2026-04-10",
+                "symbol": '="600001"',
+                "name": "风险排除模式",
+                "pattern_id": "2",
+                "close": 11.0,
+            },
+        ]
+    )
+    model_predictions = pd.DataFrame(
+        [
+            {
+                "symbol": "600000",
+                "action": "candidate",
+                "risk_candidate_action": "candidate",
+                "risk_action": "pass",
+                "risk_tier": "low",
+                "risk_gate_reason": "passed",
+                "risk_score": 0.21,
+                "final_score_v42": 0.6,
+                "buy_score_v42": 80.0,
+            },
+            {
+                "symbol": "600001",
+                "action": "avoid",
+                "risk_candidate_action": "avoid",
+                "risk_action": "avoid",
+                "risk_tier": "high",
+                "risk_gate_reason": "down20_cap",
+                "risk_score": 0.73,
+                "final_score_v42": 0.9,
+                "buy_score_v42": 99.0,
+            },
+        ]
+    )
+
+    enriched = _append_predict_model_risk_summary(exported, model_predictions)
+
+    assert enriched.columns[:5].tolist() == ["trade_date", "symbol", "name", "pattern_id", "风险情况"]
+    assert enriched.loc[0, "风险情况"].startswith("低风险")
+    assert "score=0.210" in enriched.loc[0, "风险情况"]
+    assert enriched.loc[1, "风险情况"].startswith("风险排除")
+    assert "down20_cap" in enriched.loc[1, "风险情况"]
 
 
 def test_append_recent_macd_summary_merges_state_columns_from_saved_report() -> None:
@@ -755,11 +902,11 @@ def test_run_pattern_updates_watchlist_for_same_trade_date(monkeypatch) -> None:
     monkeypatch.setattr("stocks_analyzer.cli._append_recent_atr_summary", lambda storage, exported, as_of, symbols=None: exported)
     monkeypatch.setattr(
         "stocks_analyzer.cli._load_or_build_trend_universe_summary",
-        lambda storage, config, trade_date, symbols=None: pd.DataFrame([{"symbol": "600000", "in_trend_universe": True, "trend_score": 81.0}]),
+        lambda storage, config, trade_date, symbols=None: (_ for _ in ()).throw(AssertionError("pattern must not load trend universe")),
     )
     monkeypatch.setattr(
         "stocks_analyzer.cli._append_recent_trend_summary",
-        lambda storage, config, exported, as_of, symbols=None: exported,
+        lambda storage, config, exported, as_of, symbols=None: (_ for _ in ()).throw(AssertionError("pattern must not append trend summary")),
     )
     predict_model_dir = tmp_path / "reports" / "predict_model"
     predict_model_dir.mkdir(parents=True, exist_ok=True)

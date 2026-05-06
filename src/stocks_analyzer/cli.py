@@ -16,6 +16,17 @@ from .atr import build_atr_export_frame, build_atr_snapshot_row, normalize_atr_s
 from .config import load_config
 from .data_sources import create_data_provider
 from .daily_screening import run_daily_screening
+from .event_risk_ranker import (
+    EVENT_RISK_RANKER_VERSION,
+    build_event_risk_ranker_dataset,
+    event_risk_ranker_predictions_path,
+    event_risk_ranker_report_dir,
+    format_event_ranker_prediction_table,
+    predict_event_risk_ranker,
+    train_event_risk_ranker_model,
+    validate_event_risk_ranker_walkforward,
+)
+from .event_labels import EventLabelConfig
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
@@ -42,11 +53,21 @@ from .predict_model import (
 from .reporting import format_multi_pattern_summary, format_report
 from .screener import Screener, parse_as_of
 from .stacked_trade_value import (
+    candidate_ranker_report_dir,
+    format_candidate_ranker_prediction_table,
     format_metric_table,
     format_opportunity_ranker_prediction_table,
+    format_volume_price_fusion_prediction_table,
+    model_walkforward_report_dir,
     opportunity_ranker_report_dir,
+    predict_candidate_ranker,
     predict_opportunity_ranker,
+    predict_volume_price_fusion,
+    train_candidate_ranker_model,
     train_opportunity_ranker_model,
+    train_volume_price_fusion_model,
+    validate_model_walkforward,
+    volume_price_fusion_report_dir,
 )
 from .storage import DailyBarsReadError, Storage
 from .strategies import STRATEGY_NAMES
@@ -90,6 +111,7 @@ from .trend_universe import scan_trend_universe
 from .universe import build_main_board_universe
 from .watchlist import (
     build_watchlist_candidates_from_patterns,
+    build_daily_watchlist_candidates,
     build_watchlist_candidates_from_trend,
     extract_watchlist_symbols,
     find_latest_watchlist_before,
@@ -290,6 +312,84 @@ def build_parser() -> argparse.ArgumentParser:
         help="排序来源：v42 使用条件排序器；v4 使用原 long_upside_score，默认 v42",
     )
 
+    train_v5 = subparsers.add_parser(
+        "train-volume-price-fusion",
+        help="训练 V5 量价融合模型",
+        description="在当前 V4.2 hybrid 基座上训练量价风险、量价质量和 V5 融合排序模型。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    train_v5.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    train_v5.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    train_v5.add_argument("--train-end", default=None, help="训练集结束日期，格式 YYYY-MM-DD")
+    train_v5.add_argument("--valid-end", default=None, help="验证集结束日期，格式 YYYY-MM-DD")
+    train_v5.add_argument("--test-end", default=None, help="测试集结束日期，格式 YYYY-MM-DD")
+    train_v5.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    train_v5.add_argument("--max-iter", type=int, default=80, help="每个模型的最大迭代轮数")
+    train_v5.add_argument("--top-n", default="20,50", help="评估 TopN 列表，逗号分隔，默认 20,50")
+    train_v5.add_argument("--predict-date", default=None, help="训练后顺便生成该日期的预测排序，格式 YYYY-MM-DD")
+    train_v5.add_argument(
+        "--reuse-base-artifact",
+        action="store_true",
+        help="复用已训练 V4.2 hybrid 基座，只训练 V5 量价子模型和融合层；用于快速评估",
+    )
+
+    predict_v5 = subparsers.add_parser(
+        "predict-volume-price-fusion",
+        help="生成 V5 量价融合模型预测结果",
+        description="读取已训练的 V5 量价融合模型，对指定日期生成排序和量价解释字段。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    predict_v5.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
+    predict_v5.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    predict_v5.add_argument("--output", default=None, help="可选的预测结果输出路径")
+
+    train_v51 = subparsers.add_parser(
+        "train-candidate-ranker",
+        aliases=["train-v51-candidate-ranker"],
+        help="训练 V5.1 候选池内排序模型",
+        description="读取已训练 V5 量价融合 artifact，只在通过机会日和风险过滤的候选池内训练横截面排序模型。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    train_v51.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    train_v51.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    train_v51.add_argument("--train-end", default=None, help="训练集结束日期，格式 YYYY-MM-DD")
+    train_v51.add_argument("--valid-end", default=None, help="验证集结束日期，格式 YYYY-MM-DD")
+    train_v51.add_argument("--test-end", default=None, help="测试集结束日期，格式 YYYY-MM-DD")
+    train_v51.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    train_v51.add_argument("--max-iter", type=int, default=80, help="排序模型最大迭代轮数")
+    train_v51.add_argument("--top-n", default="20,50", help="评估 TopN 列表，逗号分隔，默认 20,50")
+    train_v51.add_argument("--predict-date", default=None, help="训练后顺便生成该日期的预测排序，格式 YYYY-MM-DD")
+
+    walkforward = subparsers.add_parser(
+        "validate-model-walkforward",
+        aliases=["walkforward-validate-model"],
+        help="对当前主线模型做轻量 walk-forward 泛化验证",
+        description="按时间顺序生成多个 train/valid/test 窗口，重复训练并评估 V4.2 hybrid 主线模型的泛化稳定性。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    walkforward.add_argument("--model", choices=["v42"], default="v42", help="验证模型，第一版仅支持 v42")
+    walkforward.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    walkforward.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    walkforward.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    walkforward.add_argument("--windows", type=int, default=8, help="滚动窗口数量，默认 8")
+    walkforward.add_argument("--train-days", type=int, default=280, help="每个窗口训练交易日数量，默认 280")
+    walkforward.add_argument("--valid-days", type=int, default=60, help="每个窗口验证交易日数量，默认 60")
+    walkforward.add_argument("--test-days", type=int, default=60, help="每个窗口测试交易日数量，默认 60")
+    walkforward.add_argument("--min-train-days", type=int, default=220, help="允许缩短后的最小训练交易日数量，默认 220")
+    walkforward.add_argument("--max-iter", type=int, default=40, help="每个模型的最大迭代轮数，默认 40")
+    walkforward.add_argument("--top-n", default="20,50", help="评估 TopN 列表，逗号分隔，默认 20,50")
+
+    predict_v51 = subparsers.add_parser(
+        "predict-candidate-ranker",
+        aliases=["predict-v51-candidate-ranker"],
+        help="生成 V5.1 候选池内排序预测结果",
+        description="读取已训练 V5.1 候选池内排序模型，对指定日期生成排序和解释字段。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    predict_v51.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
+    predict_v51.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    predict_v51.add_argument("--output", default=None, help="可选的预测结果输出路径")
+
     predict_model = subparsers.add_parser(
         "predict-model",
         aliases=["predict_model"],
@@ -301,10 +401,68 @@ def build_parser() -> argparse.ArgumentParser:
     predict_model.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
     predict_model.add_argument("--output", default=None, help="可选的预测结果输出路径")
 
+    build_event_labels = subparsers.add_parser(
+        "build-event-labels",
+        help="构建 pattern 事件 triple-barrier 标签",
+        description="扫描历史 pattern 事件，按 ATR 动态止盈止损构建 event_risk_ranker 训练标签。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    build_event_labels.add_argument("--start-date", required=True, help="样本开始日期，格式 YYYY-MM-DD")
+    build_event_labels.add_argument("--end-date", required=True, help="样本结束日期，格式 YYYY-MM-DD")
+    build_event_labels.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    build_event_labels.add_argument("--stop-atr", type=float, default=1.2, help="止损 ATR 倍数，默认 1.2")
+    build_event_labels.add_argument("--take-atr", type=float, default=2.5, help="止盈 ATR 倍数，默认 2.5")
+    build_event_labels.add_argument("--max-holding-days", type=int, default=20, help="最长持有交易日，默认 20")
+
+    train_event = subparsers.add_parser(
+        "train-event-risk-ranker",
+        help="训练 pattern 事件风险筛查与 R 倍数排序模型",
+        description="完全独立于 TradingView 和旧 predict-model，基于 pattern 事件、triple-barrier 标签和 R 倍数排序训练。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    train_event.add_argument("--start-date", default="2022-01-01", help="样本开始日期，格式 YYYY-MM-DD")
+    train_event.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD，默认今天")
+    train_event.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    train_event.add_argument("--max-iter", type=int, default=80, help="HGB 模型最大迭代轮数")
+    train_event.add_argument("--top-n", default="10,20", help="评估 TopN 列表，逗号分隔，默认 10,20")
+    train_event.add_argument("--stop-atr-grid", default="1.0,1.2,1.5", help="止损 ATR 网格")
+    train_event.add_argument("--take-atr-grid", default="2.0,2.5,3.0", help="止盈 ATR 网格")
+    train_event.add_argument("--holding-days-grid", default="10,20,40", help="最长持有交易日网格")
+    train_event.add_argument("--predict-date", default=None, help="训练后顺便生成该日期预测，格式 YYYY-MM-DD")
+
+    predict_event = subparsers.add_parser(
+        "predict-event-risk-ranker",
+        help="生成 event_risk_ranker 每日预测和 watchlist_event",
+        description="读取已训练 event_risk_ranker artifact，对指定日期 pattern 事件生成风险/R 排序结果。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    predict_event.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
+    predict_event.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    predict_event.add_argument("--output", default=None, help="可选的预测 CSV 输出路径")
+
+    validate_event = subparsers.add_parser(
+        "validate-event-risk-ranker",
+        help="walk-forward 验证 event_risk_ranker",
+        description="按时间窗口训练并测试 event_risk_ranker，输出 R 倍数 TopN 指标。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    validate_event.add_argument("--start-date", default="2022-01-01", help="样本开始日期，格式 YYYY-MM-DD")
+    validate_event.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD，默认今天")
+    validate_event.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    validate_event.add_argument("--windows", type=int, default=8, help="滚动窗口数量，默认 8")
+    validate_event.add_argument("--train-days", type=int, default=280, help="每个窗口训练交易日数量")
+    validate_event.add_argument("--valid-days", type=int, default=60, help="每个窗口验证交易日数量")
+    validate_event.add_argument("--test-days", type=int, default=60, help="每个窗口测试交易日数量")
+    validate_event.add_argument("--max-iter", type=int, default=40, help="HGB 模型最大迭代轮数")
+    validate_event.add_argument("--top-n", default="10,20", help="评估 TopN 列表，逗号分隔，默认 10,20")
+    validate_event.add_argument("--stop-atr-grid", default="1.0,1.2,1.5", help="止损 ATR 网格")
+    validate_event.add_argument("--take-atr-grid", default="2.0,2.5,3.0", help="止盈 ATR 网格")
+    validate_event.add_argument("--holding-days-grid", default="10,20,40", help="最长持有交易日网格")
+
     daily_screening = subparsers.add_parser(
         "daily-screening",
         help="按交易日执行每日筛选，并生成当日 watchlist",
-        description="自动判断是否为交易日，串行执行 update/tradingview/macd/trend-universe/pattern，再生成当日 watchlist。",
+        description="自动判断是否为交易日，串行执行 update/tradingview/predict-model/macd/atr/pattern，再生成当日 watchlist。",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     daily_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
@@ -634,6 +792,82 @@ def main() -> None:
         )
         return
 
+    if args.command == "train-volume-price-fusion":
+        _run_train_volume_price_fusion(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            train_end=_parse_optional_date(args.train_end),
+            valid_end=_parse_optional_date(args.valid_end),
+            test_end=_parse_optional_date(args.test_end),
+            limit=args.limit,
+            max_iter=args.max_iter,
+            top_n_list=tuple(_parse_int_list(args.top_n)),
+            prediction_date=_parse_optional_date(args.predict_date),
+            reuse_base_artifact=args.reuse_base_artifact,
+        )
+        return
+
+    if args.command == "predict-volume-price-fusion":
+        _run_predict_volume_price_fusion(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command in {"train-candidate-ranker", "train-v51-candidate-ranker"}:
+        _run_train_candidate_ranker(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            train_end=_parse_optional_date(args.train_end),
+            valid_end=_parse_optional_date(args.valid_end),
+            test_end=_parse_optional_date(args.test_end),
+            limit=args.limit,
+            max_iter=args.max_iter,
+            top_n_list=tuple(_parse_int_list(args.top_n)),
+            prediction_date=_parse_optional_date(args.predict_date),
+        )
+        return
+
+    if args.command in {"validate-model-walkforward", "walkforward-validate-model"}:
+        _run_validate_model_walkforward(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            model=args.model,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            limit=args.limit,
+            windows=args.windows,
+            train_days=args.train_days,
+            valid_days=args.valid_days,
+            test_days=args.test_days,
+            min_train_days=args.min_train_days,
+            max_iter=args.max_iter,
+            top_n_list=tuple(_parse_int_list(args.top_n)),
+        )
+        return
+
+    if args.command in {"predict-candidate-ranker", "predict-v51-candidate-ranker"}:
+        _run_predict_candidate_ranker(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
     if args.command in {"predict-model", "predict_model"}:
         _run_predict_model(
             storage=storage,
@@ -642,6 +876,68 @@ def main() -> None:
             trade_date=datetime.fromisoformat(args.date).date(),
             top_n=args.top_n,
             output=args.output,
+        )
+        return
+
+    if args.command == "build-event-labels":
+        _run_build_event_labels(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            start_date=datetime.fromisoformat(args.start_date).date(),
+            end_date=datetime.fromisoformat(args.end_date).date(),
+            limit=args.limit,
+            stop_atr=args.stop_atr,
+            take_atr=args.take_atr,
+            max_holding_days=args.max_holding_days,
+        )
+        return
+
+    if args.command == "train-event-risk-ranker":
+        _run_train_event_risk_ranker(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            start_date=datetime.fromisoformat(args.start_date).date(),
+            end_date=_parse_optional_date(args.end_date) or date.today(),
+            limit=args.limit,
+            max_iter=args.max_iter,
+            top_n_list=tuple(_parse_int_list(args.top_n)),
+            stop_atr_grid=tuple(_parse_float_list(args.stop_atr_grid)),
+            take_atr_grid=tuple(_parse_float_list(args.take_atr_grid)),
+            holding_days_grid=tuple(_parse_int_list(args.holding_days_grid)),
+            prediction_date=_parse_optional_date(args.predict_date),
+        )
+        return
+
+    if args.command == "predict-event-risk-ranker":
+        _run_predict_event_risk_ranker(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            top_n=args.top_n,
+            output=args.output,
+        )
+        return
+
+    if args.command == "validate-event-risk-ranker":
+        _run_validate_event_risk_ranker(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            start_date=datetime.fromisoformat(args.start_date).date(),
+            end_date=_parse_optional_date(args.end_date) or date.today(),
+            limit=args.limit,
+            windows=args.windows,
+            train_days=args.train_days,
+            valid_days=args.valid_days,
+            test_days=args.test_days,
+            max_iter=args.max_iter,
+            top_n_list=tuple(_parse_int_list(args.top_n)),
+            stop_atr_grid=tuple(_parse_float_list(args.stop_atr_grid)),
+            take_atr_grid=tuple(_parse_float_list(args.take_atr_grid)),
+            holding_days_grid=tuple(_parse_int_list(args.holding_days_grid)),
         )
         return
 
@@ -997,9 +1293,14 @@ def _run_pattern(
     exported = _append_recent_tradingview_scores(storage, exported, as_of=as_of, lookback_days=5, symbols=symbols)
     exported = _append_recent_macd_summary(storage, exported, as_of=as_of, symbols=symbols)
     exported = _append_recent_atr_summary(storage, exported, as_of=as_of, symbols=symbols)
-    trend_universe = _load_or_build_trend_universe_summary(storage, config=config, trade_date=as_of, symbols=symbols)
-    exported = _append_recent_trend_universe_summary(exported, trend_universe)
-    exported = _append_recent_trend_summary(storage, config=config, exported=exported, as_of=as_of, symbols=symbols)
+
+    try:
+        model_predictions = load_predict_model_predictions(project_root=storage.paths.root, trade_date=as_of)
+    except FileNotFoundError:
+        if not exported.empty:
+            raise
+        model_predictions = pd.DataFrame()
+    exported = _append_predict_model_risk_summary(exported, model_predictions)
 
     output_path = Path(output) if output else _default_pattern_output_path(
         storage,
@@ -1008,13 +1309,29 @@ def _run_pattern(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     exported.to_csv(output_path, index=False, encoding="utf-8-sig")
-    model_predictions = None if exported.empty else load_predict_model_predictions(project_root=storage.paths.root, trade_date=as_of)
-    watchlist_payload = build_watchlist_candidates_from_patterns(
-        exported,
-        source_file=str(output_path),
-        limit=config.screening.output_limit,
-        model_predictions=model_predictions,
-    )
+    predict_model_path = storage.paths.root / "reports" / "predict_model" / f"predictions_{as_of.isoformat()}.csv"
+    if model_predictions.empty:
+        pattern_watchlist_payload = build_watchlist_candidates_from_patterns(
+            exported,
+            source_file=str(output_path),
+            limit=None,
+            model_predictions=None,
+        )
+        watchlist_payload = pattern_watchlist_payload
+    else:
+        pattern_watchlist_payload = build_watchlist_candidates_from_patterns(
+            exported,
+            source_file=str(output_path),
+            limit=None,
+            model_predictions=model_predictions,
+        )
+        watchlist_payload = build_daily_watchlist_candidates(
+            exported,
+            model_predictions=model_predictions,
+            pattern_source_file=str(output_path),
+            model_source_file=str(predict_model_path),
+            model_top_n=20,
+        )
     write_watchlist(
         project_root=storage.paths.root,
         trade_date=as_of,
@@ -1023,7 +1340,7 @@ def _run_pattern(
     pattern_watchlist_target = write_watchlist(
         project_root=storage.paths.root,
         trade_date=as_of,
-        picker_payload=watchlist_payload,
+        picker_payload=pattern_watchlist_payload,
         kind="pattern",
     )
     logging.info("Saved pattern watchlist to %s", pattern_watchlist_target)
@@ -1863,6 +2180,271 @@ def _run_predict_opportunity_ranker(
     print(f"\nSaved V4.2 opportunity ranking to {output_path}")
 
 
+def _run_train_volume_price_fusion(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    start_date: date | None,
+    end_date: date | None,
+    train_end: date | None,
+    valid_end: date | None,
+    test_end: date | None,
+    limit: int | None,
+    max_iter: int,
+    top_n_list: tuple[int, ...],
+    prediction_date: date | None,
+    reuse_base_artifact: bool,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    result = train_volume_price_fusion_model(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        start_date=start_date,
+        end_date=end_date,
+        train_end=train_end,
+        valid_end=valid_end,
+        test_end=test_end,
+        limit=limit,
+        max_iter=max_iter,
+        top_n_list=top_n_list,
+        prediction_date=prediction_date,
+        reuse_base_artifact=reuse_base_artifact,
+    )
+    print("[V5 Volume-Price Fusion] TopN metrics")
+    print(format_metric_table(result.topn_metrics))
+    print()
+    print("[V5 Volume-Price Fusion] Volume-price risk metrics")
+    print(format_metric_table(result.volume_price_risk_metrics))
+    print()
+    print("[V5 Volume-Price Fusion] Volume-price quality metrics")
+    print(format_metric_table(result.volume_price_quality_metrics))
+    print()
+    print("[V5 Volume-Price Fusion] V4.2 hybrid comparison")
+    print(format_metric_table(result.comparison_metrics))
+    if result.prediction_path is not None:
+        print()
+        print("[V5 Volume-Price Fusion] Latest predictions")
+        print(format_volume_price_fusion_prediction_table(result.latest_predictions, limit=20))
+        print(f"\nSaved V5 predictions to {result.prediction_path}")
+    print(f"\nSaved V5 volume-price fusion model to {result.model_path}")
+    print(f"Saved V5 volume-price fusion metadata to {result.metadata_path}")
+    print(f"Saved V5 volume-price fusion reports to {volume_price_fusion_report_dir(project_root)}")
+
+
+def _run_predict_volume_price_fusion(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    predictions = predict_volume_price_fusion(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        trade_date=trade_date,
+    )
+    if predictions.empty:
+        raise RuntimeError(f"No V5 volume-price fusion predictions generated for {trade_date.isoformat()}")
+    output_path = (
+        Path(output)
+        if output
+        else volume_price_fusion_report_dir(project_root) / f"predictions_{trade_date.isoformat()}.csv"
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(output_path, index=False, encoding="utf-8-sig")
+    print(format_volume_price_fusion_prediction_table(predictions, limit=top_n))
+    print(f"\nSaved V5 volume-price fusion ranking to {output_path}")
+
+
+def _run_train_candidate_ranker(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    start_date: date | None,
+    end_date: date | None,
+    train_end: date | None,
+    valid_end: date | None,
+    test_end: date | None,
+    limit: int | None,
+    max_iter: int,
+    top_n_list: tuple[int, ...],
+    prediction_date: date | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    result = train_candidate_ranker_model(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        start_date=start_date,
+        end_date=end_date,
+        train_end=train_end,
+        valid_end=valid_end,
+        test_end=test_end,
+        limit=limit,
+        max_iter=max_iter,
+        top_n_list=top_n_list,
+        prediction_date=prediction_date,
+    )
+    print("[V5.1 Candidate Ranker] Selected blend params")
+    print(json.dumps(result.selected_blend_params, ensure_ascii=False, indent=2))
+    print()
+    print("[V5.1 Candidate Ranker] TopN metrics")
+    print(format_metric_table(result.topn_metrics))
+    print()
+    print("[V5.1 Candidate Ranker] Ranker metrics")
+    print(format_metric_table(result.ranker_metrics))
+    print()
+    print("[V5.1 Candidate Ranker] V4.2/V5 comparison")
+    print(format_metric_table(result.comparison_metrics))
+    print()
+    print("[V5.1 Candidate Ranker] Blend grid")
+    print(format_metric_table(result.blend_grid.sort_values("objective", ascending=False).head(10)))
+    if result.prediction_path is not None:
+        print()
+        print("[V5.1 Candidate Ranker] Latest predictions")
+        print(format_candidate_ranker_prediction_table(result.latest_predictions, limit=20))
+        print(f"\nSaved V5.1 predictions to {result.prediction_path}")
+    print(f"\nSaved V5.1 candidate ranker model to {result.model_path}")
+    print(f"Saved V5.1 candidate ranker metadata to {result.metadata_path}")
+    print(f"Saved V5.1 candidate ranker reports to {candidate_ranker_report_dir(project_root)}")
+
+
+def _run_validate_model_walkforward(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    model: str,
+    start_date: date | None,
+    end_date: date | None,
+    limit: int | None,
+    windows: int,
+    train_days: int,
+    valid_days: int,
+    test_days: int,
+    min_train_days: int,
+    max_iter: int,
+    top_n_list: tuple[int, ...],
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    result = validate_model_walkforward(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        model=model,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        windows=windows,
+        train_days=train_days,
+        valid_days=valid_days,
+        test_days=test_days,
+        min_train_days=min_train_days,
+        max_iter=max_iter,
+        top_n_list=top_n_list,
+    )
+    print("[Walk-Forward Validation] Windows")
+    window_columns = [
+        "window_id",
+        "status",
+        "train_start",
+        "train_end",
+        "valid_start",
+        "valid_end",
+        "test_start",
+        "test_end",
+        "top20_win_rate",
+        "top20_avg_return_20d",
+        "top20_stop_loss_rate_20d",
+        "top20_bad_risk_rate",
+        "top20_coverage",
+    ]
+    visible_windows = result.windows.loc[:, [column for column in window_columns if column in result.windows.columns]]
+    print(format_metric_table(visible_windows))
+    print()
+    print("[Walk-Forward Validation] TopN metrics")
+    metric_columns = [
+        "window_id",
+        "model_version",
+        "top_n",
+        "test_start",
+        "test_end",
+        "test_days",
+        "allowed_days",
+        "coverage",
+        "win_rate",
+        "avg_return_20d",
+        "median_return_20d",
+        "take_profit_rate_20d",
+        "stop_loss_rate_20d",
+        "bad_risk_rate",
+    ]
+    visible_metrics = result.topn_metrics.loc[
+        :, [column for column in metric_columns if column in result.topn_metrics.columns]
+    ]
+    print(format_metric_table(visible_metrics))
+    print()
+    print("[Walk-Forward Validation] Summary")
+    summary_columns = [
+        "model_version",
+        "top_n",
+        "windows",
+        "coverage_mean",
+        "win_rate_mean",
+        "win_rate_min",
+        "avg_return_20d_mean",
+        "avg_return_20d_min",
+        "take_profit_rate_20d_mean",
+        "stop_loss_rate_20d_mean",
+        "bad_risk_rate_mean",
+        "window_pass_rate",
+        "pass_all_top20_thresholds",
+    ]
+    visible_summary = result.summary.loc[:, [column for column in summary_columns if column in result.summary.columns]]
+    print(format_metric_table(visible_summary))
+    print(f"\nSaved walk-forward windows to {result.windows_path}")
+    print(f"Saved walk-forward TopN metrics to {result.topn_metrics_path}")
+    print(f"Saved walk-forward summary to {result.summary_path}")
+    print(f"Saved walk-forward config to {result.config_path}")
+    print(f"Saved walk-forward reports to {model_walkforward_report_dir(project_root)}")
+
+
+def _run_predict_candidate_ranker(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    predictions = predict_candidate_ranker(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        trade_date=trade_date,
+    )
+    if predictions.empty:
+        raise RuntimeError(f"No V5.1 candidate ranker predictions generated for {trade_date.isoformat()}")
+    output_path = (
+        Path(output)
+        if output
+        else candidate_ranker_report_dir(project_root) / f"predictions_{trade_date.isoformat()}.csv"
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(output_path, index=False, encoding="utf-8-sig")
+    print(format_candidate_ranker_prediction_table(predictions, limit=top_n))
+    print(f"\nSaved V5.1 candidate ranking to {output_path}")
+
+
 def _run_predict_model(
     *,
     storage: Storage,
@@ -1891,6 +2473,156 @@ def _run_predict_model(
     )
     print(format_opportunity_ranker_prediction_table(predictions, limit=top_n))
     print(f"\nSaved predict_model ranking to {output_path}")
+
+
+def _run_build_event_labels(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    start_date: date,
+    end_date: date,
+    limit: int | None,
+    stop_atr: float,
+    take_atr: float,
+    max_holding_days: int,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    report_dir = event_risk_ranker_report_dir(project_root)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    labels, features, skipped = build_event_risk_ranker_dataset(
+        storage=storage,
+        config=config,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        label_config=EventLabelConfig(
+            stop_atr_mult=stop_atr,
+            take_atr_mult=take_atr,
+            max_holding_days=max_holding_days,
+        ),
+        progress_callback=lambda current, total: _log_scan_progress("event-labels", current, total),
+    )
+    labels_path = report_dir / f"event_labels_{start_date.isoformat()}_{end_date.isoformat()}.csv"
+    features_path = report_dir / f"event_features_{start_date.isoformat()}_{end_date.isoformat()}.csv"
+    skipped_path = report_dir / "skipped_events.csv"
+    labels.to_csv(labels_path, index=False, encoding="utf-8-sig")
+    features.to_csv(features_path, index=False, encoding="utf-8-sig")
+    skipped.to_csv(skipped_path, index=False, encoding="utf-8-sig")
+    print("Event labels built.")
+    print(f"labels={len(labels)} features={len(features)} skipped={len(skipped)}")
+    print(f"Labels: {labels_path}")
+    print(f"Features: {features_path}")
+    print(f"Skipped events: {skipped_path}")
+
+
+def _run_train_event_risk_ranker(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    start_date: date,
+    end_date: date,
+    limit: int | None,
+    max_iter: int,
+    top_n_list: tuple[int, ...],
+    stop_atr_grid: tuple[float, ...],
+    take_atr_grid: tuple[float, ...],
+    holding_days_grid: tuple[int, ...],
+    prediction_date: date | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    result = train_event_risk_ranker_model(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        max_iter=max_iter,
+        top_n_list=top_n_list,
+        stop_atr_grid=stop_atr_grid,
+        take_atr_grid=take_atr_grid,
+        holding_days_grid=holding_days_grid,
+        prediction_date=prediction_date,
+        progress_callback=lambda current, total: _log_scan_progress("event-train", current, total),
+    )
+    print("Event risk ranker trained.")
+    print(f"Labels: {len(result.labels)}")
+    print(f"Features: {len(result.features)}")
+    print(f"Skipped events: {len(result.skipped_events)}")
+    print("\nTopN metrics:")
+    print(_format_dataframe(result.topn_metrics, list(result.topn_metrics.columns), top_n=80) if not result.topn_metrics.empty else "No metrics.")
+    print(f"\nSaved model: {result.model_path}")
+    print(f"Saved metadata: {result.metadata_path}")
+    print(f"Saved reports: {result.report_dir}")
+
+
+def _run_predict_event_risk_ranker(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    trade_date: date,
+    top_n: int,
+    output: str | None,
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    predictions = predict_event_risk_ranker(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        trade_date=trade_date,
+        output=output,
+    )
+    print(format_event_ranker_prediction_table(predictions, limit=top_n))
+    output_path = Path(output) if output else event_risk_ranker_predictions_path(project_root, trade_date)
+    print(f"\nSaved event risk ranker predictions to {output_path}")
+
+
+def _run_validate_event_risk_ranker(
+    *,
+    storage: Storage,
+    config,
+    project_root: Path,
+    start_date: date,
+    end_date: date,
+    limit: int | None,
+    windows: int,
+    train_days: int,
+    valid_days: int,
+    test_days: int,
+    max_iter: int,
+    top_n_list: tuple[int, ...],
+    stop_atr_grid: tuple[float, ...],
+    take_atr_grid: tuple[float, ...],
+    holding_days_grid: tuple[int, ...],
+) -> None:
+    _ensure_universe(storage, config.provider, config.universe.exclude_st)
+    windows_frame, metrics, summary = validate_event_risk_ranker_walkforward(
+        storage=storage,
+        config=config,
+        project_root=project_root,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        windows=windows,
+        train_days=train_days,
+        valid_days=valid_days,
+        test_days=test_days,
+        max_iter=max_iter,
+        top_n_list=top_n_list,
+        stop_atr_grid=stop_atr_grid,
+        take_atr_grid=take_atr_grid,
+        holding_days_grid=holding_days_grid,
+        progress_callback=lambda current, total: _log_scan_progress("event-validate", current, total),
+    )
+    print("Event risk ranker walk-forward validation complete.")
+    print("\nWindows:")
+    print(_format_dataframe(windows_frame, list(windows_frame.columns), top_n=50) if not windows_frame.empty else "No valid windows.")
+    print("\nSummary:")
+    print(_format_dataframe(summary, list(summary.columns), top_n=80) if not summary.empty else "No summary.")
+    print(f"\nSaved reports to {event_risk_ranker_report_dir(project_root)}")
 
 
 def _run_research_tradingview_factor(
@@ -2011,11 +2743,13 @@ def _selected_patterns(args: argparse.Namespace) -> list[str]:
 
 def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
     if results.empty:
-        return pd.DataFrame(columns=["trade_date", "symbol", "name", "pattern_id", "close", "reason"])
+        return pd.DataFrame(columns=["trade_date", "symbol", "name", "pattern_id", "风险情况", "close", "reason"])
 
     exported = results.copy()
     exported["symbol"] = exported["symbol"].map(_format_symbol_for_excel)
     exported["pattern_id"] = exported["strategy_name"].map(PATTERN_LABEL_MAP)
+    if "风险情况" not in exported.columns:
+        exported["风险情况"] = "模型风险待合并"
     exported = exported.drop(columns=["strategy_name"], errors="ignore")
     dedupe_keys = [column for column in ("trade_date", "symbol", "pattern_id") if column in exported.columns]
     if dedupe_keys:
@@ -2025,6 +2759,7 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
         "symbol",
         "name",
         "pattern_id",
+        "风险情况",
         "close",
         "old_high_date",
         "old_high_price",
@@ -2124,6 +2859,88 @@ def _prepare_pattern_results(results: pd.DataFrame) -> pd.DataFrame:
     available = [column for column in preferred_order if column in exported.columns]
     remaining = [column for column in exported.columns if column not in available]
     return exported.loc[:, available + remaining].sort_values(["pattern_id", "symbol"]).reset_index(drop=True)
+
+
+def _append_predict_model_risk_summary(exported: pd.DataFrame, model_predictions: pd.DataFrame) -> pd.DataFrame:
+    if exported.empty or "symbol" not in exported.columns:
+        return exported
+    result = exported.copy()
+    prediction = model_predictions.copy()
+    if prediction.empty or "symbol" not in prediction.columns:
+        result["风险情况"] = "模型风险未知"
+        return _move_column_after(result, "风险情况", "pattern_id")
+
+    prediction["_normalized_symbol"] = prediction["symbol"].map(_normalize_exported_symbol)
+    if "risk_score" in prediction.columns:
+        prediction["_risk_sort_score"] = pd.to_numeric(prediction["risk_score"], errors="coerce")
+        prediction = prediction.sort_values("_risk_sort_score", ascending=True)
+    prediction = prediction.drop_duplicates(subset=["_normalized_symbol"], keep="first")
+    prediction = prediction.drop(columns=["_risk_sort_score"], errors="ignore")
+    keep_columns = [
+        "_normalized_symbol",
+        "risk_tier",
+        "risk_gate_reason",
+        "risk_score",
+        "risk_candidate_action",
+        "risk_action",
+        "action",
+        "trade_permission",
+    ]
+    prediction = prediction.loc[:, [column for column in keep_columns if column in prediction.columns]].copy()
+    prediction["风险情况"] = prediction.apply(_format_pattern_risk_summary, axis=1)
+
+    result["_normalized_symbol"] = result["symbol"].map(_normalize_exported_symbol)
+    result = result.drop(columns=["风险情况"], errors="ignore")
+    result = result.merge(
+        prediction.loc[:, ["_normalized_symbol", "风险情况"]],
+        on="_normalized_symbol",
+        how="left",
+    )
+    result["风险情况"] = result["风险情况"].fillna("模型风险未知")
+    result = result.drop(columns=["_normalized_symbol"], errors="ignore")
+    return _move_column_after(result, "风险情况", "pattern_id")
+
+
+def _format_pattern_risk_summary(row: pd.Series) -> str:
+    risk_tier = str(row.get("risk_tier", "")).strip()
+    risk_reason = str(row.get("risk_gate_reason", "")).strip()
+    risk_score = pd.to_numeric(pd.Series([row.get("risk_score")]), errors="coerce").iloc[0]
+    low_risk = _is_predict_model_low_risk_row(row)
+    prefix = "低风险" if low_risk else "风险排除"
+    parts = [prefix]
+    if risk_tier and risk_tier.lower() != "nan":
+        parts.append(f"tier={risk_tier}")
+    if pd.notna(risk_score):
+        parts.append(f"score={float(risk_score):.3f}")
+    if risk_reason and risk_reason.lower() != "nan":
+        parts.append(f"reason={risk_reason}")
+    return " | ".join(parts)
+
+
+def _is_predict_model_low_risk_row(row: pd.Series) -> bool:
+    final_action = str(row.get("final_action", "")).strip().lower()
+    action = str(row.get("action", "")).strip().lower()
+    risk_candidate_action = str(row.get("risk_candidate_action", "")).strip().lower()
+    risk_action = str(row.get("risk_action", "")).strip().lower()
+    risk_tier = str(row.get("risk_tier", "")).strip().lower()
+    if final_action == "avoid" or action == "avoid" or risk_tier == "high":
+        return False
+    if risk_candidate_action in {"candidate", "pass", "low_risk"}:
+        return True
+    if risk_action in {"pass", "candidate", "low_risk"}:
+        return True
+    if risk_tier in {"low", "medium", "中", "低"}:
+        return True
+    return action == "candidate"
+
+
+def _move_column_after(frame: pd.DataFrame, column: str, after: str) -> pd.DataFrame:
+    if column not in frame.columns or after not in frame.columns:
+        return frame
+    columns = [item for item in frame.columns if item != column]
+    index = columns.index(after) + 1
+    columns.insert(index, column)
+    return frame.loc[:, columns].copy()
 
 
 def _append_recent_tradingview_scores(
