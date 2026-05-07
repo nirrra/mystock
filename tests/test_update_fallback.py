@@ -22,7 +22,7 @@ class EmptyProvider:
 
 
 class RecordingDailyProvider:
-    def __init__(self, frame: pd.DataFrame) -> None:
+    def __init__(self, frame: pd.DataFrame | dict[tuple[str, str], pd.DataFrame]) -> None:
         self.frame = frame
         self.calls: list[dict[str, str]] = []
 
@@ -35,7 +35,7 @@ class RecordingDailyProvider:
                 "adjust": adjust,
             }
         )
-        return self.frame.copy()
+        return self._frame_for(start_date=start_date, end_date=end_date).copy()
 
     def get_index_daily_bars(self, index_symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         self.calls.append(
@@ -45,9 +45,14 @@ class RecordingDailyProvider:
                 "end_date": end_date,
             }
         )
-        frame = self.frame.copy()
+        frame = self._frame_for(start_date=start_date, end_date=end_date).copy()
         frame["symbol"] = index_symbol
         return frame
+
+    def _frame_for(self, *, start_date: str, end_date: str) -> pd.DataFrame:
+        if isinstance(self.frame, dict):
+            return self.frame.get((start_date, end_date), pd.DataFrame())
+        return self.frame
 
 
 def _make_workspace_tmp_dir(name: str) -> Path:
@@ -182,6 +187,44 @@ def test_update_daily_cache_appends_from_next_day_even_when_user_start_is_later(
     assert merged["trade_date"].dt.date.max().isoformat() == "2026-04-12"
 
 
+def test_update_daily_cache_backfills_when_requested_start_is_before_cached_first_date() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    root = _make_workspace_tmp_dir("update_backfill")
+    config = load_config(project_root / "config" / "default.yaml")
+    paths = ProjectPaths(root, config.storage)
+    storage = Storage(paths)
+    storage.save_daily_bars("600000", _make_daily_frame("600000", ["2024-01-02", "2024-01-03"]))
+    provider = RecordingDailyProvider(
+        {
+            ("20150101", "20240101"): _make_daily_frame("600000", ["2015-01-05", "2015-01-06"]),
+            ("20240104", "20240105"): _make_daily_frame("600000", ["2024-01-04", "2024-01-05"]),
+        }
+    )
+
+    _update_daily_cache_for_symbol(
+        storage=storage,
+        provider=provider,
+        symbol="600000",
+        start_date="20150101",
+        end_date="20240105",
+        adjust="qfq",
+    )
+
+    assert provider.calls == [
+        {"symbol": "600000", "start_date": "20150101", "end_date": "20240101", "adjust": "qfq"},
+        {"symbol": "600000", "start_date": "20240104", "end_date": "20240105", "adjust": "qfq"},
+    ]
+    merged = storage.load_daily_bars("600000")
+    assert merged["trade_date"].dt.date.astype(str).tolist() == [
+        "2015-01-05",
+        "2015-01-06",
+        "2024-01-02",
+        "2024-01-03",
+        "2024-01-04",
+        "2024-01-05",
+    ]
+
+
 def test_update_daily_cache_skips_fetch_when_cached_data_already_covers_end_date() -> None:
     project_root = Path(__file__).resolve().parents[1]
     root = _make_workspace_tmp_dir("update_skip")
@@ -195,7 +238,7 @@ def test_update_daily_cache_skips_fetch_when_cached_data_already_covers_end_date
         storage=storage,
         provider=provider,
         symbol="600000",
-        start_date="20260401",
+        start_date="20260409",
         end_date="20260410",
         adjust="qfq",
     )
@@ -283,4 +326,40 @@ def test_update_index_daily_cache_appends_incrementally() -> None:
         "2026-04-10",
         "2026-04-11",
         "2026-04-12",
+    ]
+
+
+def test_update_index_daily_cache_backfills_when_requested_start_is_before_cached_first_date() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    root = _make_workspace_tmp_dir("update_index_backfill")
+    config = load_config(project_root / "config" / "default.yaml")
+    paths = ProjectPaths(root, config.storage)
+    storage = Storage(paths)
+    storage.save_index_daily_bars("sh000300", _make_daily_frame("sh000300", ["2024-01-02", "2024-01-03"]))
+    provider = RecordingDailyProvider(
+        {
+            ("20150101", "20240101"): _make_daily_frame("sh000300", ["2015-01-05"]),
+            ("20240104", "20240105"): _make_daily_frame("sh000300", ["2024-01-04", "2024-01-05"]),
+        }
+    )
+
+    _update_index_daily_cache(
+        storage=storage,
+        provider=provider,
+        index_symbol="sh000300",
+        start_date="20150101",
+        end_date="20240105",
+    )
+
+    assert provider.calls == [
+        {"index_symbol": "sh000300", "start_date": "20150101", "end_date": "20240101"},
+        {"index_symbol": "sh000300", "start_date": "20240104", "end_date": "20240105"},
+    ]
+    merged = storage.load_index_daily_bars("sh000300")
+    assert merged["trade_date"].dt.date.astype(str).tolist() == [
+        "2015-01-05",
+        "2024-01-02",
+        "2024-01-03",
+        "2024-01-04",
+        "2024-01-05",
     ]

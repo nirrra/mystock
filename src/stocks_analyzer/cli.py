@@ -1282,41 +1282,53 @@ def _update_daily_cache_for_symbol(
         logging.info("Rebuilt %s rows for %s to %s", len(fresh), symbol, target)
         return target
 
+    first_trade_date = valid_dates.min().date()
     last_trade_date = valid_dates.max().date()
+    requested_start_date = datetime.strptime(start_date, "%Y%m%d").date()
     requested_end_date = datetime.strptime(end_date, "%Y%m%d").date()
-    incremental_start_date = last_trade_date + timedelta(days=1)
     target = storage.paths.daily_dir / f"{symbol}.parquet"
-    if incremental_start_date > requested_end_date:
+    missing_ranges = _missing_cache_ranges(
+        requested_start_date=requested_start_date,
+        requested_end_date=requested_end_date,
+        cached_first_date=first_trade_date,
+        cached_last_date=last_trade_date,
+    )
+    if not missing_ranges:
         logging.info(
-            "Skip %s because cached daily bars already cover %s (last=%s)",
+            "Skip %s because cached daily bars already cover %s to %s (cached=%s to %s)",
             symbol,
+            requested_start_date.isoformat(),
             requested_end_date.isoformat(),
+            first_trade_date.isoformat(),
             last_trade_date.isoformat(),
         )
         return target
 
-    incremental_start = incremental_start_date.strftime("%Y%m%d")
-    fresh = provider.get_daily_bars(symbol, start_date=incremental_start, end_date=end_date, adjust=adjust)
-    if fresh.empty:
-        logging.info(
-            "No new daily bars returned for %s from %s to %s",
+    fresh_parts = []
+    for range_start, range_end in missing_ranges:
+        fresh = provider.get_daily_bars(
             symbol,
-            incremental_start_date.isoformat(),
-            requested_end_date.isoformat(),
+            start_date=range_start.strftime("%Y%m%d"),
+            end_date=range_end.strftime("%Y%m%d"),
+            adjust=adjust,
         )
+        if fresh.empty:
+            logging.info("No daily bars returned for %s from %s to %s", symbol, range_start.isoformat(), range_end.isoformat())
+            continue
+        fresh_parts.append(fresh)
+
+    if not fresh_parts:
         return target
 
-    merged = pd.concat([cached_frame, fresh], ignore_index=True)
-    merged["trade_date"] = pd.to_datetime(merged["trade_date"], errors="coerce")
-    merged = merged.dropna(subset=["trade_date"]).drop_duplicates(subset=["trade_date"], keep="last")
-    merged = merged.sort_values("trade_date").reset_index(drop=True)
+    merged = _merge_daily_cache_frames(cached_frame, fresh_parts)
     target = storage.save_daily_bars(symbol, merged)
     logging.info(
-        "Appended %s rows for %s from %s to %s",
-        len(fresh),
+        "Merged %s fetched rows for %s into %s (requested=%s to %s)",
+        sum(len(frame) for frame in fresh_parts),
         symbol,
-        incremental_start,
         target,
+        requested_start_date.isoformat(),
+        requested_end_date.isoformat(),
     )
     return target
 
@@ -1390,38 +1402,82 @@ def _update_index_daily_cache(
         logging.info("Rebuilt %s rows for index %s to %s", len(fresh), index_symbol, target)
         return target
 
+    first_trade_date = valid_dates.min().date()
     last_trade_date = valid_dates.max().date()
+    requested_start_date = datetime.strptime(start_date, "%Y%m%d").date()
     requested_end_date = datetime.strptime(end_date, "%Y%m%d").date()
-    incremental_start_date = last_trade_date + timedelta(days=1)
     normalized_index_symbol = _normalize_index_symbol_for_update(index_symbol)
     target = storage.paths.index_daily_dir / f"{normalized_index_symbol}.parquet"
-    if incremental_start_date > requested_end_date:
+    missing_ranges = _missing_cache_ranges(
+        requested_start_date=requested_start_date,
+        requested_end_date=requested_end_date,
+        cached_first_date=first_trade_date,
+        cached_last_date=last_trade_date,
+    )
+    if not missing_ranges:
         logging.info(
-            "Skip index %s because cached daily bars already cover %s (last=%s)",
+            "Skip index %s because cached daily bars already cover %s to %s (cached=%s to %s)",
             normalized_index_symbol,
+            requested_start_date.isoformat(),
             requested_end_date.isoformat(),
+            first_trade_date.isoformat(),
             last_trade_date.isoformat(),
         )
         return target
 
-    incremental_start = incremental_start_date.strftime("%Y%m%d")
-    fresh = provider.get_index_daily_bars(index_symbol, start_date=incremental_start, end_date=end_date)
-    if fresh.empty:
-        logging.info(
-            "No new index daily bars returned for %s from %s to %s",
-            normalized_index_symbol,
-            incremental_start_date.isoformat(),
-            requested_end_date.isoformat(),
+    fresh_parts = []
+    for range_start, range_end in missing_ranges:
+        fresh = provider.get_index_daily_bars(
+            index_symbol,
+            start_date=range_start.strftime("%Y%m%d"),
+            end_date=range_end.strftime("%Y%m%d"),
         )
+        if fresh.empty:
+            logging.info(
+                "No index daily bars returned for %s from %s to %s",
+                normalized_index_symbol,
+                range_start.isoformat(),
+                range_end.isoformat(),
+            )
+            continue
+        fresh_parts.append(fresh)
+
+    if not fresh_parts:
         return target
 
-    merged = pd.concat([cached_frame, fresh], ignore_index=True)
+    merged = _merge_daily_cache_frames(cached_frame, fresh_parts)
+    target = storage.save_index_daily_bars(index_symbol, merged)
+    logging.info(
+        "Merged %s fetched rows for index %s into %s (requested=%s to %s)",
+        sum(len(frame) for frame in fresh_parts),
+        normalized_index_symbol,
+        target,
+        requested_start_date.isoformat(),
+        requested_end_date.isoformat(),
+    )
+    return target
+
+
+def _missing_cache_ranges(
+    *,
+    requested_start_date: date,
+    requested_end_date: date,
+    cached_first_date: date,
+    cached_last_date: date,
+) -> list[tuple[date, date]]:
+    ranges: list[tuple[date, date]] = []
+    if requested_start_date < cached_first_date:
+        ranges.append((requested_start_date, cached_first_date - timedelta(days=1)))
+    if requested_end_date > cached_last_date:
+        ranges.append((cached_last_date + timedelta(days=1), requested_end_date))
+    return [(start, end) for start, end in ranges if start <= end]
+
+
+def _merge_daily_cache_frames(cached_frame: pd.DataFrame, fresh_parts: list[pd.DataFrame]) -> pd.DataFrame:
+    merged = pd.concat([cached_frame, *fresh_parts], ignore_index=True)
     merged["trade_date"] = pd.to_datetime(merged["trade_date"], errors="coerce")
     merged = merged.dropna(subset=["trade_date"]).drop_duplicates(subset=["trade_date"], keep="last")
-    merged = merged.sort_values("trade_date").reset_index(drop=True)
-    target = storage.save_index_daily_bars(index_symbol, merged)
-    logging.info("Appended %s rows for index %s from %s to %s", len(fresh), normalized_index_symbol, incremental_start, target)
-    return target
+    return merged.sort_values("trade_date").reset_index(drop=True)
 
 
 def _normalize_index_symbol_for_update(index_symbol: str) -> str:
