@@ -372,6 +372,19 @@ def test_build_parser_accepts_current_model_commands() -> None:
     )
     predict_event_args = parser.parse_args(["predict-event-risk-ranker", "--date", "2026-05-06", "--top-n", "10"])
     validate_event_args = parser.parse_args(["validate-event-risk-ranker", "--windows", "2", "--top-n", "10"])
+    audit_full_market_args = parser.parse_args(
+        [
+            "audit-full-market-data",
+            "--limit",
+            "3",
+            "--min-exact-history-days",
+            "900",
+            "--tail-lookback-days",
+            "100",
+            "--max-horizon-days",
+            "20",
+        ]
+    )
 
     assert train_opportunity_args.command == "train-opportunity-ranker"
     assert train_opportunity_args.max_iter == 4
@@ -416,6 +429,11 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert predict_event_args.date == "2026-05-06"
     assert validate_event_args.command == "validate-event-risk-ranker"
     assert validate_event_args.windows == 2
+    assert audit_full_market_args.command == "audit-full-market-data"
+    assert audit_full_market_args.limit == 3
+    assert audit_full_market_args.min_exact_history_days == 900
+    assert audit_full_market_args.tail_lookback_days == 100
+    assert audit_full_market_args.max_horizon_days == 20
 
 
 def test_load_local_env_sets_missing_env_vars_only() -> None:

@@ -27,6 +27,7 @@ from .event_risk_ranker import (
     validate_event_risk_ranker_walkforward,
 )
 from .event_labels import EventLabelConfig
+from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
@@ -276,6 +277,18 @@ def build_parser() -> argparse.ArgumentParser:
     atr.add_argument("--date", required=True, help="识别日期，格式 YYYY-MM-DD")
     atr.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
     atr.add_argument("--output", default=None, help="可选的 CSV 输出路径")
+
+    audit_full_market = subparsers.add_parser(
+        "audit-full-market-data",
+        help="审计全市场日线数据是否足够支持风险/收益模型复现",
+        description="读取本地 data/daily parquet，统计每只股票历史长度、OHLCV 缺失、涨跌停可识别情况和复现资格。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    audit_full_market.add_argument("--limit", type=int, default=None, help="仅审计前 N 只股票，便于快速测试")
+    audit_full_market.add_argument("--min-exact-history-days", type=int, default=900, help="严格复现所需最少交易日，默认 900")
+    audit_full_market.add_argument("--tail-lookback-days", type=int, default=100, help="尾部风险标签滚动窗口，默认 100")
+    audit_full_market.add_argument("--max-horizon-days", type=int, default=20, help="最长 forward horizon，默认 20")
+    audit_full_market.add_argument("--output-dir", default=None, help="可选输出目录，默认 reports/full_market_model")
 
     train_opportunity = subparsers.add_parser(
         "train-opportunity-ranker",
@@ -761,6 +774,22 @@ def main() -> None:
             top_n=args.top_n,
             output=args.output,
         )
+        return
+
+    if args.command == "audit-full-market-data":
+        output_dir = Path(args.output_dir).resolve() if args.output_dir else None
+        result = audit_full_market_data(
+            storage=storage,
+            project_root=project_root,
+            limit=args.limit,
+            min_exact_history_days=args.min_exact_history_days,
+            tail_lookback_days=args.tail_lookback_days,
+            max_horizon_days=args.max_horizon_days,
+            output_dir=output_dir,
+        )
+        print(format_full_market_audit_summary(result.summary))
+        print(f"Saved detail: {result.detail_path}")
+        print(f"Saved summary: {result.summary_path}")
         return
 
     if args.command == "train-opportunity-ranker":
