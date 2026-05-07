@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from stocks_analyzer.full_market_labels import build_tail_risk_frame
+from stocks_analyzer.full_market_labels import build_barrier_risk_frame, build_tail_risk_frame
 from stocks_analyzer.full_market_risk import (
     build_risk_filter_impact,
     build_tail_risk_walkforward_windows,
@@ -14,6 +14,7 @@ from stocks_analyzer.full_market_risk import (
     reproduce_tail_risk,
     summarize_risk_filter_impact,
     train_tail_risk_model,
+    validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
 )
 from stocks_analyzer.models import StorageConfig
@@ -30,6 +31,29 @@ def test_build_tail_risk_frame_uses_past_quantile_and_future_label() -> None:
     previous_row = frame[frame["trade_date"].eq(pd.Timestamp("2024-01-05"))].iloc[0]
     assert event_row["tail_event_today"] == 1.0
     assert previous_row["risk_label"] == 1.0
+
+
+def test_build_barrier_risk_frame_uses_next_open_and_conservative_same_day_touch() -> None:
+    closes = [10 + index * 0.1 for index in range(30)]
+    bars = _bars(closes)
+    bars.loc[20, "open"] = 12.0
+    bars.loc[20, "high"] = 14.0
+    bars.loc[20, "low"] = 8.0
+
+    frame = build_barrier_risk_frame(
+        bars,
+        symbol="600000",
+        horizon_days=5,
+        downside_atr_mult=0.5,
+        upside_atr_mult=0.5,
+        label_variant="barrier_down_first",
+    )
+
+    row = frame[frame["trade_date"].eq(pd.Timestamp("2024-01-26"))].iloc[0]
+    assert row["entry_date"] == pd.Timestamp("2024-01-29")
+    assert row["entry_price"] == 12.0
+    assert row["barrier_outcome"] == "down_first"
+    assert row["risk_label"] == 1.0
 
 
 def test_build_risk_decile_report_orders_by_score() -> None:
@@ -166,6 +190,39 @@ def test_validate_tail_risk_walkforward_writes_reports_on_short_sample() -> None
     assert len(result.windows) == 2
     assert set(result.summary["model_name"]) == {"dummy_prior", "logistic_regression"}
     assert set(result.filter_summary["model_name"]) == {"dummy_prior", "logistic_regression"}
+
+
+def test_validate_barrier_risk_walkforward_writes_reports_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "barrier_risk_walkforward"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}]))
+    storage.save_daily_bars("600000", _bars([10 + i * 0.08 for i in range(180)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.04 + (-0.8 if i % 19 == 0 else 0) for i in range(180)]))
+
+    result = validate_barrier_risk_walkforward(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 9, 6),
+        train_days=50,
+        valid_days=20,
+        step_days=20,
+        embargo_days=1,
+        max_windows=2,
+        horizon_days=5,
+        downside_atr_mult=0.5,
+        upside_atr_mult=1.0,
+        min_training_rows=20,
+        allow_short_sample=True,
+        model_names=("logistic_regression",),
+    )
+
+    assert result.label_distribution_path.exists()
+    assert result.metrics_path.exists()
+    assert result.comparison_path.exists()
+    assert not result.label_distribution.empty
+    assert set(result.metrics["model_name"]) == {"logistic_regression"}
 
 
 def test_train_and_predict_tail_risk_model_roundtrip_on_short_sample() -> None:

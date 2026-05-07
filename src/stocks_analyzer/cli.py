@@ -29,11 +29,14 @@ from .event_risk_ranker import (
 from .event_labels import EventLabelConfig
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
 from .full_market_risk import (
+    DEFAULT_BARRIER_MODEL_NAMES,
     DEFAULT_PANEL_MODEL_NAMES,
     format_tail_risk_prediction_table,
     predict_tail_risk,
     reproduce_tail_risk,
+    summarize_tail_risk_walkforward,
     train_tail_risk_model,
+    validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
 )
 from .macd_divergence import summarize_recent_macd_divergence
@@ -373,6 +376,42 @@ def build_parser() -> argparse.ArgumentParser:
     validate_tail.add_argument("--filter-rates", default="0.2", help="风险过滤比例，逗号分隔；默认 0.2")
     validate_tail.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
     validate_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
+
+    reproduce_barrier = subparsers.add_parser(
+        "reproduce-barrier-risk",
+        help="复现 Phase 2 全市场 triple-barrier 风险模型",
+        description="构建 next-open 入场的 triple-barrier 风险标签，并用 walk-forward 验证 LR/LightGBM 风险分类器。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    reproduce_barrier.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    reproduce_barrier.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    reproduce_barrier.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    reproduce_barrier.add_argument("--train-days", type=int, default=1000, help="每个窗口训练交易日数量，默认 1000")
+    reproduce_barrier.add_argument("--valid-days", type=int, default=250, help="每个窗口验证交易日数量，默认 250")
+    reproduce_barrier.add_argument("--step-days", type=int, default=250, help="窗口前移步长，默认 250")
+    reproduce_barrier.add_argument("--embargo-days", type=int, default=None, help="训练和验证间隔交易日；默认等于 horizon-days")
+    reproduce_barrier.add_argument("--max-windows", type=int, default=None, help="最多验证多少个窗口，默认全部可用窗口")
+    reproduce_barrier.add_argument("--horizon-days", type=int, default=20, help="vertical barrier 持有交易日，默认 20")
+    reproduce_barrier.add_argument("--downside-atr-mult", type=float, default=1.0, help="下边界 ATR14 倍数，默认 1.0")
+    reproduce_barrier.add_argument("--upside-atr-mult", type=float, default=2.0, help="上边界 ATR14 倍数，默认 2.0")
+    reproduce_barrier.add_argument("--downside-pct", type=float, default=None, help="固定下边界百分比；设置后覆盖 ATR 下边界")
+    reproduce_barrier.add_argument("--upside-pct", type=float, default=None, help="固定上边界百分比；设置后覆盖 ATR 上边界")
+    reproduce_barrier.add_argument("--no-upside-barrier", action="store_true", help="不使用上边界，只比较下边界和 vertical barrier")
+    reproduce_barrier.add_argument(
+        "--label-variant",
+        choices=["barrier_down_first", "max_drawdown_exceed"],
+        default="barrier_down_first",
+        help="风险标签口径，默认 barrier_down_first",
+    )
+    reproduce_barrier.add_argument("--min-training-rows", type=int, default=200, help="每个窗口最少训练样本行数，默认 200")
+    reproduce_barrier.add_argument(
+        "--models",
+        default=",".join(DEFAULT_BARRIER_MODEL_NAMES),
+        help="Phase 2 验证模型，逗号分隔；默认 logistic_regression,lightgbm_classifier",
+    )
+    reproduce_barrier.add_argument("--filter-rates", default="0.2", help="风险过滤比例，逗号分隔；默认 0.2")
+    reproduce_barrier.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
+    reproduce_barrier.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
 
     train_tail_model = subparsers.add_parser(
         "train-tail-risk-model",
@@ -984,6 +1023,49 @@ def main() -> None:
         print(f"Saved filter impact: {result.filter_impact_path}")
         print(f"Saved filter summary: {result.filter_summary_path}")
         print(f"Saved summary: {result.summary_path}")
+        return
+
+    if args.command == "reproduce-barrier-risk":
+        result = validate_barrier_risk_walkforward(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            limit=args.limit,
+            train_days=args.train_days,
+            valid_days=args.valid_days,
+            step_days=args.step_days,
+            embargo_days=args.embargo_days,
+            max_windows=args.max_windows,
+            horizon_days=args.horizon_days,
+            downside_atr_mult=args.downside_atr_mult,
+            upside_atr_mult=None if args.no_upside_barrier else args.upside_atr_mult,
+            downside_pct=args.downside_pct,
+            upside_pct=args.upside_pct,
+            label_variant=args.label_variant,
+            min_training_rows=args.min_training_rows,
+            allow_short_sample=args.allow_short_sample,
+            model_names=tuple(_parse_str_list(args.models)),
+            filter_rates=tuple(float(value) for value in _parse_str_list(args.filter_rates)),
+            return_tolerance=args.return_tolerance,
+        )
+        print("Barrier-risk walk-forward validation complete.")
+        print("Barrier label distribution:")
+        print(result.label_distribution.to_string(index=False))
+        print("Barrier-risk metrics summary:")
+        print(summarize_tail_risk_walkforward(result.metrics, result.deciles).to_string(index=False))
+        if not result.filter_summary.empty:
+            print("Barrier-risk filter impact summary:")
+            print(result.filter_summary.to_string(index=False))
+        if not result.comparison.empty:
+            print("Barrier vs tail comparison:")
+            print(result.comparison.to_string(index=False))
+        print(f"Saved label distribution: {result.label_distribution_path}")
+        print(f"Saved metrics: {result.metrics_path}")
+        print(f"Saved deciles: {result.deciles_path}")
+        print(f"Saved filter impact: {result.filter_impact_path}")
+        print(f"Saved filter summary: {result.filter_summary_path}")
+        print(f"Saved comparison: {result.comparison_path}")
         return
 
     if args.command == "train-tail-risk-model":

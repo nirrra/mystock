@@ -30,7 +30,19 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
-from .full_market_labels import TAIL_RISK_FEATURE_COLUMNS, build_tail_risk_frame, build_tail_risk_panel
+try:
+    from lightgbm import LGBMClassifier
+except Exception:  # pragma: no cover - depends on optional local package.
+    LGBMClassifier = None
+
+from .full_market_labels import (
+    BARRIER_RISK_FEATURE_COLUMNS,
+    TAIL_RISK_FEATURE_COLUMNS,
+    build_barrier_risk_panel,
+    build_tail_risk_frame,
+    build_tail_risk_panel,
+    summarize_barrier_label_distribution,
+)
 from .full_market_panel import full_market_report_dir
 from .storage import DailyBarsReadError, Storage
 from .synthetic_market import build_synthetic_market_index, synthetic_market_path
@@ -58,6 +70,10 @@ DEFAULT_PANEL_MODEL_NAMES = (
     "linear_discriminant_analysis",
     "naive_bayes",
     "quadratic_discriminant_analysis",
+)
+DEFAULT_BARRIER_MODEL_NAMES = (
+    "logistic_regression",
+    "lightgbm_classifier",
 )
 
 
@@ -113,6 +129,24 @@ class TailRiskPredictionResult:
     skipped: pd.DataFrame
     output_path: Path
     artifact_path: Path
+
+
+@dataclass(slots=True)
+class BarrierRiskValidationResult:
+    label_distribution: pd.DataFrame
+    metrics: pd.DataFrame
+    deciles: pd.DataFrame
+    filter_impact: pd.DataFrame
+    filter_summary: pd.DataFrame
+    comparison: pd.DataFrame
+    report_dir: Path
+    label_distribution_path: Path
+    metrics_path: Path
+    deciles_path: Path
+    filter_impact_path: Path
+    filter_summary_path: Path
+    comparison_path: Path
+    config_path: Path
 
 
 def train_tail_risk_model(
@@ -633,6 +667,180 @@ def validate_tail_risk_walkforward(
     )
 
 
+def validate_barrier_risk_walkforward(
+    *,
+    storage: Storage,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int | None = None,
+    train_days: int = 1000,
+    valid_days: int = 250,
+    step_days: int = 250,
+    embargo_days: int | None = None,
+    max_windows: int | None = None,
+    horizon_days: int = 20,
+    downside_atr_mult: float = 1.0,
+    upside_atr_mult: float | None = 2.0,
+    downside_pct: float | None = None,
+    upside_pct: float | None = None,
+    label_variant: str = "barrier_down_first",
+    min_training_rows: int = 200,
+    allow_short_sample: bool = False,
+    model_names: tuple[str, ...] = DEFAULT_BARRIER_MODEL_NAMES,
+    filter_rates: tuple[float, ...] = (0.2,),
+    return_tolerance: float = 0.001,
+) -> BarrierRiskValidationResult:
+    if train_days <= 0 or valid_days <= 0 or step_days <= 0:
+        raise ValueError("train_days, valid_days, and step_days must be positive.")
+    embargo = int(horizon_days if embargo_days is None else embargo_days)
+    logging.info("Barrier-risk walk-forward panel dataset build started")
+    dataset, skipped = build_barrier_risk_panel(
+        storage=storage,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        horizon_days=horizon_days,
+        downside_atr_mult=downside_atr_mult,
+        upside_atr_mult=upside_atr_mult,
+        downside_pct=downside_pct,
+        upside_pct=upside_pct,
+        label_variant=label_variant,
+    )
+    if dataset.empty:
+        raise RuntimeError("Barrier-risk walk-forward has no labeled rows.")
+    windows = build_tail_risk_walkforward_windows(
+        dataset,
+        train_days=train_days,
+        valid_days=valid_days,
+        step_days=step_days,
+        embargo_days=embargo,
+        max_windows=max_windows,
+    )
+    if windows.empty:
+        raise RuntimeError(
+            "No barrier-risk walk-forward windows can be built with the requested train/valid/step days."
+        )
+    if not allow_short_sample and len(windows) < 3:
+        raise RuntimeError(
+            f"Barrier-risk walk-forward needs at least 3 windows; got {len(windows)}. "
+            "Use a longer date range or pass allow_short_sample only for smoke tests."
+        )
+
+    label_distribution = summarize_barrier_label_distribution(dataset)
+    metrics_parts: list[pd.DataFrame] = []
+    decile_parts: list[pd.DataFrame] = []
+    filter_parts: list[pd.DataFrame] = []
+    total_windows = len(windows)
+    for index, window in enumerate(windows.to_dict("records"), start=1):
+        window_id = str(window["window_id"])
+        logging.info("Barrier-risk walk-forward window %s/%s started: %s", index, total_windows, window_id)
+        train = _window_slice(dataset, start=window["train_start"], end=window["train_end"])
+        valid = _window_slice(dataset, start=window["valid_start"], end=window["valid_end"])
+        logging.info("Barrier-risk walk-forward window %s rows: train=%s valid=%s", window_id, len(train), len(valid))
+        if len(train) < min_training_rows or valid.empty:
+            metrics_parts.append(
+                _empty_window_metrics(
+                    window=window,
+                    model_names=model_names,
+                    train_rows=len(train),
+                    valid_rows=len(valid),
+                    error="insufficient_window_rows",
+                )
+            )
+            continue
+        result = _fit_score_risk_models(
+            train=train,
+            splits={"valid": valid},
+            feature_columns=BARRIER_RISK_FEATURE_COLUMNS,
+            scope="barrier_walkforward",
+            min_training_rows=min_training_rows,
+            skip_large_knn=True,
+            model_names=model_names,
+        )
+        metrics = _attach_window_columns(result["metrics"], window)
+        scored = _attach_window_columns(result["scored"], window)
+        deciles = build_risk_decile_report(scored)
+        filter_impact = build_risk_filter_impact(
+            scored,
+            filter_rates=filter_rates,
+            return_tolerance=return_tolerance,
+        )
+        metrics_parts.append(metrics)
+        decile_parts.append(deciles)
+        filter_parts.append(filter_impact)
+        logging.info("Barrier-risk walk-forward window %s/%s complete: %s", index, total_windows, window_id)
+
+    metrics_frame = pd.concat(metrics_parts, ignore_index=True) if metrics_parts else pd.DataFrame()
+    deciles_frame = pd.concat(decile_parts, ignore_index=True) if decile_parts else pd.DataFrame()
+    filter_impact_frame = pd.concat(filter_parts, ignore_index=True) if filter_parts else pd.DataFrame()
+    filter_summary = summarize_risk_filter_impact(filter_impact_frame)
+    summary = summarize_tail_risk_walkforward(metrics_frame, deciles_frame)
+    comparison = build_barrier_vs_tail_comparison(project_root, barrier_summary=summary, barrier_filter_summary=filter_summary)
+
+    report_dir = full_market_report_dir(project_root)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    label_distribution_path = report_dir / "barrier_label_distribution.csv"
+    metrics_path = report_dir / "barrier_risk_metrics.csv"
+    deciles_path = report_dir / "barrier_risk_decile_report.csv"
+    filter_impact_path = report_dir / "barrier_risk_filter_impact.csv"
+    filter_summary_path = report_dir / "barrier_risk_filter_impact_summary.csv"
+    comparison_path = report_dir / "barrier_vs_tail_comparison.csv"
+    config_path = report_dir / "barrier_risk_config.json"
+    label_distribution.to_csv(label_distribution_path, index=False, encoding="utf-8-sig")
+    metrics_frame.to_csv(metrics_path, index=False, encoding="utf-8-sig")
+    deciles_frame.to_csv(deciles_path, index=False, encoding="utf-8-sig")
+    filter_impact_frame.to_csv(filter_impact_path, index=False, encoding="utf-8-sig")
+    filter_summary.to_csv(filter_summary_path, index=False, encoding="utf-8-sig")
+    comparison.to_csv(comparison_path, index=False, encoding="utf-8-sig")
+    config_path.write_text(
+        json.dumps(
+            {
+                "start_date": start_date.isoformat() if start_date else "",
+                "end_date": end_date.isoformat() if end_date else "",
+                "limit": limit,
+                "train_days": int(train_days),
+                "valid_days": int(valid_days),
+                "step_days": int(step_days),
+                "embargo_days": int(embargo),
+                "max_windows": max_windows,
+                "horizon_days": int(horizon_days),
+                "downside_atr_mult": float(downside_atr_mult),
+                "upside_atr_mult": float(upside_atr_mult) if upside_atr_mult is not None else None,
+                "downside_pct": float(downside_pct) if downside_pct is not None else None,
+                "upside_pct": float(upside_pct) if upside_pct is not None else None,
+                "label_variant": label_variant,
+                "min_training_rows": int(min_training_rows),
+                "allow_short_sample": bool(allow_short_sample),
+                "model_names": list(model_names),
+                "filter_rates": [float(value) for value in filter_rates],
+                "return_tolerance": float(return_tolerance),
+                "skipped_symbols": int(len(skipped)),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    logging.info("Barrier-risk walk-forward reports saved to %s", report_dir)
+    return BarrierRiskValidationResult(
+        label_distribution=label_distribution,
+        metrics=metrics_frame,
+        deciles=deciles_frame,
+        filter_impact=filter_impact_frame,
+        filter_summary=filter_summary,
+        comparison=comparison,
+        report_dir=report_dir,
+        label_distribution_path=label_distribution_path,
+        metrics_path=metrics_path,
+        deciles_path=deciles_path,
+        filter_impact_path=filter_impact_path,
+        filter_summary_path=filter_summary_path,
+        comparison_path=comparison_path,
+        config_path=config_path,
+    )
+
+
 def build_tail_risk_walkforward_windows(
     dataset: pd.DataFrame,
     *,
@@ -694,6 +902,60 @@ def summarize_tail_risk_walkforward(metrics: pd.DataFrame, deciles: pd.DataFrame
             }
         )
     return pd.DataFrame(rows)
+
+
+def build_barrier_vs_tail_comparison(
+    project_root: Path,
+    *,
+    barrier_summary: pd.DataFrame,
+    barrier_filter_summary: pd.DataFrame,
+) -> pd.DataFrame:
+    rows = []
+    rows.extend(_comparison_rows("barrier", barrier_summary, barrier_filter_summary))
+    report_dir = full_market_report_dir(project_root)
+    tail_summary_path = report_dir / "tail_risk_walkforward_summary.csv"
+    tail_filter_path = report_dir / "tail_risk_filter_impact_summary.csv"
+    if tail_summary_path.exists():
+        tail_summary = pd.read_csv(tail_summary_path)
+        tail_filter = pd.read_csv(tail_filter_path) if tail_filter_path.exists() else pd.DataFrame()
+        rows.extend(_comparison_rows("tail", tail_summary, tail_filter))
+    return pd.DataFrame(rows)
+
+
+def _comparison_rows(risk_target: str, summary: pd.DataFrame, filter_summary: pd.DataFrame) -> list[dict[str, Any]]:
+    if summary.empty:
+        return []
+    filters = filter_summary.copy()
+    if not filters.empty and "filter_rate" in filters.columns:
+        filters["filter_rate"] = pd.to_numeric(filters["filter_rate"], errors="coerce")
+    rows: list[dict[str, Any]] = []
+    for _, row in summary.iterrows():
+        model_name = str(row["model_name"])
+        filter_row = pd.Series(dtype=object)
+        if not filters.empty:
+            model_filters = filters[filters["model_name"].astype(str).eq(model_name)].copy()
+            if not model_filters.empty:
+                model_filters["_filter_distance"] = (pd.to_numeric(model_filters["filter_rate"], errors="coerce") - 0.2).abs()
+                filter_row = model_filters.sort_values("_filter_distance").iloc[0]
+        rows.append(
+            {
+                "risk_target": risk_target,
+                "model_name": model_name,
+                "windows": int(row.get("windows", 0)),
+                "successful_windows": int(row.get("successful_windows", 0)),
+                "avg_pr_auc": float(row.get("avg_pr_auc", np.nan)),
+                "avg_pr_auc_baseline": float(row.get("avg_pr_auc_baseline", np.nan)),
+                "avg_roc_auc": float(row.get("avg_roc_auc", np.nan)),
+                "pr_auc_beat_baseline_rate": float(row.get("pr_auc_beat_baseline_rate", np.nan)),
+                "top_decile_higher_risk_rate": float(row.get("top_decile_higher_risk_rate", np.nan)),
+                "top_decile_worse_drawdown_rate": float(row.get("top_decile_worse_drawdown_rate", np.nan)),
+                "filter_pass_rate": float(filter_row.get("filter_pass_rate", np.nan)) if not filter_row.empty else np.nan,
+                "avg_future_return_5d_delta": float(filter_row.get("avg_future_return_5d_delta", np.nan)) if not filter_row.empty else np.nan,
+                "avg_future_max_drawdown_5d_delta": float(filter_row.get("avg_future_max_drawdown_5d_delta", np.nan)) if not filter_row.empty else np.nan,
+                "phase_pass": bool(row.get("phase1_pass", False)) and (bool(filter_row.get("phase1_filter_pass", False)) if not filter_row.empty else True),
+            }
+        )
+    return rows
 
 
 def build_tail_risk_index_dataset(
@@ -1095,6 +1357,17 @@ def _tail_risk_models(model_names: tuple[str, ...] = ALL_TAIL_RISK_MODEL_NAMES) 
         "adaboost": AdaBoostClassifier(n_estimators=80, random_state=42),
         "gradient_boosting": GradientBoostingClassifier(random_state=42),
     }
+    if LGBMClassifier is not None:
+        available["lightgbm_classifier"] = LGBMClassifier(
+            n_estimators=120,
+            learning_rate=0.05,
+            num_leaves=31,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42,
+            n_jobs=1,
+            verbosity=-1,
+        )
     unknown = [model_name for model_name in model_names if model_name not in available]
     if unknown:
         raise ValueError(f"Unknown tail-risk model names: {', '.join(unknown)}")

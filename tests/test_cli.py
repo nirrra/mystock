@@ -456,6 +456,29 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "0.002",
         ]
     )
+    reproduce_barrier_args = parser.parse_args(
+        [
+            "reproduce-barrier-risk",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--train-days",
+            "1000",
+            "--valid-days",
+            "250",
+            "--horizon-days",
+            "20",
+            "--downside-atr-mult",
+            "1.0",
+            "--upside-atr-mult",
+            "2.0",
+            "--models",
+            "logistic_regression,lightgbm_classifier",
+            "--max-windows",
+            "2",
+        ]
+    )
     train_tail_model_args = parser.parse_args(
         [
             "train-tail-risk-model",
@@ -559,6 +582,11 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert validate_tail_args.panel_models == "logistic_regression,naive_bayes"
     assert validate_tail_args.filter_rates == "0.1,0.2"
     assert validate_tail_args.return_tolerance == 0.002
+    assert reproduce_barrier_args.command == "reproduce-barrier-risk"
+    assert reproduce_barrier_args.horizon_days == 20
+    assert reproduce_barrier_args.downside_atr_mult == 1.0
+    assert reproduce_barrier_args.upside_atr_mult == 2.0
+    assert reproduce_barrier_args.models == "logistic_regression,lightgbm_classifier"
     assert train_tail_model_args.command == "train-tail-risk-model"
     assert train_tail_model_args.model_name == "logistic_regression"
     assert train_tail_model_args.limit == 10
