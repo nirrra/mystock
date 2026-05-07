@@ -7,6 +7,7 @@ import pandas as pd
 
 from stocks_analyzer.full_market_labels import build_barrier_risk_frame, build_mlfin_barrier_risk_frame, build_tail_risk_frame
 from stocks_analyzer.full_market_alpha158 import build_alpha158_feature_frame, build_alpha158_return_frame
+from stocks_analyzer.full_market_crash import build_crash_measures, build_symbol_weekly_return_frame, validate_mcd_crash_risk
 from stocks_analyzer.full_market_return import validate_alpha158_qlib_return
 from stocks_analyzer.full_market_risk import (
     build_risk_filter_impact,
@@ -97,6 +98,41 @@ def test_build_alpha158_return_frame_uses_qlib_label() -> None:
     frame = build_alpha158_return_frame(bars, symbol="600000")
 
     assert abs(frame.loc[0, "LABEL0_raw"] - (12.1 / 11.0 - 1.0)) < 1e-12
+
+
+def test_build_symbol_weekly_return_frame_uses_friday_close() -> None:
+    bars = _bars([10 + i for i in range(15)])
+
+    frame = build_symbol_weekly_return_frame(bars, symbol="600000")
+
+    assert not frame.empty
+    assert {"week_end", "weekly_return", "year"}.issubset(frame.columns)
+
+
+def test_build_crash_measures_adds_mcd_and_traditional_labels() -> None:
+    weeks = pd.date_range("2024-01-05", periods=35, freq="W-FRI")
+    values = [0.01] * 20 + [-0.3] + [0.01] * 14
+    rows = []
+    for symbol, shift in (("600000", 0.0), ("600001", 0.02), ("600002", -0.02), ("600003", 0.01), ("600004", -0.01), ("600005", 0.03), ("600006", -0.03), ("600007", 0.04), ("600008", -0.04), ("600009", 0.05)):
+        for week, value in zip(weeks, values):
+            rows.append(
+                {
+                    "week_end": week,
+                    "symbol": symbol,
+                    "name": "甲",
+                        "weekly_return": value + shift,
+                    "market_weekly_return": 0.0,
+                        "firm_specific_weekly_return": value + shift,
+                    "year": 2024,
+                }
+            )
+    weekly = pd.DataFrame(rows)
+    weekly.loc[weekly["symbol"].eq("600000"), "firm_specific_weekly_return"] = [0.05] * 20 + [-3.0] + [0.05] * 14
+
+    measures = build_crash_measures(weekly, min_weeks_per_year=20, mcd_contamination=0.2)
+
+    assert measures["NEGOUTLIER"].sum() >= 1
+    assert {"CRASH", "NCSKEW", "DUVOL"}.issubset(measures.columns)
 
 
 def test_build_risk_decile_report_orders_by_score() -> None:
@@ -392,6 +428,30 @@ def test_validate_alpha158_qlib_return_writes_reports_on_short_sample() -> None:
     assert result.topk_summary_path.exists()
     assert not result.signal_metrics.empty
     assert set(result.signal_metrics["split"]) == {"valid", "test"}
+
+
+def test_validate_mcd_crash_risk_writes_reports_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "mcd_crash_risk"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}]))
+    storage.save_daily_bars("600000", _bars([10 + i * 0.03 + (-2.0 if i == 80 else 0) for i in range(220)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.02 + (-1.5 if i == 100 else 0) for i in range(220)]))
+
+    result = validate_mcd_crash_risk(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 12, 31),
+        min_weeks_per_year=20,
+    )
+
+    assert result.weekly_returns_path.exists()
+    assert result.annual_measures_path.exists()
+    assert result.distribution_path.exists()
+    assert result.correlation_path.exists()
+    assert not result.annual_measures.empty
+    assert {"NEGOUTLIER", "CRASH", "NCSKEW", "DUVOL"}.issubset(result.annual_measures.columns)
 
 
 def test_train_and_predict_tail_risk_model_roundtrip_on_short_sample() -> None:

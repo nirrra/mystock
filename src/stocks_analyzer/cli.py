@@ -28,6 +28,7 @@ from .event_risk_ranker import (
 )
 from .event_labels import EventLabelConfig
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
+from .full_market_crash import validate_mcd_crash_risk
 from .full_market_risk import (
     DEFAULT_BARRIER_MODEL_NAMES,
     DEFAULT_PANEL_MODEL_NAMES,
@@ -489,6 +490,19 @@ def build_parser() -> argparse.ArgumentParser:
     alpha158_qlib_return.add_argument("--topk", type=int, default=50, help="TopKDropout topk，默认 50")
     alpha158_qlib_return.add_argument("--drop", type=int, default=5, help="TopKDropout n_drop，默认 5")
     alpha158_qlib_return.add_argument("--min-training-rows", type=int, default=200, help="最少训练样本行数，默认 200")
+
+    mcd_crash = subparsers.add_parser(
+        "validate-mcd-crash-risk",
+        help="严格复现 Phase 5 MCD stock price crash-risk 标签生成",
+        description="按 Karasan et al. (2025) 复现 NEGOUTLIER，并同时生成 CRASH/NCSKEW/DUVOL。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    mcd_crash.add_argument("--start-date", default="2015-01-01", help="样本开始日期，格式 YYYY-MM-DD")
+    mcd_crash.add_argument("--end-date", default="2026-05-07", help="样本结束日期，格式 YYYY-MM-DD")
+    mcd_crash.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    mcd_crash.add_argument("--min-weeks-per-year", type=int, default=26, help="每个 firm-year 最少周数，默认 26")
+    mcd_crash.add_argument("--mcd-support-fraction", type=float, default=0.75, help="MinCovDet support_fraction，默认 0.75")
+    mcd_crash.add_argument("--mcd-contamination", type=float, default=0.04, help="MCD outlier 尾部比例阈值，默认 0.04")
 
     train_tail_model = subparsers.add_parser(
         "train-tail-risk-model",
@@ -1243,6 +1257,29 @@ def main() -> None:
         print(f"Saved deciles: {result.deciles_path}")
         print(f"Saved TopK daily: {result.topk_daily_path}")
         print(f"Saved TopK summary: {result.topk_summary_path}")
+        print(f"Saved config: {result.config_path}")
+        return
+
+    if args.command == "validate-mcd-crash-risk":
+        result = validate_mcd_crash_risk(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            limit=args.limit,
+            min_weeks_per_year=args.min_weeks_per_year,
+            mcd_support_fraction=args.mcd_support_fraction,
+            mcd_contamination=args.mcd_contamination,
+        )
+        print("MCD crash-risk label reproduction complete.")
+        print("Distribution:")
+        print(result.distribution.tail(12).to_string(index=False))
+        print("Correlation:")
+        print(result.correlation.to_string(index=False))
+        print(f"Saved weekly returns: {result.weekly_returns_path}")
+        print(f"Saved annual measures: {result.annual_measures_path}")
+        print(f"Saved distribution: {result.distribution_path}")
+        print(f"Saved correlation: {result.correlation_path}")
         print(f"Saved config: {result.config_path}")
         return
 

@@ -546,6 +546,19 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "5",
         ]
     )
+    mcd_crash_args = parser.parse_args(
+        [
+            "validate-mcd-crash-risk",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--limit",
+            "10",
+            "--min-weeks-per-year",
+            "26",
+        ]
+    )
     train_tail_model_args = parser.parse_args(
         [
             "train-tail-risk-model",
@@ -672,6 +685,9 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert alpha158_qlib_return_args.valid_end == "2023-12-31"
     assert alpha158_qlib_return_args.topk == 50
     assert alpha158_qlib_return_args.drop == 5
+    assert mcd_crash_args.command == "validate-mcd-crash-risk"
+    assert mcd_crash_args.limit == 10
+    assert mcd_crash_args.min_weeks_per_year == 26
     assert train_tail_model_args.command == "train-tail-risk-model"
     assert train_tail_model_args.model_name == "logistic_regression"
     assert train_tail_model_args.limit == 10
