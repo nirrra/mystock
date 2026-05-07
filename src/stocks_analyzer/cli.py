@@ -73,6 +73,7 @@ from .stacked_trade_value import (
 )
 from .storage import DailyBarsReadError, Storage
 from .strategies import STRATEGY_NAMES
+from .synthetic_market import build_synthetic_market_index
 from .trend_backtest import backtest_portfolios, backtest_signal_returns, summarize_signal_backtest
 from .trend_indicator_scores import build_next_open_entries, scan_indicator_scored_entries, select_tradable_entries
 from .trend_reporting import (
@@ -219,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument(
         "--index-symbols",
         default=",".join(DEFAULT_INDEX_SYMBOLS),
-        help="批量更新股票后同步更新的指数代码，逗号分隔；默认沪深300/中证500/中证800等",
+        help="配合 --update-index 使用的外部指数代码，逗号分隔；默认沪深300/中证500/中证800等",
     )
     update.add_argument(
         "--index-interface",
@@ -227,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="sina",
         help="指数日线数据接口：baostock/sina/eastmoney，默认 sina",
     )
-    update.add_argument("--skip-index", action="store_true", help="批量 update 时跳过指数日线更新")
+    update.add_argument("--update-index", action="store_true", help="批量 update 后额外更新外部指数日线；默认不更新")
     pattern = subparsers.add_parser(
         "pattern",
         help="识别本地日线数据中的 1 到 6 号模式",
@@ -326,6 +327,18 @@ def build_parser() -> argparse.ArgumentParser:
     reproduce_tail.add_argument("--horizon-days", type=int, default=1, help="预测未来第 N 个交易日风险，默认 1")
     reproduce_tail.add_argument("--min-training-rows", type=int, default=200, help="最少训练样本行数，默认 200")
     reproduce_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式复现不要使用")
+
+    synthetic_market = subparsers.add_parser(
+        "build-synthetic-market",
+        help="基于本地个股日线构建市场代理指数",
+        description="读取本地全市场个股日线，生成等权/成交额加权市场代理指数和市场广度特征，不访问外部指数接口。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    synthetic_market.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD 或 YYYYMMDD")
+    synthetic_market.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD 或 YYYYMMDD")
+    synthetic_market.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    synthetic_market.add_argument("--min-stock-count", type=int, default=500, help="输出日期所需最少股票数，默认 500")
+    synthetic_market.add_argument("--output", default=None, help="可选输出 CSV 路径，默认 reports/full_market_model/synthetic_market.csv")
 
     train_opportunity = subparsers.add_parser(
         "train-opportunity-ranker",
@@ -763,7 +776,7 @@ def main() -> None:
                 args.end_date,
                 args.limit,
                 index_symbols=tuple(_parse_str_list(args.index_symbols)),
-                update_indexes=not args.skip_index,
+                update_indexes=args.update_index,
                 index_interface=args.index_interface,
             )
         finally:
@@ -849,6 +862,26 @@ def main() -> None:
         print(f"Saved dataset: {result.dataset_path}")
         print(f"Saved metrics: {result.metrics_path}")
         print(f"Saved deciles: {result.deciles_path}")
+        return
+
+    if args.command == "build-synthetic-market":
+        result = build_synthetic_market_index(
+            storage=storage,
+            project_root=project_root,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            limit=args.limit,
+            min_stock_count=args.min_stock_count,
+            output=Path(args.output).resolve() if args.output else None,
+        )
+        print("Synthetic market index complete.")
+        if result.frame.empty:
+            print("No synthetic market rows were produced.")
+        else:
+            print(result.frame.tail(min(10, len(result.frame))).to_string(index=False))
+        if not result.skipped.empty:
+            print(f"Skipped symbols: {len(result.skipped)}")
+        print(f"Saved output: {result.output_path}")
         return
 
     if args.command == "train-opportunity-ranker":
@@ -1236,7 +1269,7 @@ def _run_update(
     limit: int | None,
     *,
     index_symbols: tuple[str, ...] = DEFAULT_INDEX_SYMBOLS,
-    update_indexes: bool = True,
+    update_indexes: bool = False,
     index_interface: str = "sina",
 ) -> None:
     if symbol:

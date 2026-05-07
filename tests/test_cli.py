@@ -46,7 +46,7 @@ def test_build_parser_accepts_update_with_symbol() -> None:
     assert args.start_date == "20240101"
     assert args.data_interface == "sina"
     assert args.index_interface == "sina"
-    assert args.skip_index is False
+    assert args.update_index is False
     assert "sh000300" in args.index_symbols
 
 
@@ -63,7 +63,7 @@ def test_build_parser_accepts_update_index_options() -> None:
             "eastmoney",
             "--index-symbols",
             "sh000300,sz399001",
-            "--skip-index",
+            "--update-index",
         ]
     )
 
@@ -72,7 +72,7 @@ def test_build_parser_accepts_update_index_options() -> None:
     assert args.data_interface == "sina"
     assert args.index_interface == "eastmoney"
     assert args.index_symbols == "sh000300,sz399001"
-    assert args.skip_index is True
+    assert args.update_index is True
 
 
 def test_build_parser_accepts_pattern_flags() -> None:
@@ -430,6 +430,19 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "--allow-short-sample",
         ]
     )
+    synthetic_market_args = parser.parse_args(
+        [
+            "build-synthetic-market",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--limit",
+            "10",
+            "--min-stock-count",
+            "2",
+        ]
+    )
 
     assert train_opportunity_args.command == "train-opportunity-ranker"
     assert train_opportunity_args.max_iter == 4
@@ -484,6 +497,11 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert reproduce_tail_args.valid_end == "2025-12-31"
     assert reproduce_tail_args.limit == 10
     assert reproduce_tail_args.allow_short_sample is True
+    assert synthetic_market_args.command == "build-synthetic-market"
+    assert synthetic_market_args.start_date == "2015-01-01"
+    assert synthetic_market_args.end_date == "2026-05-07"
+    assert synthetic_market_args.limit == 10
+    assert synthetic_market_args.min_stock_count == 2
 
 
 def test_load_local_env_sets_missing_env_vars_only() -> None:
