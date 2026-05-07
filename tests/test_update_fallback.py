@@ -6,8 +6,8 @@ from uuid import uuid4
 import pandas as pd
 
 from stocks_analyzer.cli import (
+    _create_update_data_provider,
     _refresh_or_load_universe,
-    _resolve_update_provider_name,
     _update_daily_cache_for_symbol,
     _update_index_daily_cache,
 )
@@ -80,9 +80,20 @@ def test_refresh_or_load_universe_falls_back_to_cached_universe() -> None:
     assert result["symbol"].tolist() == ["600000"]
 
 
-def test_resolve_update_provider_name_switches_baostock_to_akshare() -> None:
-    assert _resolve_update_provider_name("baostock") == "akshare"
-    assert _resolve_update_provider_name("akshare") == "akshare"
+def test_create_update_data_provider_uses_requested_interface(monkeypatch) -> None:
+    created: list[object] = []
+
+    class FakeAKShareProvider:
+        def __init__(self, *, daily_backend: str) -> None:
+            self.daily_backend = daily_backend
+
+    monkeypatch.setattr("stocks_analyzer.cli.create_data_provider", lambda name: created.append(name) or f"provider:{name}")
+    monkeypatch.setattr("stocks_analyzer.data_sources.AKShareDataProvider", FakeAKShareProvider)
+
+    assert _create_update_data_provider("baostock") == "provider:baostock"
+    assert _create_update_data_provider("sina").daily_backend == "sina"
+    assert _create_update_data_provider("eastmoney").daily_backend == "eastmoney"
+    assert created == ["baostock"]
 
 
 def _make_daily_frame(symbol: str, dates: list[str]) -> pd.DataFrame:

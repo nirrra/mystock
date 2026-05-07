@@ -44,16 +44,20 @@ def test_build_parser_accepts_update_with_symbol() -> None:
     assert args.command == "update"
     assert args.symbol == "603588"
     assert args.start_date == "20240101"
+    assert args.data_interface == "baostock"
     assert args.skip_index is False
     assert "sh000300" in args.index_symbols
 
 
 def test_build_parser_accepts_update_index_options() -> None:
     parser = build_parser()
-    args = parser.parse_args(["update", "--start-date", "20150101", "--index-symbols", "sh000300,sz399001", "--skip-index"])
+    args = parser.parse_args(
+        ["update", "--start-date", "20150101", "--data-interface", "sina", "--index-symbols", "sh000300,sz399001", "--skip-index"]
+    )
 
     assert args.command == "update"
     assert args.symbol is None
+    assert args.data_interface == "sina"
     assert args.index_symbols == "sh000300,sz399001"
     assert args.skip_index is True
 

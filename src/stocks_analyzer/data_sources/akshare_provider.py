@@ -18,10 +18,13 @@ else:
 
 
 class AKShareDataProvider(DataProvider):
-    def __init__(self) -> None:
+    def __init__(self, *, daily_backend: str = "sina") -> None:
         if ak is None:
             raise RuntimeError("akshare is not installed. Run `pip install -e .` first.") from _IMPORT_ERROR
-        self._daily_backend = "sina"
+        normalized_backend = str(daily_backend).strip().lower()
+        if normalized_backend not in {"sina", "eastmoney"}:
+            raise ValueError(f"Unsupported AKShare daily backend: {daily_backend}")
+        self._daily_backend = normalized_backend
 
     def get_instruments(self) -> pd.DataFrame:
         dataframe = ak.stock_info_a_code_name()
@@ -94,10 +97,6 @@ class AKShareDataProvider(DataProvider):
                 return self._fetch_daily_bars(symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust)
             except RequestException as exc:
                 last_error = exc
-                if self._daily_backend == "sina":
-                    self._daily_backend = "eastmoney"
-                    time.sleep(0.5)
-                    continue
                 if attempt == 3:
                     break
                 time.sleep(attempt)

@@ -211,6 +211,12 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--end-date", default=datetime.today().strftime("%Y%m%d"), help="结束日期，格式 YYYYMMDD")
     update.add_argument("--limit", type=int, default=None, help="仅更新前 N 只股票，便于小范围测试")
     update.add_argument(
+        "--data-interface",
+        choices=["baostock", "sina", "eastmoney"],
+        default="baostock",
+        help="日线数据接口：baostock/sina/eastmoney，默认 baostock",
+    )
+    update.add_argument(
         "--index-symbols",
         default=",".join(DEFAULT_INDEX_SYMBOLS),
         help="批量更新股票后同步更新的指数代码，逗号分隔；默认沪深300/中证500/中证800等",
@@ -739,10 +745,7 @@ def main() -> None:
     storage = Storage(paths)
 
     if args.command == "update":
-        update_provider_name = _resolve_update_provider_name(config.provider)
-        if update_provider_name != config.provider:
-            logging.info("Update command overrides provider from %s to %s", config.provider, update_provider_name)
-        provider = create_data_provider(update_provider_name)
+        provider = _create_update_data_provider(args.data_interface)
         try:
             _run_update(
                 storage,
@@ -3994,11 +3997,15 @@ def _command_needs_network(command_name: str) -> bool:
     return command_name in {"update", "intraday-screening"}
 
 
-def _resolve_update_provider_name(provider_name: str) -> str:
-    normalized = str(provider_name or "").strip().lower()
+def _create_update_data_provider(data_interface: str):
+    normalized = str(data_interface or "baostock").strip().lower()
     if normalized == "baostock":
-        return "akshare"
-    return normalized
+        return create_data_provider("baostock")
+    if normalized in {"sina", "eastmoney"}:
+        from .data_sources import AKShareDataProvider
+
+        return AKShareDataProvider(daily_backend=normalized)
+    raise ValueError(f"Unsupported update data interface: {data_interface}")
 
 
 def _refresh_universe(storage: Storage, provider, exclude_st: bool) -> pd.DataFrame:
