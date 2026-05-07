@@ -36,6 +36,7 @@ from .full_market_risk import (
     reproduce_tail_risk,
     summarize_tail_risk_walkforward,
     train_tail_risk_model,
+    validate_alpha158_risk_walkforward,
     validate_barrier_risk_grid,
     validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
@@ -448,6 +449,30 @@ def build_parser() -> argparse.ArgumentParser:
     barrier_grid.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
     barrier_grid.add_argument("--min-training-rows", type=int, default=200, help="每个窗口最少训练样本行数，默认 200")
     barrier_grid.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
+
+    alpha158_risk = subparsers.add_parser(
+        "validate-alpha158-risk",
+        help="验证 Phase 3 Alpha158-compatible LightGBM 风险模型",
+        description="用 Phase 2 mlfin_cusum 风险标签训练 Alpha158-compatible 日线特征 LightGBM 风险模型。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    alpha158_risk.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    alpha158_risk.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    alpha158_risk.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    alpha158_risk.add_argument("--train-days", type=int, default=1000, help="每个窗口训练交易日数量，默认 1000")
+    alpha158_risk.add_argument("--valid-days", type=int, default=250, help="每个窗口验证交易日数量，默认 250")
+    alpha158_risk.add_argument("--step-days", type=int, default=250, help="窗口前移步长，默认 250")
+    alpha158_risk.add_argument("--max-windows", type=int, default=None, help="最多验证多少个窗口，默认全部可用窗口")
+    alpha158_risk.add_argument("--horizon-days", type=int, default=5, help="Phase 2 mlfin vertical barrier，默认 5")
+    alpha158_risk.add_argument("--volatility-lookback", type=int, default=100, help="daily volatility EWMA lookback，默认 100")
+    alpha158_risk.add_argument("--pt-mult", type=float, default=1.0, help="profit-taking target 倍数，默认 1.0")
+    alpha158_risk.add_argument("--sl-mult", type=float, default=1.0, help="stop-loss target 倍数，默认 1.0")
+    alpha158_risk.add_argument("--min-ret", type=float, default=0.005, help="最小 target return，默认 0.005")
+    alpha158_risk.add_argument("--models", default="lightgbm_classifier", help="验证模型，逗号分隔；默认 lightgbm_classifier")
+    alpha158_risk.add_argument("--filter-rates", default="0.2", help="风险过滤比例，逗号分隔；默认 0.2")
+    alpha158_risk.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
+    alpha158_risk.add_argument("--min-training-rows", type=int, default=200, help="每个窗口最少训练样本行数，默认 200")
+    alpha158_risk.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
 
     train_tail_model = subparsers.add_parser(
         "train-tail-risk-model",
@@ -1137,6 +1162,45 @@ def main() -> None:
         print(f"Saved grid summary: {result.summary_path}")
         print(f"Saved grid label distribution: {result.label_distribution_path}")
         print(f"Saved grid config: {result.config_path}")
+        return
+
+    if args.command == "validate-alpha158-risk":
+        result = validate_alpha158_risk_walkforward(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            limit=args.limit,
+            train_days=args.train_days,
+            valid_days=args.valid_days,
+            step_days=args.step_days,
+            max_windows=args.max_windows,
+            horizon_days=args.horizon_days,
+            volatility_lookback=args.volatility_lookback,
+            pt_mult=args.pt_mult,
+            sl_mult=args.sl_mult,
+            min_ret=args.min_ret,
+            model_names=tuple(_parse_str_list(args.models)),
+            filter_rates=tuple(float(value) for value in _parse_str_list(args.filter_rates)),
+            return_tolerance=args.return_tolerance,
+            allow_short_sample=args.allow_short_sample,
+            min_training_rows=args.min_training_rows,
+        )
+        print("Alpha158 risk walk-forward validation complete.")
+        print("Alpha158 risk metrics summary:")
+        print(summarize_tail_risk_walkforward(result.metrics, result.deciles).to_string(index=False))
+        if not result.filter_summary.empty:
+            print("Alpha158 risk filter impact summary:")
+            print(result.filter_summary.to_string(index=False))
+        if not result.comparison.empty:
+            print("Alpha158 risk comparison:")
+            print(result.comparison.to_string(index=False))
+        print(f"Saved feature audit: {result.feature_audit_path}")
+        print(f"Saved metrics: {result.metrics_path}")
+        print(f"Saved deciles: {result.deciles_path}")
+        print(f"Saved filter impact: {result.filter_impact_path}")
+        print(f"Saved filter summary: {result.filter_summary_path}")
+        print(f"Saved comparison: {result.comparison_path}")
         return
 
     if args.command == "train-tail-risk-model":

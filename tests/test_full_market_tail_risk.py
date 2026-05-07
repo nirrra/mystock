@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from stocks_analyzer.full_market_labels import build_barrier_risk_frame, build_mlfin_barrier_risk_frame, build_tail_risk_frame
+from stocks_analyzer.full_market_alpha158 import build_alpha158_feature_frame
 from stocks_analyzer.full_market_risk import (
     build_risk_filter_impact,
     build_tail_risk_walkforward_windows,
@@ -14,6 +15,7 @@ from stocks_analyzer.full_market_risk import (
     reproduce_tail_risk,
     summarize_risk_filter_impact,
     train_tail_risk_model,
+    validate_alpha158_risk_walkforward,
     validate_barrier_risk_grid,
     validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
@@ -77,6 +79,13 @@ def test_build_mlfin_barrier_risk_frame_uses_cusum_events_and_bins() -> None:
     assert not frame.empty
     assert set(frame["barrier_bin"].dropna().unique()).issubset({-1, 0, 1})
     assert frame["risk_label"].eq(frame["barrier_bin"].eq(-1).astype(float)).all()
+
+
+def test_build_alpha158_feature_frame_adds_window_features() -> None:
+    frame = build_alpha158_feature_frame(_bars([10 + i * 0.1 for i in range(90)]), symbol="600000")
+
+    assert {"KMID", "ROC5", "MA20", "CORR60", "VSUMD30"}.issubset(frame.columns)
+    assert len([column for column in frame.columns if column not in {"trade_date", "symbol", "name", "future_return_5d", "future_max_drawdown_5d"}]) >= 150
 
 
 def test_build_risk_decile_report_orders_by_score() -> None:
@@ -301,7 +310,7 @@ def test_validate_barrier_risk_grid_writes_summary_on_short_sample() -> None:
         horizon_days_grid=(5,),
         pt_sl_grid=((1.0, 1.0),),
         min_ret_grid=(0.001,),
-        model_names=("logistic_regression",),
+        model_names=("lightgbm_classifier",),
         min_training_rows=4,
         allow_short_sample=True,
     )
@@ -310,6 +319,39 @@ def test_validate_barrier_risk_grid_writes_summary_on_short_sample() -> None:
     assert result.label_distribution_path.exists()
     assert not result.summary.empty
     assert result.summary.iloc[0]["config_id"] == "mlfin_h5_pt1_sl1_minret0.001"
+
+
+def test_validate_alpha158_risk_walkforward_writes_reports_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "alpha158_risk_walkforward"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}]))
+    storage.save_daily_bars("600000", _bars([10 * (1.004 ** i) for i in range(240)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.03 + (-0.5 if i % 17 == 0 else 0.5 if i % 29 == 0 else 0) for i in range(240)]))
+
+    result = validate_alpha158_risk_walkforward(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 10, 1),
+        train_days=8,
+        valid_days=4,
+        step_days=4,
+        max_windows=1,
+        horizon_days=5,
+        pt_mult=1.0,
+        sl_mult=1.0,
+        min_ret=0.001,
+        model_names=("lightgbm_classifier",),
+        min_training_rows=4,
+        allow_short_sample=True,
+    )
+
+    assert result.feature_audit_path.exists()
+    assert result.metrics_path.exists()
+    assert result.comparison_path.exists()
+    assert not result.feature_audit.empty
+    assert set(result.metrics["model_name"]) == {"lightgbm_classifier"}
 
 
 def test_train_and_predict_tail_risk_model_roundtrip_on_short_sample() -> None:

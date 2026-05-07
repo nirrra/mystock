@@ -43,6 +43,7 @@ from .full_market_labels import (
     build_tail_risk_panel,
     summarize_barrier_label_distribution,
 )
+from .full_market_alpha158 import build_alpha158_risk_panel
 from .full_market_panel import full_market_report_dir
 from .storage import DailyBarsReadError, Storage
 from .synthetic_market import build_synthetic_market_index, synthetic_market_path
@@ -155,6 +156,24 @@ class BarrierRiskGridResult:
     label_distribution: pd.DataFrame
     summary_path: Path
     label_distribution_path: Path
+    config_path: Path
+
+
+@dataclass(slots=True)
+class Alpha158RiskValidationResult:
+    feature_audit: pd.DataFrame
+    metrics: pd.DataFrame
+    deciles: pd.DataFrame
+    filter_impact: pd.DataFrame
+    filter_summary: pd.DataFrame
+    comparison: pd.DataFrame
+    report_dir: Path
+    feature_audit_path: Path
+    metrics_path: Path
+    deciles_path: Path
+    filter_impact_path: Path
+    filter_summary_path: Path
+    comparison_path: Path
     config_path: Path
 
 
@@ -1036,6 +1055,172 @@ def validate_barrier_risk_grid(
     )
 
 
+def validate_alpha158_risk_walkforward(
+    *,
+    storage: Storage,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int | None = None,
+    train_days: int = 1000,
+    valid_days: int = 250,
+    step_days: int = 250,
+    max_windows: int | None = None,
+    horizon_days: int = 5,
+    volatility_lookback: int = 100,
+    pt_mult: float = 1.0,
+    sl_mult: float = 1.0,
+    min_ret: float = 0.005,
+    model_names: tuple[str, ...] = ("lightgbm_classifier",),
+    filter_rates: tuple[float, ...] = (0.2,),
+    return_tolerance: float = 0.001,
+    allow_short_sample: bool = False,
+    min_training_rows: int = 200,
+) -> Alpha158RiskValidationResult:
+    logging.info("Alpha158 risk walk-forward panel dataset build started")
+    panel = build_alpha158_risk_panel(
+        storage=storage,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        horizon_days=horizon_days,
+        volatility_lookback=volatility_lookback,
+        pt_mult=pt_mult,
+        sl_mult=sl_mult,
+        min_ret=min_ret,
+    )
+    dataset = panel.dataset
+    if dataset.empty:
+        raise RuntimeError("Alpha158 risk walk-forward has no labeled rows.")
+    if not panel.feature_columns:
+        raise RuntimeError("Alpha158 risk walk-forward has no feature columns.")
+    windows = build_tail_risk_walkforward_windows(
+        dataset,
+        train_days=train_days,
+        valid_days=valid_days,
+        step_days=step_days,
+        embargo_days=horizon_days,
+        max_windows=max_windows,
+    )
+    if windows.empty:
+        raise RuntimeError("No Alpha158 risk walk-forward windows can be built.")
+    if not allow_short_sample and len(windows) < 3:
+        raise RuntimeError(
+            f"Alpha158 risk walk-forward needs at least 3 windows; got {len(windows)}. "
+            "Use a longer date range or pass allow_short_sample only for smoke tests."
+        )
+
+    metrics_parts: list[pd.DataFrame] = []
+    decile_parts: list[pd.DataFrame] = []
+    filter_parts: list[pd.DataFrame] = []
+    total_windows = len(windows)
+    for index, window in enumerate(windows.to_dict("records"), start=1):
+        window_id = str(window["window_id"])
+        logging.info("Alpha158 risk walk-forward window %s/%s started: %s", index, total_windows, window_id)
+        train = _window_slice(dataset, start=window["train_start"], end=window["train_end"])
+        valid = _window_slice(dataset, start=window["valid_start"], end=window["valid_end"])
+        logging.info("Alpha158 risk walk-forward window %s rows: train=%s valid=%s", window_id, len(train), len(valid))
+        if len(train) < min_training_rows or valid.empty:
+            metrics_parts.append(
+                _empty_window_metrics(
+                    window=window,
+                    model_names=model_names,
+                    train_rows=len(train),
+                    valid_rows=len(valid),
+                    error="insufficient_window_rows",
+                )
+            )
+            continue
+        result = _fit_score_risk_models(
+            train=train,
+            splits={"valid": valid},
+            feature_columns=panel.feature_columns,
+            scope="alpha158_risk_walkforward",
+            min_training_rows=min_training_rows,
+            skip_large_knn=True,
+            model_names=model_names,
+        )
+        metrics = _attach_window_columns(result["metrics"], window)
+        scored = _attach_window_columns(result["scored"], window)
+        deciles = build_risk_decile_report(scored)
+        filter_impact = build_risk_filter_impact(
+            scored,
+            filter_rates=filter_rates,
+            return_tolerance=return_tolerance,
+        )
+        metrics_parts.append(metrics)
+        decile_parts.append(deciles)
+        filter_parts.append(filter_impact)
+        logging.info("Alpha158 risk walk-forward window %s/%s complete: %s", index, total_windows, window_id)
+
+    metrics_frame = pd.concat(metrics_parts, ignore_index=True) if metrics_parts else pd.DataFrame()
+    deciles_frame = pd.concat(decile_parts, ignore_index=True) if decile_parts else pd.DataFrame()
+    filter_impact_frame = pd.concat(filter_parts, ignore_index=True) if filter_parts else pd.DataFrame()
+    filter_summary = summarize_risk_filter_impact(filter_impact_frame)
+    summary = summarize_tail_risk_walkforward(metrics_frame, deciles_frame)
+    comparison = build_alpha158_risk_comparison(project_root, alpha_summary=summary, alpha_filter_summary=filter_summary)
+
+    report_dir = full_market_report_dir(project_root)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    feature_audit_path = report_dir / "alpha158_feature_audit.csv"
+    metrics_path = report_dir / "alpha158_risk_metrics.csv"
+    deciles_path = report_dir / "alpha158_risk_decile_report.csv"
+    filter_impact_path = report_dir / "alpha158_risk_filter_impact.csv"
+    filter_summary_path = report_dir / "alpha158_risk_filter_impact_summary.csv"
+    comparison_path = report_dir / "alpha158_risk_comparison.csv"
+    config_path = report_dir / "alpha158_risk_config.json"
+    panel.feature_audit.to_csv(feature_audit_path, index=False, encoding="utf-8-sig")
+    metrics_frame.to_csv(metrics_path, index=False, encoding="utf-8-sig")
+    deciles_frame.to_csv(deciles_path, index=False, encoding="utf-8-sig")
+    filter_impact_frame.to_csv(filter_impact_path, index=False, encoding="utf-8-sig")
+    filter_summary.to_csv(filter_summary_path, index=False, encoding="utf-8-sig")
+    comparison.to_csv(comparison_path, index=False, encoding="utf-8-sig")
+    config_path.write_text(
+        json.dumps(
+            {
+                "start_date": start_date.isoformat() if start_date else "",
+                "end_date": end_date.isoformat() if end_date else "",
+                "limit": limit,
+                "train_days": int(train_days),
+                "valid_days": int(valid_days),
+                "step_days": int(step_days),
+                "max_windows": max_windows,
+                "horizon_days": int(horizon_days),
+                "volatility_lookback": int(volatility_lookback),
+                "pt_mult": float(pt_mult),
+                "sl_mult": float(sl_mult),
+                "min_ret": float(min_ret),
+                "model_names": list(model_names),
+                "filter_rates": [float(value) for value in filter_rates],
+                "return_tolerance": float(return_tolerance),
+                "allow_short_sample": bool(allow_short_sample),
+                "min_training_rows": int(min_training_rows),
+                "feature_count": int(len(panel.feature_columns)),
+                "skipped_symbols": int(len(panel.skipped)),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return Alpha158RiskValidationResult(
+        feature_audit=panel.feature_audit,
+        metrics=metrics_frame,
+        deciles=deciles_frame,
+        filter_impact=filter_impact_frame,
+        filter_summary=filter_summary,
+        comparison=comparison,
+        report_dir=report_dir,
+        feature_audit_path=feature_audit_path,
+        metrics_path=metrics_path,
+        deciles_path=deciles_path,
+        filter_impact_path=filter_impact_path,
+        filter_summary_path=filter_summary_path,
+        comparison_path=comparison_path,
+        config_path=config_path,
+    )
+
+
 def build_tail_risk_walkforward_windows(
     dataset: pd.DataFrame,
     *,
@@ -1114,6 +1299,49 @@ def build_barrier_vs_tail_comparison(
         tail_summary = pd.read_csv(tail_summary_path)
         tail_filter = pd.read_csv(tail_filter_path) if tail_filter_path.exists() else pd.DataFrame()
         rows.extend(_comparison_rows("tail", tail_summary, tail_filter))
+    return pd.DataFrame(rows)
+
+
+def build_alpha158_risk_comparison(
+    project_root: Path,
+    *,
+    alpha_summary: pd.DataFrame,
+    alpha_filter_summary: pd.DataFrame,
+) -> pd.DataFrame:
+    rows = []
+    rows.extend(_comparison_rows("alpha158_risk", alpha_summary, alpha_filter_summary))
+    report_dir = full_market_report_dir(project_root)
+    barrier_grid_path = report_dir / "barrier_risk_grid_summary.csv"
+    barrier_comparison_path = report_dir / "barrier_vs_tail_comparison.csv"
+    if barrier_grid_path.exists():
+        barrier_grid = pd.read_csv(barrier_grid_path)
+        if not barrier_grid.empty:
+            best = barrier_grid.sort_values(
+                ["phase_pass", "filter_pass_rate", "avg_future_max_drawdown_5d_delta", "avg_future_return_5d_delta"],
+                ascending=[False, False, False, False],
+            ).head(1)
+            for _, row in best.iterrows():
+                rows.append(
+                    {
+                        "risk_target": "barrier_grid_best",
+                        "model_name": row.get("model_name", ""),
+                        "windows": int(row.get("windows", 0)),
+                        "successful_windows": int(row.get("successful_windows", 0)),
+                        "avg_pr_auc": float(row.get("avg_pr_auc", np.nan)),
+                        "avg_pr_auc_baseline": float(row.get("avg_pr_auc_baseline", np.nan)),
+                        "avg_roc_auc": float(row.get("avg_roc_auc", np.nan)),
+                        "pr_auc_beat_baseline_rate": float(row.get("pr_auc_beat_baseline_rate", np.nan)),
+                        "top_decile_higher_risk_rate": float(row.get("top_decile_higher_risk_rate", np.nan)),
+                        "top_decile_worse_drawdown_rate": float(row.get("top_decile_worse_drawdown_rate", np.nan)),
+                        "filter_pass_rate": float(row.get("filter_pass_rate", np.nan)),
+                        "avg_future_return_5d_delta": float(row.get("avg_future_return_5d_delta", np.nan)),
+                        "avg_future_max_drawdown_5d_delta": float(row.get("avg_future_max_drawdown_5d_delta", np.nan)),
+                        "phase_pass": bool(row.get("phase_pass", False)),
+                    }
+                )
+    elif barrier_comparison_path.exists():
+        comparison = pd.read_csv(barrier_comparison_path)
+        rows.extend(comparison.to_dict("records"))
     return pd.DataFrame(rows)
 
 

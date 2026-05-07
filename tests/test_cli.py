@@ -508,6 +508,27 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "2",
         ]
     )
+    alpha158_risk_args = parser.parse_args(
+        [
+            "validate-alpha158-risk",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--horizon-days",
+            "5",
+            "--pt-mult",
+            "1.0",
+            "--sl-mult",
+            "1.0",
+            "--min-ret",
+            "0.005",
+            "--models",
+            "lightgbm_classifier",
+            "--max-windows",
+            "2",
+        ]
+    )
     train_tail_model_args = parser.parse_args(
         [
             "train-tail-risk-model",
@@ -624,6 +645,11 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert barrier_grid_args.pt_sl_grid == "1:1,2:2"
     assert barrier_grid_args.min_ret_grid == "0.003,0.005"
     assert barrier_grid_args.models == "lightgbm_classifier"
+    assert alpha158_risk_args.command == "validate-alpha158-risk"
+    assert alpha158_risk_args.horizon_days == 5
+    assert alpha158_risk_args.pt_mult == 1.0
+    assert alpha158_risk_args.sl_mult == 1.0
+    assert alpha158_risk_args.min_ret == 0.005
     assert train_tail_model_args.command == "train-tail-risk-model"
     assert train_tail_model_args.model_name == "logistic_regression"
     assert train_tail_model_args.limit == 10
