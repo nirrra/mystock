@@ -433,6 +433,25 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "--allow-short-sample",
         ]
     )
+    validate_tail_args = parser.parse_args(
+        [
+            "validate-tail-risk-walkforward",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--train-days",
+            "1000",
+            "--valid-days",
+            "250",
+            "--step-days",
+            "250",
+            "--max-windows",
+            "2",
+            "--panel-models",
+            "logistic_regression,naive_bayes",
+        ]
+    )
     synthetic_market_args = parser.parse_args(
         [
             "build-synthetic-market",
@@ -504,6 +523,12 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert reproduce_tail_args.skip_index is False
     assert reproduce_tail_args.skip_panel is True
     assert reproduce_tail_args.allow_short_sample is True
+    assert validate_tail_args.command == "validate-tail-risk-walkforward"
+    assert validate_tail_args.train_days == 1000
+    assert validate_tail_args.valid_days == 250
+    assert validate_tail_args.step_days == 250
+    assert validate_tail_args.max_windows == 2
+    assert validate_tail_args.panel_models == "logistic_regression,naive_bayes"
     assert synthetic_market_args.command == "build-synthetic-market"
     assert synthetic_market_args.start_date == "2015-01-01"
     assert synthetic_market_args.end_date == "2026-05-07"

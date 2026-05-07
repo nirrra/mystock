@@ -28,7 +28,7 @@ from .event_risk_ranker import (
 )
 from .event_labels import EventLabelConfig
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
-from .full_market_risk import DEFAULT_PANEL_MODEL_NAMES, reproduce_tail_risk
+from .full_market_risk import DEFAULT_PANEL_MODEL_NAMES, reproduce_tail_risk, validate_tail_risk_walkforward
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
@@ -339,6 +339,31 @@ def build_parser() -> argparse.ArgumentParser:
     reproduce_tail.add_argument("--skip-index", action="store_true", help="跳过 index-level Noh 复现")
     reproduce_tail.add_argument("--skip-panel", action="store_true", help="跳过 full-market panel 适配训练")
     reproduce_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式复现不要使用")
+
+    validate_tail = subparsers.add_parser(
+        "validate-tail-risk-walkforward",
+        help="多窗口验证 Phase 1 全市场尾部风险模型",
+        description="构建 full-market tail-risk panel，并按交易日滚动训练/验证 Phase 1 风险模型。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    validate_tail.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    validate_tail.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    validate_tail.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    validate_tail.add_argument("--train-days", type=int, default=1000, help="每个窗口训练交易日数量，默认 1000")
+    validate_tail.add_argument("--valid-days", type=int, default=250, help="每个窗口验证交易日数量，默认 250")
+    validate_tail.add_argument("--step-days", type=int, default=250, help="窗口前移步长，默认 250")
+    validate_tail.add_argument("--embargo-days", type=int, default=None, help="训练和验证间隔交易日；默认等于 horizon-days")
+    validate_tail.add_argument("--max-windows", type=int, default=None, help="最多验证多少个窗口，默认全部可用窗口")
+    validate_tail.add_argument("--lookback-days", type=int, default=100, help="滚动分位窗口，默认 100")
+    validate_tail.add_argument("--quantile", type=float, default=0.05, help="尾部风险分位，默认 0.05")
+    validate_tail.add_argument("--horizon-days", type=int, default=1, help="预测未来第 N 个交易日风险，默认 1")
+    validate_tail.add_argument("--min-training-rows", type=int, default=200, help="每个窗口最少训练样本行数，默认 200")
+    validate_tail.add_argument(
+        "--panel-models",
+        default=",".join(DEFAULT_PANEL_MODEL_NAMES),
+        help="panel 验证模型，逗号分隔；传 all 可尝试全部 Noh 分类器",
+    )
+    validate_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
 
     synthetic_market = subparsers.add_parser(
         "build-synthetic-market",
@@ -890,6 +915,33 @@ def main() -> None:
             print(f"Saved metrics: {result.metrics_path}")
         if not result.deciles.empty and result.deciles_path.exists():
             print(f"Saved deciles: {result.deciles_path}")
+        return
+
+    if args.command == "validate-tail-risk-walkforward":
+        result = validate_tail_risk_walkforward(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            limit=args.limit,
+            train_days=args.train_days,
+            valid_days=args.valid_days,
+            step_days=args.step_days,
+            embargo_days=args.embargo_days,
+            max_windows=args.max_windows,
+            lookback_days=args.lookback_days,
+            quantile=args.quantile,
+            horizon_days=args.horizon_days,
+            min_training_rows=args.min_training_rows,
+            allow_short_sample=args.allow_short_sample,
+            panel_model_names=_parse_tail_risk_panel_models(args.panel_models),
+        )
+        print("Tail-risk walk-forward validation complete.")
+        print(result.summary.to_string(index=False))
+        print(f"Saved windows: {result.windows_path}")
+        print(f"Saved metrics: {result.metrics_path}")
+        print(f"Saved deciles: {result.deciles_path}")
+        print(f"Saved summary: {result.summary_path}")
         return
 
     if args.command == "build-synthetic-market":

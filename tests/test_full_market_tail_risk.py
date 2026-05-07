@@ -6,7 +6,12 @@ from pathlib import Path
 import pandas as pd
 
 from stocks_analyzer.full_market_labels import build_tail_risk_frame
-from stocks_analyzer.full_market_risk import build_risk_decile_report, reproduce_tail_risk
+from stocks_analyzer.full_market_risk import (
+    build_tail_risk_walkforward_windows,
+    build_risk_decile_report,
+    reproduce_tail_risk,
+    validate_tail_risk_walkforward,
+)
 from stocks_analyzer.models import StorageConfig
 from stocks_analyzer.paths import ProjectPaths
 from stocks_analyzer.storage import Storage
@@ -79,6 +84,55 @@ def test_reproduce_tail_risk_writes_metrics_on_short_sample() -> None:
         "adaboost",
         "gradient_boosting",
     }
+
+
+def test_build_tail_risk_walkforward_windows_uses_embargo() -> None:
+    dataset = pd.DataFrame({"trade_date": pd.bdate_range("2024-01-01", periods=80)})
+
+    windows = build_tail_risk_walkforward_windows(
+        dataset,
+        train_days=20,
+        valid_days=10,
+        step_days=10,
+        embargo_days=2,
+        max_windows=2,
+    )
+
+    assert windows["window_id"].tolist() == ["wf_01", "wf_02"]
+    assert windows.iloc[0]["train_end"] == "2024-01-26"
+    assert windows.iloc[0]["valid_start"] == "2024-01-31"
+
+
+def test_validate_tail_risk_walkforward_writes_reports_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "tail_risk_walkforward"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}]))
+    storage.save_daily_bars("600000", _bars([10 + i * 0.08 for i in range(180)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.04 + (0.6 if i % 19 == 0 else 0) for i in range(180)]))
+
+    result = validate_tail_risk_walkforward(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 9, 6),
+        train_days=50,
+        valid_days=20,
+        step_days=20,
+        embargo_days=1,
+        max_windows=2,
+        lookback_days=10,
+        min_training_rows=20,
+        allow_short_sample=True,
+        panel_model_names=("dummy_prior", "logistic_regression"),
+    )
+
+    assert result.windows_path.exists()
+    assert result.metrics_path.exists()
+    assert result.deciles_path.exists()
+    assert result.summary_path.exists()
+    assert len(result.windows) == 2
+    assert set(result.summary["model_name"]) == {"dummy_prior", "logistic_regression"}
 
 
 def _storage(root: Path) -> Storage:

@@ -76,6 +76,20 @@ class TailRiskReproductionResult:
     summary_path: Path
 
 
+@dataclass(slots=True)
+class TailRiskWalkforwardResult:
+    windows: pd.DataFrame
+    metrics: pd.DataFrame
+    deciles: pd.DataFrame
+    summary: pd.DataFrame
+    report_dir: Path
+    windows_path: Path
+    metrics_path: Path
+    deciles_path: Path
+    summary_path: Path
+    config_path: Path
+
+
 def reproduce_tail_risk(
     *,
     storage: Storage,
@@ -221,6 +235,211 @@ def reproduce_tail_risk(
     )
 
 
+def validate_tail_risk_walkforward(
+    *,
+    storage: Storage,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int | None = None,
+    train_days: int = 1000,
+    valid_days: int = 250,
+    step_days: int = 250,
+    embargo_days: int | None = None,
+    max_windows: int | None = None,
+    lookback_days: int = 100,
+    quantile: float = 0.05,
+    horizon_days: int = 1,
+    min_training_rows: int = 200,
+    allow_short_sample: bool = False,
+    panel_model_names: tuple[str, ...] = DEFAULT_PANEL_MODEL_NAMES,
+) -> TailRiskWalkforwardResult:
+    if train_days <= 0 or valid_days <= 0 or step_days <= 0:
+        raise ValueError("train_days, valid_days, and step_days must be positive.")
+    embargo = int(horizon_days if embargo_days is None else embargo_days)
+    logging.info("Tail-risk walk-forward panel dataset build started")
+    dataset, skipped = build_tail_risk_panel(
+        storage=storage,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        lookback_days=lookback_days,
+        quantile=quantile,
+        horizon_days=horizon_days,
+    )
+    if dataset.empty:
+        raise RuntimeError("Tail-risk walk-forward has no labeled rows.")
+    windows = build_tail_risk_walkforward_windows(
+        dataset,
+        train_days=train_days,
+        valid_days=valid_days,
+        step_days=step_days,
+        embargo_days=embargo,
+        max_windows=max_windows,
+    )
+    if windows.empty:
+        raise RuntimeError(
+            "No tail-risk walk-forward windows can be built with the requested train/valid/step days."
+        )
+    if not allow_short_sample and len(windows) < 3:
+        raise RuntimeError(
+            f"Tail-risk walk-forward needs at least 3 windows; got {len(windows)}. "
+            "Use a longer date range or pass allow_short_sample only for smoke tests."
+        )
+
+    metrics_parts: list[pd.DataFrame] = []
+    decile_parts: list[pd.DataFrame] = []
+    total_windows = len(windows)
+    for index, window in enumerate(windows.to_dict("records"), start=1):
+        window_id = str(window["window_id"])
+        logging.info("Tail-risk walk-forward window %s/%s started: %s", index, total_windows, window_id)
+        train = _window_slice(dataset, start=window["train_start"], end=window["train_end"])
+        valid = _window_slice(dataset, start=window["valid_start"], end=window["valid_end"])
+        logging.info("Tail-risk walk-forward window %s rows: train=%s valid=%s", window_id, len(train), len(valid))
+        if len(train) < min_training_rows or valid.empty:
+            metrics_parts.append(
+                _empty_window_metrics(
+                    window=window,
+                    model_names=panel_model_names,
+                    train_rows=len(train),
+                    valid_rows=len(valid),
+                    error="insufficient_window_rows",
+                )
+            )
+            continue
+        result = _fit_score_risk_models(
+            train=train,
+            splits={"valid": valid},
+            feature_columns=TAIL_RISK_FEATURE_COLUMNS,
+            scope="panel_walkforward",
+            min_training_rows=min_training_rows,
+            skip_large_knn=True,
+            model_names=panel_model_names,
+        )
+        metrics = _attach_window_columns(result["metrics"], window)
+        scored = _attach_window_columns(result["scored"], window)
+        deciles = build_risk_decile_report(scored)
+        metrics_parts.append(metrics)
+        decile_parts.append(deciles)
+        logging.info("Tail-risk walk-forward window %s/%s complete: %s", index, total_windows, window_id)
+
+    metrics_frame = pd.concat(metrics_parts, ignore_index=True) if metrics_parts else pd.DataFrame()
+    deciles_frame = pd.concat(decile_parts, ignore_index=True) if decile_parts else pd.DataFrame()
+    summary = summarize_tail_risk_walkforward(metrics_frame, deciles_frame)
+
+    report_dir = full_market_report_dir(project_root)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    windows_path = report_dir / "tail_risk_walkforward_windows.csv"
+    metrics_path = report_dir / "tail_risk_walkforward_metrics.csv"
+    deciles_path = report_dir / "tail_risk_walkforward_decile_report.csv"
+    summary_path = report_dir / "tail_risk_walkforward_summary.csv"
+    config_path = report_dir / "tail_risk_walkforward_config.json"
+    windows.to_csv(windows_path, index=False, encoding="utf-8-sig")
+    metrics_frame.to_csv(metrics_path, index=False, encoding="utf-8-sig")
+    deciles_frame.to_csv(deciles_path, index=False, encoding="utf-8-sig")
+    summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+    config_path.write_text(
+        json.dumps(
+            {
+                "start_date": start_date.isoformat() if start_date else "",
+                "end_date": end_date.isoformat() if end_date else "",
+                "limit": limit,
+                "train_days": int(train_days),
+                "valid_days": int(valid_days),
+                "step_days": int(step_days),
+                "embargo_days": int(embargo),
+                "max_windows": max_windows,
+                "lookback_days": int(lookback_days),
+                "quantile": float(quantile),
+                "horizon_days": int(horizon_days),
+                "min_training_rows": int(min_training_rows),
+                "allow_short_sample": bool(allow_short_sample),
+                "panel_model_names": list(panel_model_names),
+                "skipped_symbols": int(len(skipped)),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    logging.info("Tail-risk walk-forward reports saved to %s", report_dir)
+    return TailRiskWalkforwardResult(
+        windows=windows,
+        metrics=metrics_frame,
+        deciles=deciles_frame,
+        summary=summary,
+        report_dir=report_dir,
+        windows_path=windows_path,
+        metrics_path=metrics_path,
+        deciles_path=deciles_path,
+        summary_path=summary_path,
+        config_path=config_path,
+    )
+
+
+def build_tail_risk_walkforward_windows(
+    dataset: pd.DataFrame,
+    *,
+    train_days: int,
+    valid_days: int,
+    step_days: int,
+    embargo_days: int = 1,
+    max_windows: int | None = None,
+) -> pd.DataFrame:
+    if dataset.empty:
+        return pd.DataFrame()
+    trade_dates = pd.Series(pd.to_datetime(dataset["trade_date"], errors="coerce").dropna().unique()).sort_values().reset_index(drop=True)
+    rows: list[dict[str, Any]] = []
+    start_index = 0
+    while True:
+        train_start_index = start_index
+        train_end_index = train_start_index + train_days - 1
+        valid_start_index = train_end_index + 1 + max(int(embargo_days), 0)
+        valid_end_index = valid_start_index + valid_days - 1
+        if valid_end_index >= len(trade_dates):
+            break
+        rows.append(
+            {
+                "window_id": f"wf_{len(rows) + 1:02d}",
+                "train_start": pd.Timestamp(trade_dates.iloc[train_start_index]).date().isoformat(),
+                "train_end": pd.Timestamp(trade_dates.iloc[train_end_index]).date().isoformat(),
+                "valid_start": pd.Timestamp(trade_dates.iloc[valid_start_index]).date().isoformat(),
+                "valid_end": pd.Timestamp(trade_dates.iloc[valid_end_index]).date().isoformat(),
+                "train_days": int(train_days),
+                "valid_days": int(valid_days),
+                "embargo_days": int(embargo_days),
+            }
+        )
+        if max_windows is not None and len(rows) >= max_windows:
+            break
+        start_index += step_days
+    return pd.DataFrame(rows)
+
+
+def summarize_tail_risk_walkforward(metrics: pd.DataFrame, deciles: pd.DataFrame) -> pd.DataFrame:
+    if metrics.empty:
+        return pd.DataFrame()
+    rows: list[dict[str, Any]] = []
+    for model_name, group in metrics.groupby("model_name", sort=False):
+        successful = group[group["error"].fillna("").eq("")].copy()
+        decile_checks = _walkforward_decile_checks(deciles, model_name=model_name)
+        rows.append(
+            {
+                "model_name": model_name,
+                "windows": int(group["window_id"].nunique()) if "window_id" in group.columns else int(len(group)),
+                "successful_windows": int(len(successful)),
+                "avg_pr_auc": _safe_mean(successful.get("pr_auc", pd.Series(dtype=float))),
+                "avg_pr_auc_baseline": _safe_mean(successful.get("pr_auc_baseline", pd.Series(dtype=float))),
+                "avg_roc_auc": _safe_mean(successful.get("roc_auc", pd.Series(dtype=float))),
+                "pr_auc_beat_baseline_rate": _mean_bool(successful["pr_auc"].gt(successful["pr_auc_baseline"])) if not successful.empty else 0.0,
+                "top_decile_higher_risk_rate": _safe_mean(decile_checks.get("top_decile_higher_risk", pd.Series(dtype=float))),
+                "top_decile_worse_drawdown_rate": _safe_mean(decile_checks.get("top_decile_worse_drawdown", pd.Series(dtype=float))),
+                "phase1_pass": _phase1_pass(successful, decile_checks),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def build_tail_risk_index_dataset(
     *,
     storage: Storage,
@@ -307,7 +526,7 @@ def build_risk_decile_report(scored: pd.DataFrame) -> pd.DataFrame:
     if scored.empty:
         return pd.DataFrame()
     rows: list[dict[str, Any]] = []
-    group_columns = [column for column in ("scope", "split", "model_name") if column in scored.columns]
+    group_columns = [column for column in ("window_id", "scope", "split", "model_name") if column in scored.columns]
     for key, group in scored.groupby(group_columns, sort=False):
         key_values = key if isinstance(key, tuple) else (key,)
         key_map = dict(zip(group_columns, key_values, strict=False))
@@ -326,6 +545,89 @@ def build_risk_decile_report(scored: pd.DataFrame) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _window_slice(dataset: pd.DataFrame, *, start: str, end: str) -> pd.DataFrame:
+    trade_date = pd.to_datetime(dataset["trade_date"], errors="coerce")
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    return dataset[trade_date.ge(start_ts) & trade_date.le(end_ts)].copy()
+
+
+def _attach_window_columns(frame: pd.DataFrame, window: dict[str, Any]) -> pd.DataFrame:
+    result = frame.copy()
+    for column in ("window_id", "train_start", "train_end", "valid_start", "valid_end"):
+        result[column] = window[column]
+    return result
+
+
+def _empty_window_metrics(
+    *,
+    window: dict[str, Any],
+    model_names: tuple[str, ...],
+    train_rows: int,
+    valid_rows: int,
+    error: str,
+) -> pd.DataFrame:
+    rows = []
+    y_true = pd.Series([0] * valid_rows, dtype=int)
+    for model_name in model_names:
+        row = _error_metric_row(
+            y_true,
+            model_name=model_name,
+            split="valid",
+            scope="panel_walkforward",
+            error=error,
+        )
+        row["train_rows"] = int(train_rows)
+        for column in ("window_id", "train_start", "train_end", "valid_start", "valid_end"):
+            row[column] = window[column]
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _walkforward_decile_checks(deciles: pd.DataFrame, *, model_name: str) -> pd.DataFrame:
+    if deciles.empty or "window_id" not in deciles.columns:
+        return pd.DataFrame()
+    rows = []
+    model_deciles = deciles[deciles["model_name"].eq(model_name)].copy()
+    for window_id, group in model_deciles.groupby("window_id", sort=False):
+        ordered = group.sort_values("risk_decile")
+        if ordered.empty:
+            continue
+        low = ordered.iloc[0]
+        high = ordered.iloc[-1]
+        rows.append(
+            {
+                "model_name": model_name,
+                "window_id": window_id,
+                "top_decile_higher_risk": float(high["risk_label_rate"] > low["risk_label_rate"]),
+                "top_decile_worse_drawdown": float(high["avg_future_max_drawdown_5d"] < low["avg_future_max_drawdown_5d"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _safe_mean(values: pd.Series) -> float:
+    numeric = pd.to_numeric(values, errors="coerce")
+    if numeric.dropna().empty:
+        return float("nan")
+    return float(numeric.mean())
+
+
+def _mean_bool(values: pd.Series) -> float:
+    if values.empty:
+        return 0.0
+    return float(values.fillna(False).astype(bool).mean())
+
+
+def _phase1_pass(metrics: pd.DataFrame, decile_checks: pd.DataFrame) -> bool:
+    if metrics.empty or decile_checks.empty:
+        return False
+    pr_rate = _mean_bool(metrics["pr_auc"].gt(metrics["pr_auc_baseline"]))
+    risk_rate = _safe_mean(decile_checks["top_decile_higher_risk"])
+    drawdown_rate = _safe_mean(decile_checks["top_decile_worse_drawdown"])
+    return bool(pr_rate >= 0.70 and risk_rate >= 0.70 and drawdown_rate >= 0.70)
 
 
 def _fit_score_risk_models(
