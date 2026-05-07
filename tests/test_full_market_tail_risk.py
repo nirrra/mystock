@@ -14,6 +14,7 @@ from stocks_analyzer.full_market_risk import (
     reproduce_tail_risk,
     summarize_risk_filter_impact,
     train_tail_risk_model,
+    validate_barrier_risk_grid,
     validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
 )
@@ -278,6 +279,37 @@ def test_validate_mlfin_barrier_risk_walkforward_writes_reports_on_short_sample(
     assert result.label_distribution_path.exists()
     assert not result.label_distribution.empty
     assert set(result.metrics["model_name"]) == {"logistic_regression"}
+
+
+def test_validate_barrier_risk_grid_writes_summary_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "barrier_risk_grid"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}]))
+    storage.save_daily_bars("600000", _bars([10 * (1.004 ** i) for i in range(220)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.03 + (-0.5 if i % 17 == 0 else 0.5 if i % 29 == 0 else 0) for i in range(220)]))
+
+    result = validate_barrier_risk_grid(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 10, 1),
+        train_days=8,
+        valid_days=4,
+        step_days=4,
+        max_windows=1,
+        horizon_days_grid=(5,),
+        pt_sl_grid=((1.0, 1.0),),
+        min_ret_grid=(0.001,),
+        model_names=("logistic_regression",),
+        min_training_rows=4,
+        allow_short_sample=True,
+    )
+
+    assert result.summary_path.exists()
+    assert result.label_distribution_path.exists()
+    assert not result.summary.empty
+    assert result.summary.iloc[0]["config_id"] == "mlfin_h5_pt1_sl1_minret0.001"
 
 
 def test_train_and_predict_tail_risk_model_roundtrip_on_short_sample() -> None:

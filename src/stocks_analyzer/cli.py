@@ -36,6 +36,7 @@ from .full_market_risk import (
     reproduce_tail_risk,
     summarize_tail_risk_walkforward,
     train_tail_risk_model,
+    validate_barrier_risk_grid,
     validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
 )
@@ -424,6 +425,29 @@ def build_parser() -> argparse.ArgumentParser:
     reproduce_barrier.add_argument("--filter-rates", default="0.2", help="风险过滤比例，逗号分隔；默认 0.2")
     reproduce_barrier.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
     reproduce_barrier.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
+
+    barrier_grid = subparsers.add_parser(
+        "validate-barrier-risk-grid",
+        help="验证 Phase 2 mlfin_cusum triple-barrier 参数稳健性",
+        description="批量运行 mlfin_cusum triple-barrier 风险标签参数网格，并汇总每组参数的过滤效果。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    barrier_grid.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    barrier_grid.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    barrier_grid.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    barrier_grid.add_argument("--train-days", type=int, default=1000, help="每个窗口训练交易日数量，默认 1000")
+    barrier_grid.add_argument("--valid-days", type=int, default=250, help="每个窗口验证交易日数量，默认 250")
+    barrier_grid.add_argument("--step-days", type=int, default=250, help="窗口前移步长，默认 250")
+    barrier_grid.add_argument("--max-windows", type=int, default=None, help="最多验证多少个窗口，默认全部可用窗口")
+    barrier_grid.add_argument("--horizon-days-grid", default="5,10", help="vertical barrier 网格，默认 5,10")
+    barrier_grid.add_argument("--pt-sl-grid", default="1:1,2:2", help="pt:sl 网格，默认 1:1,2:2")
+    barrier_grid.add_argument("--min-ret-grid", default="0.003,0.005", help="min_ret 网格，默认 0.003,0.005")
+    barrier_grid.add_argument("--volatility-lookback", type=int, default=100, help="daily volatility EWMA lookback，默认 100")
+    barrier_grid.add_argument("--models", default="lightgbm_classifier", help="验证模型，逗号分隔；默认 lightgbm_classifier")
+    barrier_grid.add_argument("--filter-rates", default="0.2", help="风险过滤比例，逗号分隔；默认 0.2")
+    barrier_grid.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
+    barrier_grid.add_argument("--min-training-rows", type=int, default=200, help="每个窗口最少训练样本行数，默认 200")
+    barrier_grid.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
 
     train_tail_model = subparsers.add_parser(
         "train-tail-risk-model",
@@ -1085,6 +1109,34 @@ def main() -> None:
         print(f"Saved filter impact: {result.filter_impact_path}")
         print(f"Saved filter summary: {result.filter_summary_path}")
         print(f"Saved comparison: {result.comparison_path}")
+        return
+
+    if args.command == "validate-barrier-risk-grid":
+        result = validate_barrier_risk_grid(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            limit=args.limit,
+            train_days=args.train_days,
+            valid_days=args.valid_days,
+            step_days=args.step_days,
+            max_windows=args.max_windows,
+            horizon_days_grid=tuple(_parse_int_list(args.horizon_days_grid)),
+            pt_sl_grid=tuple(_parse_pt_sl_grid(args.pt_sl_grid)),
+            min_ret_grid=tuple(_parse_float_list(args.min_ret_grid)),
+            volatility_lookback=args.volatility_lookback,
+            model_names=tuple(_parse_str_list(args.models)),
+            filter_rates=tuple(float(value) for value in _parse_str_list(args.filter_rates)),
+            return_tolerance=args.return_tolerance,
+            allow_short_sample=args.allow_short_sample,
+            min_training_rows=args.min_training_rows,
+        )
+        print("Barrier-risk parameter grid validation complete.")
+        print(result.summary.to_string(index=False))
+        print(f"Saved grid summary: {result.summary_path}")
+        print(f"Saved grid label distribution: {result.label_distribution_path}")
+        print(f"Saved grid config: {result.config_path}")
         return
 
     if args.command == "train-tail-risk-model":
@@ -4204,6 +4256,24 @@ def _parse_float_list(value: str) -> list[float]:
     if not items:
         raise ValueError("Expected at least one float value")
     return [float(item) for item in items]
+
+
+def _parse_pt_sl_grid(value: str) -> list[tuple[float, float]]:
+    pairs: list[tuple[float, float]] = []
+    for item in str(value).split(","):
+        text = item.strip()
+        if not text:
+            continue
+        if ":" in text:
+            pt_text, sl_text = text.split(":", 1)
+        elif "/" in text:
+            pt_text, sl_text = text.split("/", 1)
+        else:
+            pt_text = sl_text = text
+        pairs.append((float(pt_text.strip()), float(sl_text.strip())))
+    if not pairs:
+        raise ValueError("Expected at least one pt:sl pair")
+    return pairs
 
 
 def _parse_str_list(value: str) -> list[str]:

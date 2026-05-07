@@ -149,6 +149,15 @@ class BarrierRiskValidationResult:
     config_path: Path
 
 
+@dataclass(slots=True)
+class BarrierRiskGridResult:
+    summary: pd.DataFrame
+    label_distribution: pd.DataFrame
+    summary_path: Path
+    label_distribution_path: Path
+    config_path: Path
+
+
 def train_tail_risk_model(
     *,
     storage: Storage,
@@ -858,6 +867,171 @@ def validate_barrier_risk_walkforward(
         filter_impact_path=filter_impact_path,
         filter_summary_path=filter_summary_path,
         comparison_path=comparison_path,
+        config_path=config_path,
+    )
+
+
+def validate_barrier_risk_grid(
+    *,
+    storage: Storage,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int | None = None,
+    train_days: int = 1000,
+    valid_days: int = 250,
+    step_days: int = 250,
+    max_windows: int | None = None,
+    horizon_days_grid: tuple[int, ...] = (5, 10),
+    pt_sl_grid: tuple[tuple[float, float], ...] = ((1.0, 1.0), (2.0, 2.0)),
+    min_ret_grid: tuple[float, ...] = (0.003, 0.005),
+    volatility_lookback: int = 100,
+    model_names: tuple[str, ...] = ("lightgbm_classifier",),
+    filter_rates: tuple[float, ...] = (0.2,),
+    return_tolerance: float = 0.001,
+    allow_short_sample: bool = False,
+    min_training_rows: int = 200,
+) -> BarrierRiskGridResult:
+    report_dir = full_market_report_dir(project_root)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    summary_rows: list[pd.DataFrame] = []
+    label_rows: list[pd.DataFrame] = []
+    configs: list[dict[str, Any]] = []
+    total_configs = len(horizon_days_grid) * len(pt_sl_grid) * len(min_ret_grid)
+    config_index = 0
+    for horizon_days in horizon_days_grid:
+        for pt_mult, sl_mult in pt_sl_grid:
+            for min_ret in min_ret_grid:
+                config_index += 1
+                config_id = f"mlfin_h{int(horizon_days)}_pt{pt_mult:g}_sl{sl_mult:g}_minret{min_ret:g}"
+                config = {
+                    "config_id": config_id,
+                    "horizon_days": int(horizon_days),
+                    "pt_mult": float(pt_mult),
+                    "sl_mult": float(sl_mult),
+                    "min_ret": float(min_ret),
+                }
+                configs.append(config)
+                logging.info("Barrier-risk grid config %s/%s started: %s", config_index, total_configs, config_id)
+                try:
+                    result = validate_barrier_risk_walkforward(
+                        storage=storage,
+                        project_root=project_root,
+                        start_date=start_date,
+                        end_date=end_date,
+                        limit=limit,
+                        train_days=train_days,
+                        valid_days=valid_days,
+                        step_days=step_days,
+                        embargo_days=int(horizon_days),
+                        max_windows=max_windows,
+                        horizon_days=int(horizon_days),
+                        label_method="mlfin_cusum",
+                        volatility_lookback=volatility_lookback,
+                        pt_mult=float(pt_mult),
+                        sl_mult=float(sl_mult),
+                        min_ret=float(min_ret),
+                        min_training_rows=min_training_rows,
+                        allow_short_sample=allow_short_sample,
+                        model_names=model_names,
+                        filter_rates=filter_rates,
+                        return_tolerance=return_tolerance,
+                    )
+                except Exception as exc:
+                    summary_rows.append(
+                        pd.DataFrame(
+                            [
+                                {
+                                    **config,
+                                    "model_name": "",
+                                    "windows": 0,
+                                    "successful_windows": 0,
+                                    "avg_pr_auc": np.nan,
+                                    "avg_pr_auc_baseline": np.nan,
+                                    "avg_roc_auc": np.nan,
+                                    "filter_pass_rate": np.nan,
+                                    "avg_future_return_5d_delta": np.nan,
+                                    "avg_future_max_drawdown_5d_delta": np.nan,
+                                    "risk_label_rate": np.nan,
+                                    "label_rows": 0,
+                                    "phase_pass": False,
+                                    "error": f"{type(exc).__name__}: {exc}",
+                                }
+                            ]
+                        )
+                    )
+                    logging.warning("Barrier-risk grid config failed: %s error=%s", config_id, exc)
+                    continue
+                barrier_rows = result.comparison[result.comparison["risk_target"].astype(str).eq("barrier")].copy()
+                if barrier_rows.empty:
+                    barrier_rows = pd.DataFrame([{"model_name": model_name} for model_name in model_names])
+                all_label = result.label_distribution[result.label_distribution["barrier_outcome"].astype(str).eq("ALL")]
+                risk_label_rate = float(all_label.iloc[0]["risk_label_rate"]) if not all_label.empty else np.nan
+                label_count = int(all_label.iloc[0]["rows"]) if not all_label.empty else int(result.label_distribution["rows"].sum()) if "rows" in result.label_distribution else 0
+                barrier_rows["config_id"] = config_id
+                barrier_rows["horizon_days"] = int(horizon_days)
+                barrier_rows["pt_mult"] = float(pt_mult)
+                barrier_rows["sl_mult"] = float(sl_mult)
+                barrier_rows["min_ret"] = float(min_ret)
+                barrier_rows["risk_label_rate"] = risk_label_rate
+                barrier_rows["label_rows"] = label_count
+                barrier_rows["error"] = ""
+                summary_rows.append(barrier_rows)
+                labels = result.label_distribution.copy()
+                labels["config_id"] = config_id
+                labels["horizon_days"] = int(horizon_days)
+                labels["pt_mult"] = float(pt_mult)
+                labels["sl_mult"] = float(sl_mult)
+                labels["min_ret"] = float(min_ret)
+                label_rows.append(labels)
+                logging.info("Barrier-risk grid config %s/%s complete: %s", config_index, total_configs, config_id)
+
+    summary = pd.concat(summary_rows, ignore_index=True) if summary_rows else pd.DataFrame()
+    label_distribution = pd.concat(label_rows, ignore_index=True) if label_rows else pd.DataFrame()
+    if not summary.empty:
+        sort_columns = [
+            column
+            for column in ("phase_pass", "filter_pass_rate", "avg_future_max_drawdown_5d_delta", "avg_future_return_5d_delta")
+            if column in summary.columns
+        ]
+        if sort_columns:
+            summary = summary.sort_values(sort_columns, ascending=[False] * len(sort_columns)).reset_index(drop=True)
+    summary_path = report_dir / "barrier_risk_grid_summary.csv"
+    label_distribution_path = report_dir / "barrier_risk_grid_label_distribution.csv"
+    config_path = report_dir / "barrier_risk_grid_config.json"
+    summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+    label_distribution.to_csv(label_distribution_path, index=False, encoding="utf-8-sig")
+    config_path.write_text(
+        json.dumps(
+            {
+                "start_date": start_date.isoformat() if start_date else "",
+                "end_date": end_date.isoformat() if end_date else "",
+                "limit": limit,
+                "train_days": int(train_days),
+                "valid_days": int(valid_days),
+                "step_days": int(step_days),
+                "max_windows": max_windows,
+                "horizon_days_grid": [int(value) for value in horizon_days_grid],
+                "pt_sl_grid": [[float(pt), float(sl)] for pt, sl in pt_sl_grid],
+                "min_ret_grid": [float(value) for value in min_ret_grid],
+                "volatility_lookback": int(volatility_lookback),
+                "model_names": list(model_names),
+                "filter_rates": [float(value) for value in filter_rates],
+                "return_tolerance": float(return_tolerance),
+                "allow_short_sample": bool(allow_short_sample),
+                "min_training_rows": int(min_training_rows),
+                "configs": configs,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return BarrierRiskGridResult(
+        summary=summary,
+        label_distribution=label_distribution,
+        summary_path=summary_path,
+        label_distribution_path=label_distribution_path,
         config_path=config_path,
     )
 
