@@ -213,8 +213,8 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument(
         "--data-interface",
         choices=["baostock", "sina", "eastmoney"],
-        default="baostock",
-        help="日线数据接口：baostock/sina/eastmoney，默认 baostock",
+        default="sina",
+        help="日线数据接口：baostock/sina/eastmoney，默认 sina",
     )
     update.add_argument(
         "--index-symbols",

@@ -44,7 +44,7 @@ def test_build_parser_accepts_update_with_symbol() -> None:
     assert args.command == "update"
     assert args.symbol == "603588"
     assert args.start_date == "20240101"
-    assert args.data_interface == "baostock"
+    assert args.data_interface == "sina"
     assert args.skip_index is False
     assert "sh000300" in args.index_symbols
 
