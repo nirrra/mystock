@@ -1277,13 +1277,17 @@ def _run_update(
         logging.warning("Failed symbols sample: %s", ", ".join(failed_symbols[:20]))
 
     if update_indexes:
-        _run_update_indexes(
-            storage=storage,
-            provider=provider,
-            index_symbols=index_symbols,
-            start_date=start_date,
-            end_date=end_date,
-        )
+        index_provider = create_data_provider("baostock")
+        try:
+            _run_update_indexes(
+                storage=storage,
+                provider=index_provider,
+                index_symbols=index_symbols,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        finally:
+            index_provider.close()
 
 
 def _update_daily_cache_for_symbol(

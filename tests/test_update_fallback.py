@@ -8,6 +8,7 @@ import pandas as pd
 from stocks_analyzer.cli import (
     _create_update_data_provider,
     _refresh_or_load_universe,
+    _run_update,
     _update_daily_cache_for_symbol,
     _update_index_daily_cache,
 )
@@ -53,6 +54,15 @@ class RecordingDailyProvider:
         if isinstance(self.frame, dict):
             return self.frame.get((start_date, end_date), pd.DataFrame())
         return self.frame
+
+
+class ClosableProvider(RecordingDailyProvider):
+    def __init__(self, frame: pd.DataFrame | dict[tuple[str, str], pd.DataFrame]) -> None:
+        super().__init__(frame)
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def _make_workspace_tmp_dir(name: str) -> Path:
@@ -288,6 +298,35 @@ def test_update_daily_cache_merges_new_rows_and_deduplicates_by_trade_date() -> 
         "2026-04-11",
         "2026-04-12",
     ]
+
+
+def test_run_update_uses_dedicated_baostock_provider_for_indexes(monkeypatch) -> None:
+    stock_provider = RecordingDailyProvider(_make_daily_frame("600000", ["2026-04-10"]))
+    index_provider = ClosableProvider(_make_daily_frame("sh000300", ["2026-04-10"]))
+    universe = pd.DataFrame([{"symbol": "600000"}])
+    index_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr("stocks_analyzer.cli._refresh_or_load_universe", lambda storage, provider, exclude_st: universe.copy())
+    monkeypatch.setattr("stocks_analyzer.cli._update_daily_cache_for_symbol", lambda **kwargs: Path("C:/tmp/daily.parquet"))
+    monkeypatch.setattr("stocks_analyzer.cli.create_data_provider", lambda name: index_provider if name == "baostock" else None)
+    monkeypatch.setattr("stocks_analyzer.cli._update_index_daily_cache", lambda **kwargs: index_calls.append(kwargs) or Path("C:/tmp/index.parquet"))
+    monkeypatch.setattr("stocks_analyzer.cli._log_scan_progress", lambda stage_name, current, total: None)
+
+    _run_update(
+        storage=object(),
+        provider=stock_provider,
+        exclude_st=True,
+        adjust="qfq",
+        symbol=None,
+        start_date="20150101",
+        end_date="20260507",
+        limit=None,
+        index_symbols=("sh000300",),
+        update_indexes=True,
+    )
+
+    assert index_calls[0]["provider"] is index_provider
+    assert index_provider.close_calls == 1
 
 
 def test_update_index_daily_cache_uses_index_storage_and_preserves_exchange_prefix() -> None:
