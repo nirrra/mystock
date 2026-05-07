@@ -5,8 +5,8 @@
 当前项目聚焦四件事：
 
 - 更新主板股票池和本地日线缓存
-- 生成 pattern、TradingView 风格指标、MACD/量价状态、ATR 风险辅助、趋势评分等技术结果
-- 通过 `predict-model` 输出当前主模型预测，再生成经过风险过滤和机会日过滤的 `watchlist`
+- 生成 pattern、TradingView 风格指标、MACD/量价状态、ATR 风险辅助等日常技术结果
+- 通过 `predict-model` 输出当前主模型预测，再生成经过风险过滤的 `watchlist`，并把机会日判断作为次日开盘警告
 - 在次日盘中只对 `watchlist` 做小范围复筛和排序
 
 项目不包含交易执行，也不会替你自动决定最终买入标的。
@@ -15,15 +15,17 @@
 
 当前流程里有三层结果：
 
-- 技术结果层：`pattern`、`tradingview`、`macd`、`atr`、`trend`
+- 日常技术结果层：`pattern`、`tradingview`、`macd`、`atr`
 - 模型过滤层：`predict-model`
-- 候选池层：`watchlist`、`watchlist_pattern`、`watchlist_trend`
+- 候选池层：`watchlist`、`watchlist_pattern`
 
 其中：
 
-- `daily-screening` 负责跑完整技术链路，并生成当日 `predict_model`、`watchlist`、`watchlist_pattern`、`watchlist_trend`
-- 当前 `predict-model` 使用 `v42_gate_v4_rank`：先用 V4.2 机会日模型判断当天是否值得交易，再用 V4 `long_upside_score` 在低风险池里排序
-- `watchlist_pattern` 会把 `predict-model` 作为硬过滤：只保留 `trade_permission = allow` 且 `action = candidate` 的股票
+- `daily-screening` 负责跑每日技术链路，并生成当日 `predict_model`、`watchlist`、`watchlist_pattern`
+- 当前 `predict-model` 使用 `v42_gate_v4_rank` 输出风险字段和次日开盘环境提示；收益排序字段仅保留为兼容信息，不参与每日 watchlist 准入
+- 主 `watchlist` 只包含任一 pattern 命中且通过模型风险排除的股票
+- `watchlist_pattern` 是低风险 pattern 子集，语义与主 `watchlist` 基本一致，并保留为兼容输出
+- `trade_permission` 不再作为入池硬门槛；如果为 `no_trade`，watchlist 会保留候选并给出次日开盘不宜积极买入的警告
 - 主 `watchlist` 和 `watchlist_pattern` 会补入 ATR 辅助字段，并写入 `连续上榜天数`
 - `intraday-screening` 负责读取上一交易日或指定日期的 `watchlist`，直接抓取候选股当日 5 分钟线做盘中复筛，并生成一份盘中排序 CSV
 - `选股.md` 不在自动命令链里更新，留给你手动整理和最终决策
@@ -31,7 +33,7 @@
 另外，项目保留一条独立于 `pattern/watchlist` 的趋势交易研究链路：
 
 - `trend`：输出指定交易日的 `breakout/pullback` 趋势评分结果，主要用于研究和展示
-- `trend-universe`：定义并生成日 K 趋势股池，供 `pattern` 结果补充第一层趋势字段
+- `trend-universe`：定义并生成日 K 趋势股池，作为独立研究结果保留，不参与每日 `watchlist`
 - `trend-signals`：在趋势股池上识别 `breakout/pullback`
 - `trend-score`：对 setup 叠加 MACD、RSI、BOLL、KDJ、ATR、量价等指标做收盘评分
 - `trend-entries`：把收盘评分映射为“次日开盘”的买入候选
@@ -81,6 +83,9 @@ reports/patterns/            模式扫描结果
 reports/tradingview/         TradingView 技术评分结果
 reports/predict_model/       当前主模型每日预测结果
 reports/v42_opportunity_ranker/ V4.2 机会日模型训练、评估和预测报告
+reports/v5_volume_price_fusion/ V5 量价融合实验模型训练、评估和预测报告
+reports/v51_candidate_ranker/ V5.1 候选池排序实验模型训练、评估和预测报告
+reports/model_walkforward/  当前主线模型 walk-forward 泛化验证报告
 reports/macd/                MACD/量价统一状态表
 reports/atr/                 ATR 风险辅助表
 reports/watchlists/          日终 watchlist
@@ -96,6 +101,8 @@ reports/backtests/entries/   次日开盘单信号回测
 reports/backtests/entries_portfolio/ 次日开盘组合回测
 reports/threshold_research/  阈值研究样本、分布、候选阈值和回测对比
 data/ml/v42_opportunity_ranker/ 当前主模型 artifact
+data/ml/v5_volume_price_fusion/ V5 量价融合实验模型 artifact
+data/ml/v51_candidate_ranker/ V5.1 候选池排序实验模型 artifact
 选股.md                      你手动维护的选股记录
 主线.md                      你手动维护的主线记录
 ```
@@ -484,6 +491,101 @@ python -m stocks_analyzer --project-root . predict-opportunity-ranker --date 202
 
 - `reports/v42_opportunity_ranker/predictions_v4_rank_YYYY-MM-DD.csv`
 
+### `train-volume-price-fusion`
+
+作用：
+
+- 训练 V5 量价融合实验模型
+- 在 V4.2 hybrid 基座上新增 1 日、5 日、20 日量价特征
+- 单独训练量价风险模型、量价质量模型，再训练 V5 融合排序层
+- 该模型当前仅用于研究评估，尚未替换 `predict-model`
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . train-volume-price-fusion --reuse-base-artifact --max-iter 40 --top-n 20,50 --predict-date 2026-04-30
+python -m stocks_analyzer --project-root . train-volume-price-fusion --max-iter 80 --top-n 20,50
+```
+
+说明：
+
+- 默认会尝试重训 V4.2 hybrid 基座，口径更严谨但耗时较长
+- `--reuse-base-artifact` 会复用现有 V4.2 artifact，只训练 V5 量价层，适合快速评估
+
+默认输出：
+
+- `data/ml/v5_volume_price_fusion/v5_volume_price_fusion.pkl`
+- `data/ml/v5_volume_price_fusion/v5_volume_price_fusion_metadata.json`
+- `reports/v5_volume_price_fusion/v5_topn_metrics.csv`
+- `reports/v5_volume_price_fusion/v5_comparison.csv`
+- `reports/v5_volume_price_fusion/v5_volume_price_risk_metrics.csv`
+- `reports/v5_volume_price_fusion/v5_volume_price_quality_metrics.csv`
+
+### `predict-volume-price-fusion`
+
+作用：
+
+- 读取已训练的 V5 量价融合实验模型
+- 输出 `final_score_v5`、`buy_score_v5`、量价风险分、量价质量分和关键量价解释字段
+- 当前不参与 `daily-screening` 主流程
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . predict-volume-price-fusion --date 2026-04-30
+```
+
+默认输出：
+
+- `reports/v5_volume_price_fusion/predictions_YYYY-MM-DD.csv`
+
+### `train-candidate-ranker`
+
+作用：
+
+- 训练 V5.1 候选池排序实验模型
+- 只在当前主模型已经放行的候选池里学习“剩下股票里谁更值得买”
+- 训练目标偏 20 日收益质量，并用 60 日收益质量作为辅助，不重新做风险硬过滤
+- 该模型当前仅用于研究评估，尚未替换 `predict-model`
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . train-candidate-ranker --max-iter 40 --top-n 20,50 --predict-date 2026-04-30
+```
+
+说明：
+
+- 该命令依赖已训练的 V5 artifact，并在 V5/V4.2 输出基础上训练候选池内部 ranker
+- 训练完成后会在验证集选择 V5.1 ranker 与 V4.2 排序分的融合权重
+- `train-v51-candidate-ranker` 是等价别名
+
+默认输出：
+
+- `data/ml/v51_candidate_ranker/v51_candidate_ranker.pkl`
+- `data/ml/v51_candidate_ranker/v51_candidate_ranker_metadata.json`
+- `reports/v51_candidate_ranker/v51_topn_metrics.csv`
+- `reports/v51_candidate_ranker/v51_ranker_metrics.csv`
+- `reports/v51_candidate_ranker/v51_comparison.csv`
+
+### `predict-candidate-ranker`
+
+作用：
+
+- 读取已训练的 V5.1 候选池排序实验模型
+- 输出 `candidate_rank_score_v51`、`final_score_v51`、`buy_score_v51` 和候选池排序解释字段
+- 当前不参与 `daily-screening` 主流程
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . predict-candidate-ranker --date 2026-04-30
+```
+
+默认输出：
+
+- `reports/v51_candidate_ranker/predictions_YYYY-MM-DD.csv`
+
 ### `predict-model`
 
 作用：
@@ -502,23 +604,51 @@ python -m stocks_analyzer --project-root . predict-model --date 2026-04-10
 
 - `reports/predict_model/predictions_YYYY-MM-DD.csv`
 
+### `validate-model-walkforward`
+
+作用：
+
+- 对当前主线模型做轻量 walk-forward 泛化验证
+- 按时间顺序生成多个 `train -> valid -> test` 窗口
+- 每个窗口重新训练 V4.2 hybrid，并只统计未来测试段表现
+- 不改变 `predict-model`，只用于判断当前 80% 胜率是否跨市场阶段稳定
+
+常用示例：
+
+```bash
+python -m stocks_analyzer --project-root . validate-model-walkforward --model v42 --windows 8 --max-iter 40 --top-n 20,50
+```
+
+轻量烟雾测试示例：
+
+```bash
+python -m stocks_analyzer --project-root . validate-model-walkforward --model v42 --windows 1 --train-days 80 --valid-days 20 --test-days 20 --min-train-days 60 --max-iter 2 --top-n 20
+```
+
+默认输出：
+
+- `reports/model_walkforward/v42_walkforward_windows.csv`
+- `reports/model_walkforward/v42_walkforward_topn_metrics.csv`
+- `reports/model_walkforward/v42_walkforward_summary.csv`
+- `reports/model_walkforward/v42_walkforward_config.json`
+
 重要字段：
 
-- `trade_permission`：机会日硬门槛，`allow` 才允许进入 `watchlist_pattern`
-- `action`：个股动作，当前只保留 `candidate`
+- `trade_permission`：次日开盘环境许可；`no_trade` 会触发 watchlist 顶层警告，但不再阻止低风险股入池
+- `action`：个股最终动作；风险通过但机会日否决时可能是 `no_trade`
+- `risk_candidate_action` / `risk_action`：风险过滤结果，进入 watchlist 的硬门槛优先看这里
 - `risk_score`：风险模型分数
-- `long_upside_score`：V4 长周期收益排序分
-- `final_score_v42`、`buy_score_v42`：当前 watchlist 排序使用的主分数
+- `long_upside_score`：V4 长周期收益排序分，仅保留为兼容字段，当前每日 watchlist 不使用
+- `final_score_v42`、`buy_score_v42`：收益排序兼容字段，当前每日 watchlist 不使用
 
 ### `daily-screening`
 
 作用：
 
 - 判断指定日期是否为交易日
-- 串行执行 `update -> tradingview -> predict-model -> macd -> atr -> trend-universe -> trend -> pattern`
-- `trend` 生成 `watchlist_trend`
-- `pattern` 生成 `watchlist_pattern`
-- 兼容保留一份通用 `watchlist`，当前与 `watchlist_pattern` 同步
+- 串行执行 `update -> tradingview -> predict-model -> macd -> atr -> pattern`
+- `pattern` 生成低风险 pattern 子集 `watchlist_pattern`
+- 主 `watchlist` 只由低风险 pattern 命中股生成，不再加入模型 Top20
 - 写入运行摘要
 
 常用示例：
@@ -541,37 +671,31 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --s
 4. `predict-model`
 5. `macd`
 6. `atr`
-7. `trend-universe`
-8. `trend`
-9. `pattern`
-10. 生成 `watchlist_pattern`、`watchlist_trend` 和兼容用 `watchlist`
-11. 写入 `daily_screening_YYYY-MM-DD.json`
+7. `pattern`
+8. 生成主 `watchlist` 和 `watchlist_pattern`
+9. 写入 `daily_screening_YYYY-MM-DD.json`
 
 默认输出：
 
 - `reports/watchlists/watchlist_YYYY-MM-DD.json`
 - `reports/watchlists/watchlist_pattern_YYYY-MM-DD.json`
-- `reports/watchlists/watchlist_trend_YYYY-MM-DD.json`
 - `reports/daily_screening/daily_screening_YYYY-MM-DD.json`
 - `reports/predict_model/predictions_YYYY-MM-DD.csv`
 - `reports/patterns/patterns_all_YYYY-MM-DD.csv`
 - `reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
 - `reports/macd/macd_YYYY-MM-DD.csv`
 - `reports/atr/atr_YYYY-MM-DD.csv`
-- `reports/trend/trend_YYYY-MM-DD.csv`
-- `reports/trend_universe/trend_universe_YYYY-MM-DD.csv`
 
 重要说明：
 
 - `daily-screening` **不会修改** `选股.md`
 - 同一日期重复执行时，会覆盖同日期的 `watchlist` 和运行摘要
-- `pattern` 阶段会读取同日 `predict-model` 结果；如果模型判断 `trade_permission = no_trade`，`watchlist_pattern` 会为空或明显收缩
-- `watchlist_pattern` 不再强制要求 `trend-universe` 交集
-- `watchlist_pattern` 和 `watchlist_trend` 都会先剔除 `MACD顶背离 / 量价看空 / dead_cross`
-- `watchlist_trend` 只保留 `buy_score / price_action_score` 高于 `pick_trend_watchlist` 阈值的票
+- `pattern` 阶段会读取同日 `predict-model` 结果；如果模型判断 `trade_permission = no_trade`，watchlist 仍保留低风险候选，但顶层写入次日开盘警告
+- `watchlist_pattern` 不再接入 `trend-universe` 或 `trend` 结果
+- `watchlist_pattern` 会先剔除 `MACD顶背离 / 量价看空 / dead_cross`
 - 主 `watchlist` 和 `watchlist_pattern` 会补入 `ATR14`、`ATR%`、止损止盈参考、`波动分层`
 - 主 `watchlist` 和 `watchlist_pattern` 会补入 `连续上榜天数`，按主 `watchlist_YYYY-MM-DD.json` 连续出现天数累计
-- `patterns_all_YYYY-MM-DD.csv` 会同时补入第一层趋势字段和 `trend` 评分字段，方便后续 `pick`
+- `patterns_all_YYYY-MM-DD.csv` 不再自动补入趋势股池或趋势评分字段
 
 ### `trend`
 
@@ -848,37 +972,36 @@ buy_score = trend_base_score * 0.35 + trigger_score * 0.65
 
 ## watchlist 的生成规则
 
-当前有两套候选池：
+当前每日主流程有两份候选池：
 
-- `watchlist_pattern`：来自 `pattern`，按原有技术规则筛出候选
-- `watchlist_trend`：来自 `trend`，只保留高分趋势 setup
+- `watchlist`：任一 pattern 命中且通过模型风险排除的股票
+- `watchlist_pattern`：同样是低风险 pattern 子集，保留为兼容输出
 
-两套候选池都会先做一层风险剔除：
+候选池会先做一层风险剔除：
 
 - `MACD顶背离`
 - `量价看空`
 - `dead_cross`
 
-其中 `watchlist_trend` 还会额外要求：
-
-- `buy_score` 达到 `pick_trend_watchlist.buy_score_min`
-- `price_action_score` 达到 `pick_trend_watchlist.price_action_score_min`
-
 核心规则包括：
 
-- 日常主流程优先使用 `predict-model`：只保留 `trade_permission = allow` 且 `action = candidate` 的标的
-- `watchlist_pattern` 按 `final_score_v42`、`buy_score_v42`、`pattern_priority` 排序
+- 日常主流程优先使用 `predict-model` 的风险过滤：只保留风险通过的标的
+- `trade_permission` 表示次日开盘环境许可；`no_trade` 只触发警告，不再挡掉低风险候选
+- 主 `watchlist` 不再引入模型 Top20
+- `watchlist` / `watchlist_pattern` 按风险分、模式优先级和技术辅助信号排序
 - `TradingView` 仍作为技术解释字段保留，但不再作为主排序逻辑
 - 日常 CLI 下，`pattern` 应先有同日 `predict-model` 文件；旧的 TradingView 阈值逻辑只作为底层兼容口径，不是当前推荐流程
 - 过滤指数类名称
-- 计算 `stable_score`；在模型流程里它等于 `final_score_v42`
+- 计算 `watchlist_sort_score`，用于低风险 pattern 候选之间的辅助排序
 - 输出 `第一梯队 / 第二梯队 / 第三梯队`
-- 最终按模型分、买入分和模式优先级排序
+- 最终按风险分、模式优先级和技术辅助信号排序
 
-`watchlist_pattern` / `watchlist_trend` 适合做：
+主 `watchlist` 适合做：
 
 - 次日盘中复筛的输入
 - 你自己手工选股时的技术候选池
+
+`watchlist_pattern` 适合只查看满足模式识别的低风险子集。
 
 `watchlist` 不等于：
 
@@ -905,9 +1028,9 @@ python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
 
 - 当日全市场技术结果
 - 当日 `reports/predict_model/predictions_YYYY-MM-DD.csv`
-- 当日 `watchlist`、`watchlist_pattern`、`watchlist_trend`
+- 当日 `watchlist`、`watchlist_pattern`
 
-其中 `watchlist_pattern` 已经过 `predict-model` 的机会日和个股动作过滤，不需要再按 TradingView 分数重新排序。
+其中主 `watchlist` 已经过 `predict-model` 风险过滤；如果 `trade_permission = no_trade`，应把候选视为观察池，而不是积极买入名单。
 
 ### 3. 次日盘中做小范围复筛
 

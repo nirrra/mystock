@@ -13,6 +13,22 @@
 
 ## Research Findings
 
+- V5 量价融合已实现为实验模型，但暂不适合替换当前每日 `predict-model` 主版本。
+- V5 的测试集 Top20 相比 `v42_gate_v4_rank` 有小幅改善：20 日平均收益 `0.1247` vs `0.1193`，胜率 `0.8048` vs `0.8000`，20 日止盈率 `0.4976` vs `0.4786`，20 日止损率 `0.0238` vs `0.0286`，bad-risk `0.1068` vs `0.1182`。
+- V5 的验证集 Top20 没有改善：20 日平均收益 `0.1047` vs `0.1077`，胜率 `0.8563` vs `0.8627`，20 日止盈率 `0.4342` vs `0.4443`，20 日止损率 `0.0120` vs `0.0076`。
+- V5 Top50 没有走通收益排序：验证和测试的 20 日平均收益、胜率、止盈率都低于当前 V4.2 hybrid 基线，但止损率和 bad-risk 在测试集略有改善。
+- 当前 V5 最有价值的部分仍偏风险识别，不是收益排序。量价极端风险过滤较稀疏，测试候选池里极端风险命中率低，但全市场极端风险 precision 高于候选池。
+- V5 量价收益质量模型在候选池里的排序相关性较弱：验证候选 Spearman 约 `0.028`，测试候选 Spearman 约 `-0.113`，说明当前量价质量标签/损失/训练样本仍未有效学习“剩下股票里谁值得买”。
+- V5.1 候选池排序实验已实现，但不适合替换当前每日 `predict-model` 主版本。
+- V5.1 直接在已放行候选池里训练 LambdaRank 排序器，验证集选择融合权重为 `0.65 * V5.1 ranker + 0.35 * V4.2 rank score`。
+- V5.1 的候选池排序诊断变好：验证 Spearman `0.2441`、NDCG@20 `0.6639`，测试 Spearman `0.2810`、NDCG@20 `0.6304`。
+- V5.1 的 Top20 交易指标没有转化：验证 20 日平均收益 `0.1034`，低于 V4.2 `0.1077` 和 V5 `0.1047`；测试 20 日平均收益 `0.1224`，低于 V5 `0.1247`，且测试胜率 `0.7833`、止损率 `0.0357`、bad-risk `0.1409` 均弱于 V5。
+- 当前收益排序问题不应继续只套一层 ranker；下一步要检查收益标签形状、top-heavy 损失和机会日/no-trade 交互，解释为什么相关性提升没有进入最终 Top20。
+- 当前主线 `v42_gate_v4_rank` 的 80% 测试胜率来自单次时间切分，下一步需要通过 walk-forward 验证判断是否跨市场阶段稳定。
+- Walk-forward 第一版应只验证当前主线 V4.2 hybrid，不混入 V5/V5.1；否则会把“主线是否泛化”和“实验模型谁更好”混成一个问题。
+- 已新增轻量 walk-forward 验证命令，输出每个窗口的 TopN 胜率、20 日均收益、止盈率、止损率、bad-risk 和覆盖率，并汇总均值、标准差、最差值和阈值通过标记。
+- 全量 `retrain_v42_hybrid_oof` 严谨基座训练在 `max_iter=80` 下超过 1 小时未完成；当前成功训练使用 `--reuse-base-artifact` 复用已有 V4.2 hybrid 基座，用于快速评估 V5 量价层。
+
 - 当前项目目录起步状态接近空仓库，仅有设计文档，无现成代码基础。
 - AKShare 适合作为 A 股免费原型数据源，适合先跑通股票列表和日线流程。
 - Tushare Pro 更适合后续升级为稳定或更完整的数据源，尤其在分钟线场景下更有长期可维护性，但不适合作为当前 V1 的第一依赖。
@@ -187,7 +203,7 @@ Note as of 2026-05-05: this probability workflow has been superseded and removed
 - The active daily flow is now `daily-screening -> update -> tradingview -> predict-model -> macd -> atr -> trend-universe -> trend -> pattern -> watchlist`.
 - `predict-model` is the stable integration name for the current model. It writes `reports/predict_model/predictions_YYYY-MM-DD.csv`.
 - The current model version is `v42_gate_v4_rank`: V4.2 opportunity gate decides whether the day is tradable, and V4 `long_upside_score` ranks the low-risk candidate pool.
-- `watchlist_pattern` treats model output as a hard gate: `trade_permission = allow` and `action = candidate` are required before a pattern candidate can enter the watchlist.
+- Watchlist semantics changed after the daily-screening adjustment: `trade_permission` is now a next-open environment warning, not an entry hard gate. The hard gate for watchlist entry is risk filtering. The main watchlist combines low-risk model Top20 names with low-risk pattern matches.
 - `final_score_v42` and `buy_score_v42` are now the model ranking fields used by watchlist sorting. TradingView aggregate scores remain as technical context, not the primary ranking layer.
 
 ### Removed / Superseded Code Paths

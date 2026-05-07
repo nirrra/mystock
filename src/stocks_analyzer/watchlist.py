@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from copy import deepcopy
 from datetime import date, datetime
@@ -15,12 +16,12 @@ from .models import PickTrendWatchlistConfig, WatchlistTrendFilterConfig
 WATCHLIST_FILENAME_RE = re.compile(r"watchlist_(\d{4}-\d{2}-\d{2})\.json$")
 WATCHLIST_STREAK_FIELD = "连续上榜天数"
 PATTERN_PRIORITY = {
-    "2": 3.2,
+    "5": 6.0,
+    "1": 5.0,
+    "6": 4.0,
     "3": 3.0,
-    "1": 2.8,
-    "4": 2.4,
-    "5": 2.2,
-    "6": 2.2,
+    "2": 2.0,
+    "4": 1.0,
 }
 LABEL_BONUS = {
     "strong_buy": 1.0,
@@ -37,14 +38,12 @@ V42_PREDICT_MODEL_REQUIRED_FIELDS = (
     "risk_tier",
     "risk_gate_reason",
     "risk_score",
-    "long_upside_score",
-    "opportunity_rank_score",
-    "final_score_v42",
-    "buy_score_v42",
 )
 PREDICT_MODEL_CANDIDATE_FIELDS = (
     "model_version",
     "action",
+    "risk_candidate_action",
+    "risk_action",
     "final_action",
     "trade_permission",
     "opportunity_score",
@@ -233,7 +232,7 @@ def build_watchlist_candidates_from_patterns(
     pattern_frame: pd.DataFrame,
     *,
     source_file: str,
-    limit: int = 30,
+    limit: int | None = 30,
     model_predictions: pd.DataFrame | None = None,
 ) -> dict[str, object]:
     frame = pattern_frame.copy()
@@ -296,23 +295,18 @@ def _build_watchlist_candidates_from_patterns_with_model(
     *,
     model_predictions: pd.DataFrame,
     source_file: str,
-    limit: int,
+    limit: int | None,
 ) -> dict[str, object]:
     prediction_frame = _prepare_model_predictions_for_join(model_predictions)
     model_columns = [column for column in prediction_frame.columns if column != "symbol"]
     frame = pattern_frame.drop(columns=[column for column in model_columns if column in pattern_frame.columns], errors="ignore")
     frame = frame.merge(prediction_frame, on="symbol", how="left")
-    frame["stable_score"] = pd.to_numeric(frame["final_score_v42"], errors="coerce")
-    frame["model_buy_score"] = pd.to_numeric(frame["buy_score_v42"], errors="coerce")
-    frame = frame[
-        frame["trade_permission"].astype(str).str.strip().str.lower().eq("allow")
-        & frame["action"].astype(str).str.strip().str.lower().eq("candidate")
-        & frame["stable_score"].notna()
-        & frame["model_buy_score"].notna()
-    ].copy()
+    frame["risk_sort_score"] = pd.to_numeric(frame.get("risk_score", pd.Series(math.inf, index=frame.index)), errors="coerce")
+    frame = frame[frame.apply(_is_model_low_risk_row, axis=1)].copy()
     if frame.empty:
         return {
             "source_file": source_file,
+            **_trade_permission_metadata(model_predictions),
             "candidate_count": 0,
             "candidates": [],
         }
@@ -321,28 +315,34 @@ def _build_watchlist_candidates_from_patterns_with_model(
     if frame.empty:
         return {
             "source_file": source_file,
+            **_trade_permission_metadata(model_predictions),
             "candidate_count": 0,
             "candidates": [],
         }
 
     frame["pattern_priority"] = frame["pattern_id"].astype(str).map(PATTERN_PRIORITY).fillna(0.0)
     frame["base_tier"] = frame.apply(_model_base_tier, axis=1)
+    frame["watchlist_sort_score"] = frame.apply(_pattern_watchlist_sort_score, axis=1)
     frame = frame.sort_values(
-        ["stable_score", "model_buy_score", "pattern_priority"],
-        ascending=[False, False, False],
+        ["risk_sort_score", "pattern_priority", "watchlist_sort_score", "symbol"],
+        ascending=[True, False, False, True],
     )
 
     daily_columns = _daily_rating_columns(frame)
     candidates: list[dict[str, object]] = []
-    for _, row in frame.head(limit).iterrows():
+    selected = frame if limit is None else frame.head(limit)
+    for _, row in selected.iterrows():
         candidate = {
             "tier": row["base_tier"],
             "symbol": row["symbol"],
             "name": row["name"],
+            "source": "pattern",
+            "source_tags": ["pattern"],
+            "pattern_match": True,
             "pattern_id": str(row["pattern_id"]),
             "macd_top_divergence_15d": bool(row.get("macd_top_divergence_15d", False)),
             "macd_bottom_divergence_15d": bool(row.get("macd_bottom_divergence_15d", False)),
-            "stable_score": round(float(row["stable_score"]), 4),
+            "watchlist_sort_score": round(float(row["watchlist_sort_score"]), 4),
             "reason": row.get("reason", ""),
         }
         if "tradingview_all_rating_label" in row.index and pd.notna(row.get("tradingview_all_rating_label")):
@@ -356,6 +356,34 @@ def _build_watchlist_candidates_from_patterns_with_model(
 
     return {
         "source_file": source_file,
+        **_trade_permission_metadata(model_predictions),
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def build_daily_watchlist_candidates(
+    pattern_frame: pd.DataFrame,
+    *,
+    model_predictions: pd.DataFrame,
+    pattern_source_file: str,
+    model_source_file: str,
+    model_top_n: int = 20,
+) -> dict[str, object]:
+    _ = model_top_n  # kept for backward-compatible callers; model TopN is no longer used for daily selection.
+    pattern_payload = build_watchlist_candidates_from_patterns(
+        pattern_frame,
+        source_file=pattern_source_file,
+        limit=None,
+        model_predictions=model_predictions,
+    )
+    candidates = pattern_payload.get("candidates", [])
+    if not isinstance(candidates, list):
+        candidates = []
+    return {
+        "source_file": pattern_source_file,
+        "model_source_file": model_source_file,
+        **_trade_permission_metadata(model_predictions),
         "candidate_count": len(candidates),
         "candidates": candidates,
     }
@@ -519,9 +547,18 @@ def build_watchlist_payload(*, trade_date: date, picker_payload: dict[str, objec
     if not isinstance(candidates, list):
         candidates = []
 
+    passthrough_fields = {
+        "model_source_file",
+        "trade_permission",
+        "next_open_trade_permission",
+        "next_open_trade_warning",
+        "trade_permission_note",
+    }
+    passthrough = {key: payload[key] for key in passthrough_fields if key in payload}
     return {
         "trade_date": trade_date.isoformat(),
         "source_file": payload.get("source_file"),
+        **passthrough,
         "candidate_count": len(candidates),
         "candidates": candidates,
     }
@@ -641,24 +678,102 @@ def _prepare_model_predictions_for_join(model_predictions: pd.DataFrame) -> pd.D
         return frame
 
     frame["symbol"] = frame["symbol"].map(_normalize_symbol)
-    frame["final_score_v42"] = pd.to_numeric(frame["final_score_v42"], errors="coerce")
-    frame["buy_score_v42"] = pd.to_numeric(frame["buy_score_v42"], errors="coerce")
-    frame = frame.sort_values(["final_score_v42", "buy_score_v42"], ascending=[False, False])
+    if "risk_score" in frame.columns:
+        frame["_risk_sort_score"] = pd.to_numeric(frame["risk_score"], errors="coerce")
+        frame = frame.sort_values("_risk_sort_score", ascending=True)
     frame = frame.drop_duplicates(subset=["symbol"], keep="first")
+    frame = frame.drop(columns=["_risk_sort_score"], errors="ignore")
     if "trade_date" in frame.columns:
         frame = frame.rename(columns={"trade_date": "model_trade_date"})
     columns = []
-    for column in ("symbol", "model_trade_date", *PREDICT_MODEL_CANDIDATE_FIELDS):
+    for column in ("symbol", "name", "model_trade_date", *PREDICT_MODEL_CANDIDATE_FIELDS):
         if column in frame.columns and column not in columns:
             columns.append(column)
     return frame.loc[:, columns].copy()
 
 
+def _trade_permission_metadata(model_predictions: pd.DataFrame) -> dict[str, object]:
+    if model_predictions.empty or "trade_permission" not in model_predictions.columns:
+        return {
+            "trade_permission": "unknown",
+            "next_open_trade_permission": "unknown",
+            "next_open_trade_warning": True,
+            "trade_permission_note": "未找到模型交易许可字段，候选仅供观察。",
+        }
+    permission_values = (
+        model_predictions["trade_permission"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    if permission_values.empty:
+        permission = "unknown"
+    elif permission_values.eq("allow").all():
+        permission = "allow"
+    elif permission_values.eq("no_trade").any():
+        permission = "no_trade"
+    else:
+        permission = permission_values.iloc[0]
+    warning = permission != "allow"
+    note = (
+        "模型判断次日开盘环境允许选股。"
+        if permission == "allow"
+        else "模型判断次日开盘环境不适合买入，仅保留低风险候选供观察。"
+    )
+    return {
+        "trade_permission": permission,
+        "next_open_trade_permission": permission,
+        "next_open_trade_warning": warning,
+        "trade_permission_note": note,
+    }
+
+
+def _is_model_low_risk_row(row: pd.Series | dict[str, object]) -> bool:
+    final_action = str(_row_value(row, "final_action", "")).strip().lower()
+    action = str(_row_value(row, "action", "")).strip().lower()
+    risk_candidate_action = str(_row_value(row, "risk_candidate_action", "")).strip().lower()
+    risk_action = str(_row_value(row, "risk_action", "")).strip().lower()
+    risk_tier = str(_row_value(row, "risk_tier", "")).strip().lower()
+    if final_action == "avoid" or action == "avoid" or risk_tier == "high":
+        return False
+    if risk_candidate_action in {"candidate", "pass", "low_risk"}:
+        return True
+    if risk_action in {"pass", "candidate", "low_risk"}:
+        return True
+    if risk_tier in {"low", "medium", "中", "低"}:
+        return True
+    return action == "candidate"
+
+
+def _pattern_watchlist_sort_score(row: pd.Series | dict[str, object]) -> float:
+    score = PATTERN_PRIORITY.get(str(_row_value(row, "pattern_id", "")), 0.0)
+    risk_score = _float_or_default(_row_value(row, "risk_score", math.inf), math.inf)
+    if math.isfinite(risk_score):
+        score += max(0.0, 1.0 - risk_score)
+    if _is_truthy_flag(_row_value(row, "macd_bottom_divergence_15d", False)):
+        score += 0.6
+    if str(_row_value(row, "macd_cross_state", "")).strip().lower() == "golden_cross":
+        score += 0.4
+    if str(_row_value(row, "macd_divergence_state", "")).strip().lower() == "bottom_divergence":
+        score += 0.4
+    if str(_row_value(row, "volume_price_divergence_state", "")).strip().lower() == "bullish":
+        score += 0.4
+    if _is_truthy_flag(_row_value(row, "bullish_volume_price_divergence_flag", False)):
+        score += 0.4
+    atr_pct = _float_or_default(_row_value(row, "ATR%", _row_value(row, "atr_pct_14", math.nan)), math.nan)
+    if math.isfinite(atr_pct):
+        if atr_pct > 1:
+            atr_pct = atr_pct / 100.0
+        score -= min(max(atr_pct, 0.0), 0.2)
+    return round(score, 4)
+
+
 def _model_base_tier(row: pd.Series) -> str:
     pattern_id = str(row.get("pattern_id", ""))
-    if pattern_id in {"1", "2", "3"}:
+    if pattern_id in {"5", "1"}:
         return "第一梯队"
-    if pattern_id in {"4", "5", "6"}:
+    if pattern_id in {"6", "3"}:
         return "第二梯队"
     return "第三梯队"
 
@@ -781,6 +896,16 @@ def _is_truthy_flag(value: object) -> bool:
     if value is None or pd.isna(value):
         return False
     return bool(value)
+
+
+def _float_or_default(value: object, default: float) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(result):
+        return default
+    return result
 
 
 def _normalize_candidate_value(value: object) -> object:

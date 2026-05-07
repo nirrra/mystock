@@ -1,0 +1,33 @@
+{
+  "start_date": "2015-01-01",
+  "end_date": "2026-05-07",
+  "limit": null,
+  "train_days": 1000,
+  "valid_days": 250,
+  "step_days": 250,
+  "embargo_days": 10,
+  "max_windows": 6,
+  "horizon_days": 10,
+  "downside_atr_mult": 1.0,
+  "upside_atr_mult": 2.0,
+  "downside_pct": null,
+  "upside_pct": null,
+  "label_variant": "barrier_down_first",
+  "label_method": "mlfin_cusum",
+  "volatility_lookback": 100,
+  "pt_mult": 2.0,
+  "sl_mult": 2.0,
+  "min_ret": 0.005,
+  "cusum_threshold": null,
+  "cusum_threshold_mult": 1.0,
+  "min_training_rows": 200,
+  "allow_short_sample": false,
+  "model_names": [
+    "lightgbm_classifier"
+  ],
+  "filter_rates": [
+    0.2
+  ],
+  "return_tolerance": 0.001,
+  "skipped_symbols": 14
+}

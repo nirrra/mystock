@@ -1,0 +1,11 @@
+{
+  "trade_date": "2026-05-06",
+  "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-05-06.csv",
+  "watchlist_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_2026-05-06.json",
+  "watchlist_pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_pattern_2026-05-06.json",
+  "macd_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\macd\\macd_2026-05-06.csv",
+  "atr_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\atr\\atr_2026-05-06.csv",
+  "pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-05-06.csv",
+  "predict_model_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\predict_model\\predictions_2026-05-06.csv",
+  "candidate_count": 2
+}

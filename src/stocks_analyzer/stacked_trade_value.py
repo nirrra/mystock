@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import pickle
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -70,6 +71,46 @@ class OpportunityRankerTrainResult:
     skipped_symbols: pd.DataFrame
 
 
+@dataclass(slots=True)
+class VolumePriceFusionTrainResult:
+    model_path: Path
+    metadata_path: Path
+    topn_metrics: pd.DataFrame
+    volume_price_risk_metrics: pd.DataFrame
+    volume_price_quality_metrics: pd.DataFrame
+    comparison_metrics: pd.DataFrame
+    prediction_path: Path | None
+    latest_predictions: pd.DataFrame
+    skipped_symbols: pd.DataFrame
+
+
+@dataclass(slots=True)
+class CandidateRankerTrainResult:
+    model_path: Path
+    metadata_path: Path
+    topn_metrics: pd.DataFrame
+    ranker_metrics: pd.DataFrame
+    comparison_metrics: pd.DataFrame
+    blend_grid: pd.DataFrame
+    selected_blend_params: dict[str, object]
+    prediction_path: Path | None
+    latest_predictions: pd.DataFrame
+    skipped_symbols: pd.DataFrame
+
+
+@dataclass(slots=True)
+class WalkForwardValidationResult:
+    report_dir: Path
+    config_path: Path
+    windows_path: Path
+    topn_metrics_path: Path
+    summary_path: Path
+    windows: pd.DataFrame
+    topn_metrics: pd.DataFrame
+    summary: pd.DataFrame
+    skipped_symbols: pd.DataFrame
+
+
 class ConstantClassifier:
     def __init__(self, class_label: int) -> None:
         self.classes_ = np.array([class_label], dtype=int)
@@ -96,6 +137,26 @@ def opportunity_ranker_model_dir(project_root: Path) -> Path:
 
 def opportunity_ranker_report_dir(project_root: Path) -> Path:
     return project_root / "reports" / "v42_opportunity_ranker"
+
+
+def volume_price_fusion_model_dir(project_root: Path) -> Path:
+    return project_root / "data" / "ml" / "v5_volume_price_fusion"
+
+
+def volume_price_fusion_report_dir(project_root: Path) -> Path:
+    return project_root / "reports" / "v5_volume_price_fusion"
+
+
+def candidate_ranker_model_dir(project_root: Path) -> Path:
+    return project_root / "data" / "ml" / "v51_candidate_ranker"
+
+
+def candidate_ranker_report_dir(project_root: Path) -> Path:
+    return project_root / "reports" / "v51_candidate_ranker"
+
+
+def model_walkforward_report_dir(project_root: Path) -> Path:
+    return project_root / "reports" / "model_walkforward"
 
 
 def build_stacked_dataset(
@@ -613,6 +674,876 @@ def predict_opportunity_ranker(
     return prepare_opportunity_ranker_prediction_report(scored)
 
 
+def _score_v42_hybrid_from_artifact(frame: pd.DataFrame, artifact: dict[str, Any]) -> pd.DataFrame:
+    raw = score_v4_risk_upside_full_frame(
+        frame,
+        risk_stage1_models=artifact["risk_stage1_models"],
+        long_upside_stage1_models=artifact["long_upside_stage1_models"],
+        risk_model=artifact["risk_model"],
+        long_upside_model=artifact["long_upside_model"],
+        risk_feature_columns_by_horizon=artifact["risk_feature_columns_by_horizon"],
+        long_upside_feature_columns_by_horizon=artifact["long_upside_feature_columns_by_horizon"],
+        risk_features=artifact["risk_features"],
+        long_upside_features=artifact["long_upside_features"],
+    )
+    gated = apply_v41_risk_gate_decision(raw, artifact["selected_risk_params"])
+    opportunity = build_v42_opportunity_frame(gated)
+    opportunity = score_v42_opportunity_gate_frame(
+        opportunity,
+        opportunity_model=artifact["opportunity_model"],
+        opportunity_features=artifact["opportunity_features"],
+    )
+    ranked = score_v42_v4_rank_frame(gated)
+    opportunity_params = artifact.get("selected_hybrid_opportunity_params", artifact["selected_opportunity_params"])
+    return apply_v42_opportunity_decision(ranked, opportunity, opportunity_params)
+
+
+def _train_v42_hybrid_base_for_v5(
+    dataset: pd.DataFrame,
+    split_frames: dict[str, pd.DataFrame],
+    *,
+    max_iter: int,
+    top_n_list: tuple[int, ...],
+    train_end: date,
+    valid_end: date,
+    test_end: date,
+    include_deployment_artifact: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    risk_feature_columns_by_horizon = {spec.name: stage1_feature_columns(dataset, spec) for spec in HORIZONS}
+    long_upside_feature_columns_by_horizon = {
+        spec.name: stage1_feature_columns(dataset, spec) for spec in LONG_UPSIDE_HORIZONS
+    }
+
+    risk_stage2_train = build_stage1_oof_predictions(
+        split_frames["train"],
+        feature_columns_by_horizon=risk_feature_columns_by_horizon,
+        max_iter=max_iter,
+    )
+    long_stage2_train = build_stage1_oof_predictions_for_horizons(
+        split_frames["train"],
+        feature_columns_by_horizon=long_upside_feature_columns_by_horizon,
+        horizons=LONG_UPSIDE_HORIZONS,
+        max_iter=max_iter,
+        column_prefix="long_",
+    )
+    if risk_stage2_train.empty or long_stage2_train.empty:
+        raise RuntimeError("V5 base V4.2 OOF stage1 predictions are empty; cannot train volume-price fusion.")
+
+    long_columns = ["trade_date", "symbol"] + [column for column in long_stage2_train.columns if column.startswith("long_")]
+    stage2_train = risk_stage2_train.merge(
+        long_stage2_train.loc[:, long_columns],
+        on=["trade_date", "symbol"],
+        how="inner",
+    )
+    stage2_train = add_v4_risk_upside_labels(stage2_train)
+    stage2_train = add_long_upside_stage2_features(stage2_train)
+    if stage2_train.empty:
+        raise RuntimeError("V5 base V4.2 stage2 training frame is empty after OOF alignment.")
+
+    risk_features = stage2_feature_columns(stage2_train)
+    long_upside_features = long_upside_feature_columns(stage2_train)
+    risk_model = fit_risk_filter_model(stage2_train, feature_columns=risk_features, max_iter=max_iter)
+    long_upside_model = fit_long_upside_model(stage2_train, feature_columns=long_upside_features, max_iter=max_iter)
+
+    eval_risk_stage1_models = train_stage1_models(
+        split_frames["train"],
+        feature_columns_by_horizon=risk_feature_columns_by_horizon,
+        max_iter=max_iter,
+    )
+    eval_long_stage1_models = train_stage1_models_for_horizons(
+        split_frames["train"],
+        feature_columns_by_horizon=long_upside_feature_columns_by_horizon,
+        horizons=LONG_UPSIDE_HORIZONS,
+        max_iter=max_iter,
+    )
+    raw_train = score_v4_risk_upside_raw_frame(
+        stage2_train,
+        risk_model=risk_model,
+        long_upside_model=long_upside_model,
+        risk_features=risk_features,
+        long_upside_features=long_upside_features,
+    )
+    raw_valid = score_v4_risk_upside_full_frame(
+        split_frames["valid"],
+        risk_stage1_models=eval_risk_stage1_models,
+        long_upside_stage1_models=eval_long_stage1_models,
+        risk_model=risk_model,
+        long_upside_model=long_upside_model,
+        risk_feature_columns_by_horizon=risk_feature_columns_by_horizon,
+        long_upside_feature_columns_by_horizon=long_upside_feature_columns_by_horizon,
+        risk_features=risk_features,
+        long_upside_features=long_upside_features,
+    )
+    raw_test = score_v4_risk_upside_full_frame(
+        split_frames["test"],
+        risk_stage1_models=eval_risk_stage1_models,
+        long_upside_stage1_models=eval_long_stage1_models,
+        risk_model=risk_model,
+        long_upside_model=long_upside_model,
+        risk_feature_columns_by_horizon=risk_feature_columns_by_horizon,
+        long_upside_feature_columns_by_horizon=long_upside_feature_columns_by_horizon,
+        risk_features=risk_features,
+        long_upside_features=long_upside_features,
+    )
+
+    selected_risk_params, _ = select_v41_risk_gate_params(raw_valid, top_n_list=top_n_list)
+    gated_train = apply_v41_risk_gate_decision(raw_train, selected_risk_params).assign(dataset_split="train_oof")
+    gated_valid = apply_v41_risk_gate_decision(raw_valid, selected_risk_params).assign(dataset_split="valid")
+    gated_test = apply_v41_risk_gate_decision(raw_test, selected_risk_params).assign(dataset_split="test")
+
+    labeled_train = add_v41_long_quality_labels(gated_train)
+    labeled_valid = add_v41_long_quality_labels(gated_valid)
+    labeled_test = add_v41_long_quality_labels(gated_test)
+
+    opportunity_train = build_v42_opportunity_frame(labeled_train)
+    opportunity_valid = build_v42_opportunity_frame(labeled_valid)
+    opportunity_test = build_v42_opportunity_frame(labeled_test)
+    opportunity_features = opportunity_gate_feature_columns(opportunity_train)
+    opportunity_model = fit_v42_opportunity_gate_model(
+        opportunity_train,
+        feature_columns=opportunity_features,
+        max_iter=max_iter,
+    )
+    opportunity_train_scored = score_v42_opportunity_gate_frame(
+        opportunity_train,
+        opportunity_model=opportunity_model,
+        opportunity_features=opportunity_features,
+    )
+    opportunity_valid_scored = score_v42_opportunity_gate_frame(
+        opportunity_valid,
+        opportunity_model=opportunity_model,
+        opportunity_features=opportunity_features,
+    )
+    opportunity_test_scored = score_v42_opportunity_gate_frame(
+        opportunity_test,
+        opportunity_model=opportunity_model,
+        opportunity_features=opportunity_features,
+    )
+
+    hybrid_rank_train = score_v42_v4_rank_frame(labeled_train)
+    hybrid_rank_valid = score_v42_v4_rank_frame(labeled_valid)
+    hybrid_rank_test = score_v42_v4_rank_frame(labeled_test)
+    selected_hybrid_opportunity_params, _ = select_v42_opportunity_threshold(
+        hybrid_rank_valid,
+        opportunity_valid_scored,
+        top_n_list=top_n_list,
+    )
+    base_train = apply_v42_opportunity_decision(
+        hybrid_rank_train,
+        opportunity_train_scored,
+        selected_hybrid_opportunity_params,
+    )
+    base_valid = apply_v42_opportunity_decision(
+        hybrid_rank_valid,
+        opportunity_valid_scored,
+        selected_hybrid_opportunity_params,
+    )
+    base_test = apply_v42_opportunity_decision(
+        hybrid_rank_test,
+        opportunity_test_scored,
+        selected_hybrid_opportunity_params,
+    )
+
+    if not include_deployment_artifact:
+        base_artifact = {
+            "kind": "v42_hybrid_base_evaluation",
+            "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "risk_feature_columns_by_horizon": risk_feature_columns_by_horizon,
+            "long_upside_feature_columns_by_horizon": long_upside_feature_columns_by_horizon,
+            "risk_features": risk_features,
+            "long_upside_features": long_upside_features,
+            "opportunity_features": opportunity_features,
+            "selected_risk_params": selected_risk_params,
+            "selected_opportunity_params": selected_hybrid_opportunity_params,
+            "selected_hybrid_opportunity_params": selected_hybrid_opportunity_params,
+            "train_end": train_end.isoformat(),
+            "valid_end": valid_end.isoformat(),
+            "test_end": test_end.isoformat(),
+        }
+        return base_train, base_valid, base_test, base_artifact
+
+    deployment_risk_stage1_models = train_stage1_models(
+        dataset,
+        feature_columns_by_horizon=risk_feature_columns_by_horizon,
+        max_iter=max_iter,
+    )
+    deployment_long_stage1_models = train_stage1_models_for_horizons(
+        dataset,
+        feature_columns_by_horizon=long_upside_feature_columns_by_horizon,
+        horizons=LONG_UPSIDE_HORIZONS,
+        max_iter=max_iter,
+    )
+    deployment_raw = attach_stage1_predictions(
+        dataset,
+        models=deployment_risk_stage1_models,
+        feature_columns_by_horizon=risk_feature_columns_by_horizon,
+    )
+    deployment_raw = attach_stage1_predictions_for_horizons(
+        deployment_raw,
+        models=deployment_long_stage1_models,
+        feature_columns_by_horizon=long_upside_feature_columns_by_horizon,
+        horizons=LONG_UPSIDE_HORIZONS,
+        column_prefix="long_",
+    )
+    deployment_raw = add_v4_risk_upside_labels(deployment_raw)
+    deployment_raw = add_long_upside_stage2_features(deployment_raw)
+    deployment_risk_model = fit_risk_filter_model(deployment_raw, feature_columns=risk_features, max_iter=max_iter)
+    deployment_long_upside_model = fit_long_upside_model(
+        deployment_raw,
+        feature_columns=long_upside_features,
+        max_iter=max_iter,
+    )
+    deployment_scored_raw = score_v4_risk_upside_raw_frame(
+        deployment_raw,
+        risk_model=deployment_risk_model,
+        long_upside_model=deployment_long_upside_model,
+        risk_features=risk_features,
+        long_upside_features=long_upside_features,
+    )
+    deployment_gated = apply_v41_risk_gate_decision(deployment_scored_raw, selected_risk_params)
+    deployment_labeled = add_v41_long_quality_labels(deployment_gated)
+    deployment_opportunity = build_v42_opportunity_frame(deployment_labeled)
+    deployment_opportunity_model = fit_v42_opportunity_gate_model(
+        deployment_opportunity,
+        feature_columns=opportunity_features,
+        max_iter=max_iter,
+    )
+
+    base_artifact = {
+        "kind": "v42_hybrid_base_for_v5",
+        "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "risk_feature_columns_by_horizon": risk_feature_columns_by_horizon,
+        "long_upside_feature_columns_by_horizon": long_upside_feature_columns_by_horizon,
+        "risk_features": risk_features,
+        "long_upside_features": long_upside_features,
+        "opportunity_features": opportunity_features,
+        "risk_stage1_models": deployment_risk_stage1_models,
+        "long_upside_stage1_models": deployment_long_stage1_models,
+        "risk_model": deployment_risk_model,
+        "long_upside_model": deployment_long_upside_model,
+        "opportunity_model": deployment_opportunity_model,
+        "selected_risk_params": selected_risk_params,
+        "selected_opportunity_params": selected_hybrid_opportunity_params,
+        "selected_hybrid_opportunity_params": selected_hybrid_opportunity_params,
+        "train_end": train_end.isoformat(),
+        "valid_end": valid_end.isoformat(),
+        "test_end": test_end.isoformat(),
+    }
+    return base_train, base_valid, base_test, base_artifact
+
+
+def build_volume_price_oof_predictions(
+    frame: pd.DataFrame,
+    *,
+    feature_columns: list[str],
+    max_iter: int,
+    folds: int = 3,
+) -> pd.DataFrame:
+    dates = sorted(pd.to_datetime(frame["trade_date"]).dt.date.unique())
+    if len(dates) < 20:
+        return pd.DataFrame()
+    cut_indices = np.linspace(0.35, 0.90, folds)
+    rows: list[pd.DataFrame] = []
+    for ratio in cut_indices:
+        train_cut_index = min(max(int(len(dates) * ratio), 1), len(dates) - 2)
+        train_cut = dates[train_cut_index]
+        next_index = min(max(int(len(dates) * (ratio + 0.15)), train_cut_index + 1), len(dates) - 1)
+        predict_end = dates[next_index]
+        train_frame = frame[pd.to_datetime(frame["trade_date"]).dt.date <= train_cut].copy()
+        predict_frame = frame[
+            (pd.to_datetime(frame["trade_date"]).dt.date > train_cut)
+            & (pd.to_datetime(frame["trade_date"]).dt.date <= predict_end)
+        ].copy()
+        if train_frame.empty or predict_frame.empty:
+            continue
+        train_frame = add_v5_volume_price_labels(train_frame)
+        risk_model = fit_volume_price_risk_model(train_frame, feature_columns=feature_columns, max_iter=max_iter)
+        quality_model = fit_volume_price_quality_model(train_frame, feature_columns=feature_columns, max_iter=max_iter)
+        rows.append(
+            score_volume_price_submodels(
+                predict_frame,
+                risk_model=risk_model,
+                quality_model=quality_model,
+                feature_columns=feature_columns,
+            )
+        )
+    if not rows:
+        return pd.DataFrame()
+    result = pd.concat(rows, ignore_index=True, copy=False)
+    return result.drop_duplicates(subset=["trade_date", "symbol"], keep="last").reset_index(drop=True)
+
+
+def train_volume_price_fusion_model(
+    *,
+    storage: Storage,
+    config: AppConfig,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    train_end: date | None = None,
+    valid_end: date | None = None,
+    test_end: date | None = None,
+    limit: int | None = None,
+    max_iter: int = 80,
+    top_n_list: tuple[int, ...] = (20, 50),
+    prediction_date: date | None = None,
+    reuse_base_artifact: bool = False,
+) -> VolumePriceFusionTrainResult:
+    model_dir = volume_price_fusion_model_dir(project_root)
+    report_dir = volume_price_fusion_report_dir(project_root)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset, skipped_symbols = build_stacked_dataset(
+        storage=storage,
+        config=config,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+    if dataset.empty:
+        raise RuntimeError("No V5 volume-price fusion dataset could be built from local daily bars.")
+    dataset = add_v5_volume_price_labels(add_v4_risk_upside_labels(dataset))
+
+    train_end, valid_end, test_end = resolve_split_dates(dataset, train_end=train_end, valid_end=valid_end, test_end=test_end)
+    split_frames = split_dataset(dataset, train_end=train_end, valid_end=valid_end, test_end=test_end)
+    if reuse_base_artifact:
+        base_artifact = load_opportunity_ranker_artifact(project_root)
+        base_train = _score_v42_hybrid_from_artifact(split_frames["train"], base_artifact).assign(dataset_split="train")
+        base_valid = _score_v42_hybrid_from_artifact(split_frames["valid"], base_artifact).assign(dataset_split="valid")
+        base_test = _score_v42_hybrid_from_artifact(split_frames["test"], base_artifact).assign(dataset_split="test")
+        base_training_mode = "reuse_existing_v42_artifact"
+    else:
+        base_train, base_valid, base_test, base_artifact = _train_v42_hybrid_base_for_v5(
+            dataset,
+            split_frames,
+            max_iter=max_iter,
+            top_n_list=top_n_list,
+            train_end=train_end,
+            valid_end=valid_end,
+            test_end=test_end,
+        )
+        base_training_mode = "retrain_v42_hybrid_oof"
+
+    vp_features = volume_price_feature_columns(base_train)
+    vp_risk_model = fit_volume_price_risk_model(base_train, feature_columns=vp_features, max_iter=max_iter)
+    vp_quality_model = fit_volume_price_quality_model(base_train, feature_columns=vp_features, max_iter=max_iter)
+
+    scored_train = build_volume_price_oof_predictions(base_train, feature_columns=vp_features, max_iter=max_iter)
+    if scored_train.empty:
+        scored_train = score_volume_price_submodels(
+            base_train,
+            risk_model=vp_risk_model,
+            quality_model=vp_quality_model,
+            feature_columns=vp_features,
+        )
+    scored_valid = score_volume_price_submodels(
+        base_valid,
+        risk_model=vp_risk_model,
+        quality_model=vp_quality_model,
+        feature_columns=vp_features,
+    )
+    scored_test = score_volume_price_submodels(
+        base_test,
+        risk_model=vp_risk_model,
+        quality_model=vp_quality_model,
+        feature_columns=vp_features,
+    )
+    scored_train = add_v5_fusion_target(scored_train)
+    scored_valid = add_v5_fusion_target(scored_valid)
+    scored_test = add_v5_fusion_target(scored_test)
+    fusion_features = v5_fusion_feature_columns(scored_train)
+    fusion_model = fit_v5_fusion_model(scored_train, feature_columns=fusion_features, max_iter=max_iter)
+
+    v5_train = apply_v5_decision(score_v5_fusion_frame(scored_train, fusion_model=fusion_model, fusion_features=fusion_features))
+    v5_valid = apply_v5_decision(score_v5_fusion_frame(scored_valid, fusion_model=fusion_model, fusion_features=fusion_features))
+    v5_test = apply_v5_decision(score_v5_fusion_frame(scored_test, fusion_model=fusion_model, fusion_features=fusion_features))
+    evaluated = pd.concat([v5_train, v5_valid, v5_test], ignore_index=True, copy=False)
+    baseline = pd.concat([base_train, base_valid, base_test], ignore_index=True, copy=False)
+
+    topn_metrics = evaluate_v5_topn_metrics(evaluated, top_n_list=top_n_list)
+    risk_metrics = evaluate_volume_price_risk_metrics(evaluated)
+    quality_metrics = evaluate_volume_price_quality_metrics(evaluated)
+    comparison_metrics = compare_v5_topn_metrics(baseline, evaluated, top_n_list=top_n_list)
+
+    topn_metrics.to_csv(report_dir / "v5_topn_metrics.csv", index=False, encoding="utf-8-sig")
+    risk_metrics.to_csv(report_dir / "v5_volume_price_risk_metrics.csv", index=False, encoding="utf-8-sig")
+    quality_metrics.to_csv(report_dir / "v5_volume_price_quality_metrics.csv", index=False, encoding="utf-8-sig")
+    comparison_metrics.to_csv(report_dir / "v5_comparison.csv", index=False, encoding="utf-8-sig")
+
+    artifact = {
+        "model_version": "v5_volume_price_fusion",
+        "created_at": datetime.now(UTC).isoformat(),
+        "base_training_mode": base_training_mode,
+        "base_artifact": base_artifact,
+        "volume_price_feature_columns": vp_features,
+        "volume_price_risk_model": vp_risk_model,
+        "volume_price_quality_model": vp_quality_model,
+        "fusion_features": fusion_features,
+        "fusion_model": fusion_model,
+        "top_n_list": top_n_list,
+        "split_dates": {
+            "train_end": train_end.isoformat(),
+            "valid_end": valid_end.isoformat(),
+            "test_end": test_end.isoformat(),
+        },
+    }
+    model_path = model_dir / "v5_volume_price_fusion.pkl"
+    with model_path.open("wb") as file:
+        pickle.dump(artifact, file)
+    metadata_path = model_dir / "v5_volume_price_fusion_metadata.json"
+    metadata = {
+        "model_version": "v5_volume_price_fusion",
+        "created_at": artifact["created_at"],
+        "base_training_mode": base_training_mode,
+        "volume_price_feature_count": len(vp_features),
+        "fusion_feature_count": len(fusion_features),
+        "top_n_list": list(top_n_list),
+        "split_dates": artifact["split_dates"],
+    }
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    prediction_path: Path | None = None
+    latest_predictions = pd.DataFrame()
+    if prediction_date is not None:
+        latest_predictions = predict_volume_price_fusion(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            trade_date=prediction_date,
+        )
+        if not latest_predictions.empty:
+            prediction_path = report_dir / f"predictions_{prediction_date.isoformat()}.csv"
+            latest_predictions.to_csv(prediction_path, index=False, encoding="utf-8-sig")
+
+    return VolumePriceFusionTrainResult(
+        model_path=model_path,
+        metadata_path=metadata_path,
+        topn_metrics=topn_metrics,
+        volume_price_risk_metrics=risk_metrics,
+        volume_price_quality_metrics=quality_metrics,
+        comparison_metrics=comparison_metrics,
+        prediction_path=prediction_path,
+        latest_predictions=latest_predictions,
+        skipped_symbols=skipped_symbols,
+    )
+
+
+def predict_volume_price_fusion(
+    *,
+    storage: Storage,
+    config: AppConfig,
+    project_root: Path,
+    trade_date: date,
+) -> pd.DataFrame:
+    artifact = load_volume_price_fusion_artifact(project_root)
+    frame = build_prediction_frame(storage=storage, config=config, trade_date=trade_date)
+    if frame.empty:
+        return pd.DataFrame()
+    base = _score_v42_hybrid_from_artifact(frame, artifact["base_artifact"])
+    scored = score_volume_price_submodels(
+        base,
+        risk_model=artifact["volume_price_risk_model"],
+        quality_model=artifact["volume_price_quality_model"],
+        feature_columns=artifact["volume_price_feature_columns"],
+    )
+    fused = score_v5_fusion_frame(scored, fusion_model=artifact["fusion_model"], fusion_features=artifact["fusion_features"])
+    fused = apply_v5_decision(fused)
+    fused = fused.sort_values(["action_rank_v5", "final_score_v5"], ascending=[True, False]).reset_index(drop=True)
+    fused["rank"] = range(1, len(fused) + 1)
+    return prepare_v5_prediction_report(fused)
+
+
+def load_volume_price_fusion_artifact(project_root: Path) -> dict[str, Any]:
+    model_path = volume_price_fusion_model_dir(project_root) / "v5_volume_price_fusion.pkl"
+    if not model_path.exists():
+        raise FileNotFoundError(f"V5 volume-price fusion model not found: {model_path}")
+    with model_path.open("rb") as file:
+        return pickle.load(file)
+
+
+def _score_v5_from_artifact_frame(frame: pd.DataFrame, artifact: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    base = _score_v42_hybrid_from_artifact(frame, artifact["base_artifact"])
+    scored = score_volume_price_submodels(
+        base,
+        risk_model=artifact["volume_price_risk_model"],
+        quality_model=artifact["volume_price_quality_model"],
+        feature_columns=artifact["volume_price_feature_columns"],
+    )
+    fused = score_v5_fusion_frame(scored, fusion_model=artifact["fusion_model"], fusion_features=artifact["fusion_features"])
+    v5 = apply_v5_decision(fused)
+    return base, v5
+
+
+def train_candidate_ranker_model(
+    *,
+    storage: Storage,
+    config: AppConfig,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    train_end: date | None = None,
+    valid_end: date | None = None,
+    test_end: date | None = None,
+    limit: int | None = None,
+    max_iter: int = 80,
+    top_n_list: tuple[int, ...] = (20, 50),
+    prediction_date: date | None = None,
+) -> CandidateRankerTrainResult:
+    model_dir = candidate_ranker_model_dir(project_root)
+    report_dir = candidate_ranker_report_dir(project_root)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    v5_artifact = load_volume_price_fusion_artifact(project_root)
+    split_dates = v5_artifact.get("split_dates", {})
+    if train_end is None and isinstance(split_dates, dict) and split_dates.get("train_end"):
+        train_end = date.fromisoformat(str(split_dates["train_end"]))
+    if valid_end is None and isinstance(split_dates, dict) and split_dates.get("valid_end"):
+        valid_end = date.fromisoformat(str(split_dates["valid_end"]))
+    if test_end is None and isinstance(split_dates, dict) and split_dates.get("test_end"):
+        test_end = date.fromisoformat(str(split_dates["test_end"]))
+
+    dataset, skipped_symbols = build_stacked_dataset(
+        storage=storage,
+        config=config,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+    if dataset.empty:
+        raise RuntimeError("No V5.1 candidate-ranker dataset could be built from local daily bars.")
+    dataset = add_v5_volume_price_labels(add_v4_risk_upside_labels(dataset))
+
+    train_end, valid_end, test_end = resolve_split_dates(dataset, train_end=train_end, valid_end=valid_end, test_end=test_end)
+    split_frames = split_dataset(dataset, train_end=train_end, valid_end=valid_end, test_end=test_end)
+
+    base_train, v5_train = _score_v5_from_artifact_frame(split_frames["train"], v5_artifact)
+    base_valid, v5_valid = _score_v5_from_artifact_frame(split_frames["valid"], v5_artifact)
+    base_test, v5_test = _score_v5_from_artifact_frame(split_frames["test"], v5_artifact)
+    base_train = base_train.assign(dataset_split="train")
+    base_valid = base_valid.assign(dataset_split="valid")
+    base_test = base_test.assign(dataset_split="test")
+    v5_train = v5_train.assign(dataset_split="train")
+    v5_valid = v5_valid.assign(dataset_split="valid")
+    v5_test = v5_test.assign(dataset_split="test")
+
+    train_labeled = add_v51_cross_sectional_rank_features(add_v51_candidate_rank_labels(v5_train))
+    ranker_features = v51_candidate_ranker_feature_columns(train_labeled)
+    ranker_model, ranker_engine = fit_v51_candidate_ranker_model(
+        train_labeled,
+        feature_columns=ranker_features,
+        max_iter=max_iter,
+    )
+
+    scored_train = score_v51_candidate_ranker_frame(v5_train, ranker_model=ranker_model, feature_columns=ranker_features)
+    scored_valid = score_v51_candidate_ranker_frame(v5_valid, ranker_model=ranker_model, feature_columns=ranker_features)
+    scored_test = score_v51_candidate_ranker_frame(v5_test, ranker_model=ranker_model, feature_columns=ranker_features)
+    selected_blend_params, blend_grid = select_v51_blend_params(scored_valid, top_n_list=top_n_list)
+    v51_train = apply_v51_blend_score(scored_train, selected_blend_params)
+    v51_valid = apply_v51_blend_score(scored_valid, selected_blend_params)
+    v51_test = apply_v51_blend_score(scored_test, selected_blend_params)
+
+    v51_evaluated = pd.concat([v51_train, v51_valid, v51_test], ignore_index=True, copy=False)
+    v5_evaluated = pd.concat([v5_train, v5_valid, v5_test], ignore_index=True, copy=False)
+    baseline = pd.concat([base_train, base_valid, base_test], ignore_index=True, copy=False)
+
+    topn_metrics = evaluate_v51_topn_metrics(v51_evaluated, top_n_list=top_n_list)
+    ranker_metrics = evaluate_v51_ranker_metrics(v51_evaluated, top_n_list=top_n_list)
+    comparison_metrics = compare_v51_topn_metrics(
+        baseline_scored=baseline,
+        v5_scored=v5_evaluated,
+        v51_scored=v51_evaluated,
+        top_n_list=top_n_list,
+    )
+
+    topn_metrics.to_csv(report_dir / "v51_topn_metrics.csv", index=False, encoding="utf-8-sig")
+    ranker_metrics.to_csv(report_dir / "v51_ranker_metrics.csv", index=False, encoding="utf-8-sig")
+    comparison_metrics.to_csv(report_dir / "v51_comparison.csv", index=False, encoding="utf-8-sig")
+    blend_grid.to_csv(report_dir / "v51_blend_grid.csv", index=False, encoding="utf-8-sig")
+    skipped_symbols.to_csv(report_dir / "v51_skipped_symbols.csv", index=False, encoding="utf-8-sig")
+
+    artifact = {
+        "model_version": "v51_candidate_ranker",
+        "created_at": datetime.now(UTC).isoformat(),
+        "v5_artifact": v5_artifact,
+        "ranker_features": ranker_features,
+        "ranker_model": ranker_model,
+        "ranker_engine": ranker_engine,
+        "selected_blend_params": selected_blend_params,
+        "top_n_list": top_n_list,
+        "split_dates": {
+            "train_end": train_end.isoformat(),
+            "valid_end": valid_end.isoformat(),
+            "test_end": test_end.isoformat(),
+        },
+    }
+    model_path = model_dir / "v51_candidate_ranker.pkl"
+    with model_path.open("wb") as file:
+        pickle.dump(artifact, file)
+    metadata_path = model_dir / "v51_candidate_ranker_metadata.json"
+    metadata = {
+        "model_version": artifact["model_version"],
+        "created_at": artifact["created_at"],
+        "ranker_engine": ranker_engine,
+        "ranker_feature_count": len(ranker_features),
+        "selected_blend_params": selected_blend_params,
+        "top_n_list": list(top_n_list),
+        "split_dates": artifact["split_dates"],
+        "v5_base_training_mode": v5_artifact.get("base_training_mode"),
+    }
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    prediction_path: Path | None = None
+    latest_predictions = pd.DataFrame()
+    if prediction_date is not None:
+        latest_predictions = predict_candidate_ranker(
+            storage=storage,
+            config=config,
+            project_root=project_root,
+            trade_date=prediction_date,
+        )
+        if not latest_predictions.empty:
+            prediction_path = report_dir / f"predictions_{prediction_date.isoformat()}.csv"
+            latest_predictions.to_csv(prediction_path, index=False, encoding="utf-8-sig")
+
+    return CandidateRankerTrainResult(
+        model_path=model_path,
+        metadata_path=metadata_path,
+        topn_metrics=topn_metrics,
+        ranker_metrics=ranker_metrics,
+        comparison_metrics=comparison_metrics,
+        blend_grid=blend_grid,
+        selected_blend_params=selected_blend_params,
+        prediction_path=prediction_path,
+        latest_predictions=latest_predictions,
+        skipped_symbols=skipped_symbols,
+    )
+
+
+def predict_candidate_ranker(
+    *,
+    storage: Storage,
+    config: AppConfig,
+    project_root: Path,
+    trade_date: date,
+) -> pd.DataFrame:
+    artifact = load_candidate_ranker_artifact(project_root)
+    frame = build_prediction_frame(storage=storage, config=config, trade_date=trade_date)
+    if frame.empty:
+        return pd.DataFrame()
+    _, v5 = _score_v5_from_artifact_frame(frame, artifact["v5_artifact"])
+    scored = score_v51_candidate_ranker_frame(
+        v5,
+        ranker_model=artifact["ranker_model"],
+        feature_columns=artifact["ranker_features"],
+    )
+    blended = apply_v51_blend_score(scored, artifact["selected_blend_params"])
+    blended = blended.sort_values(["action_rank_v51", "final_score_v51"], ascending=[True, False]).reset_index(drop=True)
+    blended["rank"] = range(1, len(blended) + 1)
+    return prepare_v51_prediction_report(blended)
+
+
+def load_candidate_ranker_artifact(project_root: Path) -> dict[str, Any]:
+    model_path = candidate_ranker_model_dir(project_root) / "v51_candidate_ranker.pkl"
+    if not model_path.exists():
+        raise FileNotFoundError(f"V5.1 candidate ranker model not found: {model_path}")
+    with model_path.open("rb") as file:
+        return pickle.load(file)
+
+
+def validate_model_walkforward(
+    *,
+    storage: Storage,
+    config: AppConfig,
+    project_root: Path,
+    model: str = "v42",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int | None = None,
+    windows: int = 8,
+    train_days: int = 280,
+    valid_days: int = 60,
+    test_days: int = 60,
+    min_train_days: int = 220,
+    max_iter: int = 40,
+    top_n_list: tuple[int, ...] = (20, 50),
+) -> WalkForwardValidationResult:
+    if model != "v42":
+        raise ValueError("Only model='v42' is supported in the first walk-forward validator.")
+    report_dir = model_walkforward_report_dir(project_root)
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset, skipped_symbols = build_stacked_dataset(
+        storage=storage,
+        config=config,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+    if dataset.empty:
+        raise RuntimeError("No walk-forward dataset could be built from local daily bars.")
+    dataset = add_v4_risk_upside_labels(dataset)
+    dataset["trade_date"] = pd.to_datetime(dataset["trade_date"], errors="coerce")
+    dataset = dataset[dataset["trade_date"].notna()].copy()
+    trade_dates = sorted(dataset["trade_date"].dt.date.unique())
+    windows_frame = generate_walkforward_windows(
+        trade_dates,
+        windows=windows,
+        train_days=train_days,
+        valid_days=valid_days,
+        test_days=test_days,
+        min_train_days=min_train_days,
+    )
+    if windows_frame.empty:
+        raise RuntimeError(
+            "Not enough distinct trade dates for walk-forward validation. "
+            "Reduce --train-days, --valid-days, --test-days, or --min-train-days."
+        )
+
+    window_records: list[dict[str, object]] = []
+    metric_frames: list[pd.DataFrame] = []
+    date_values = dataset["trade_date"].dt.date
+    for window in windows_frame.to_dict("records"):
+        window_started_at = perf_counter()
+        window_record = dict(window)
+        window_dataset = dataset[
+            (date_values >= window["train_start"]) & (date_values <= window["test_end"])
+        ].reset_index(drop=True)
+        try:
+            split_frames = split_dataset(
+                window_dataset,
+                train_end=window["train_end"],
+                valid_end=window["valid_end"],
+                test_end=window["test_end"],
+            )
+            base_train, base_valid, base_test, _ = _train_v42_hybrid_base_for_v5(
+                window_dataset,
+                split_frames,
+                max_iter=max_iter,
+                top_n_list=top_n_list,
+                train_end=window["train_end"],
+                valid_end=window["valid_end"],
+                test_end=window["test_end"],
+                include_deployment_artifact=False,
+            )
+            base_train = base_train.assign(dataset_split="train")
+            base_valid = base_valid.assign(dataset_split="valid")
+            base_test = base_test.assign(dataset_split="test")
+            evaluated = pd.concat([base_train, base_valid, base_test], ignore_index=True, copy=False)
+            metrics = evaluate_v42_topn_metrics(evaluated, top_n_list=top_n_list)
+            if not metrics.empty and "dataset_split" in metrics.columns:
+                metrics = metrics[metrics["dataset_split"].eq("test")].copy()
+            if metrics.empty or "dataset_split" not in metrics.columns:
+                metrics = _empty_walkforward_topn_metrics(
+                    window=window,
+                    top_n_list=top_n_list,
+                    model_version="v42_gate_v4_rank",
+                )
+                metric_frames.append(metrics)
+                window_record["status"] = "no_candidates"
+                window_record["top20_coverage"] = 0.0
+            else:
+                metrics["window_id"] = int(window["window_id"])
+                metrics["model_version"] = "v42_gate_v4_rank"
+                metrics["train_start"] = window["train_start"]
+                metrics["train_end"] = window["train_end"]
+                metrics["valid_start"] = window["valid_start"]
+                metrics["valid_end"] = window["valid_end"]
+                metrics["test_start"] = window["test_start"]
+                metrics["test_end"] = window["test_end"]
+                metrics["train_days"] = int(window["train_days"])
+                metrics["valid_days"] = int(window["valid_days"])
+                metrics["test_days"] = int(window["test_days"])
+                metrics["allowed_days"] = pd.to_numeric(metrics["days"], errors="coerce").fillna(0).astype(int)
+                metrics["coverage"] = metrics["allowed_days"] / max(int(window["test_days"]), 1)
+                metric_frames.append(metrics)
+                window_record["status"] = "ok"
+                top20 = metrics[pd.to_numeric(metrics["top_n"], errors="coerce").eq(20)]
+                if not top20.empty:
+                    window_record["top20_win_rate"] = float(top20.iloc[0].get("win_rate", float("nan")))
+                    window_record["top20_avg_return_20d"] = float(top20.iloc[0].get("avg_return_20d", float("nan")))
+                    window_record["top20_stop_loss_rate_20d"] = float(
+                        top20.iloc[0].get("stop_loss_rate_20d", float("nan"))
+                    )
+                    window_record["top20_bad_risk_rate"] = float(top20.iloc[0].get("bad_risk_rate", float("nan")))
+                    window_record["top20_coverage"] = float(top20.iloc[0].get("coverage", float("nan")))
+        except Exception as exc:  # pragma: no cover - defensive for long-running local experiments.
+            window_record["status"] = "failed"
+            window_record["error"] = str(exc)
+            window_record["error_trace"] = traceback.format_exc(limit=6)
+        window_record["elapsed_seconds"] = round(perf_counter() - window_started_at, 3)
+        window_records.append(window_record)
+
+    windows_result = pd.DataFrame(window_records)
+    topn_metrics = pd.concat(metric_frames, ignore_index=True, copy=False) if metric_frames else pd.DataFrame()
+    if topn_metrics.empty:
+        windows_path = report_dir / "v42_walkforward_windows.csv"
+        windows_result.to_csv(windows_path, index=False, encoding="utf-8-sig")
+        if "error" in windows_result.columns:
+            error_columns = ["error"]
+            if "error_trace" in windows_result.columns:
+                error_columns.append("error_trace")
+            errors = (
+                windows_result.loc[windows_result["error"].notna(), error_columns]
+                .astype(str)
+                .head(3)
+                .agg(" | ".join, axis=1)
+                .tolist()
+            )
+        else:
+            errors = []
+        detail = f" First errors: {' | '.join(errors)}" if errors else ""
+        raise RuntimeError(f"Walk-forward validation did not produce any TopN metrics.{detail}")
+    summary = summarize_walkforward_topn_metrics(topn_metrics)
+
+    config_payload = {
+        "model": model,
+        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "windows_requested": windows,
+        "windows_completed": (
+            int(windows_result["status"].isin(["ok", "no_candidates"]).sum())
+            if "status" in windows_result.columns
+            else 0
+        ),
+        "train_days": train_days,
+        "valid_days": valid_days,
+        "test_days": test_days,
+        "min_train_days": min_train_days,
+        "effective_windows": [
+            {
+                key: (value.isoformat() if isinstance(value, date) else value)
+                for key, value in row.items()
+            }
+            for row in windows_frame.to_dict("records")
+        ],
+        "max_iter": max_iter,
+        "top_n_list": list(top_n_list),
+        "thresholds_top20": WALKFORWARD_TOP20_THRESHOLDS,
+    }
+
+    windows_path = report_dir / "v42_walkforward_windows.csv"
+    topn_metrics_path = report_dir / "v42_walkforward_topn_metrics.csv"
+    summary_path = report_dir / "v42_walkforward_summary.csv"
+    config_path = report_dir / "v42_walkforward_config.json"
+    windows_result.to_csv(windows_path, index=False, encoding="utf-8-sig")
+    topn_metrics.to_csv(topn_metrics_path, index=False, encoding="utf-8-sig")
+    summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
+    config_path.write_text(json.dumps(config_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return WalkForwardValidationResult(
+        report_dir=report_dir,
+        config_path=config_path,
+        windows_path=windows_path,
+        topn_metrics_path=topn_metrics_path,
+        summary_path=summary_path,
+        windows=windows_result,
+        topn_metrics=topn_metrics,
+        summary=summary,
+        skipped_symbols=skipped_symbols,
+    )
+
+
 def load_opportunity_ranker_artifact(project_root: Path) -> dict[str, Any]:
     model_path = opportunity_ranker_model_dir(project_root) / "v42_opportunity_ranker.pkl"
     if not model_path.exists():
@@ -626,6 +1557,8 @@ def build_stacked_feature_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     for column in ("open", "high", "low", "close", "volume", "amount"):
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    if "turnover" in df.columns:
+        df["turnover"] = pd.to_numeric(df["turnover"], errors="coerce")
 
     close = df["close"]
     open_ = df["open"]
@@ -691,8 +1624,134 @@ def build_stacked_feature_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
     df = _add_low_level_technical_indicators(df)
     df = _add_block_features(df, window=20, blocks=3)
     df = _add_block_features(df, window=60, blocks=3)
+    df = add_v5_volume_price_features(df)
 
     return _clean_numeric_frame(df)
+
+
+def add_v5_volume_price_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add daily-data volume-price features for V5.
+
+    The features intentionally use only current and historical rows. They are
+    grouped by meaning rather than by model layer: 1d trigger/risk hints, 5d
+    buy-point confirmation, 20d structure, and 5d-vs-20d acceleration.
+    """
+    result = frame.copy()
+    close = _numeric_feature(result, "close")
+    open_ = _numeric_feature(result, "open")
+    high = _numeric_feature(result, "high")
+    low = _numeric_feature(result, "low")
+    volume = _numeric_feature(result, "volume")
+    amount = _numeric_feature(result, "amount")
+
+    prev_close = close.shift(1)
+    candle_range = (high - low).replace(0.0, np.nan)
+    result["vp_close_position_1d"] = (close - low).div(candle_range)
+    result["vp_signed_body_1d"] = (close - open_).div(candle_range)
+    result["vp_body_abs_1d"] = (close - open_).abs().div(candle_range)
+    result["vp_upper_shadow_1d"] = (high - pd.concat([open_, close], axis=1).max(axis=1)).div(candle_range)
+    result["vp_lower_shadow_1d"] = (pd.concat([open_, close], axis=1).min(axis=1) - low).div(candle_range)
+    result["vp_return_1d"] = close.div(prev_close.replace(0.0, np.nan)) - 1
+    result["vp_gap_1d"] = open_.div(prev_close.replace(0.0, np.nan)) - 1
+
+    volume_ma_5 = volume.rolling(5).mean()
+    volume_ma_20 = volume.rolling(20).mean()
+    amount_ma_5 = amount.rolling(5).mean()
+    amount_ma_20 = amount.rolling(20).mean()
+    result["vp_volume_ratio_1d_to_5d"] = volume.div(volume_ma_5.replace(0.0, np.nan))
+    result["vp_volume_ratio_1d_to_20d"] = volume.div(volume_ma_20.replace(0.0, np.nan))
+    result["vp_amount_ratio_1d_to_5d"] = amount.div(amount_ma_5.replace(0.0, np.nan))
+    result["vp_amount_ratio_1d_to_20d"] = amount.div(amount_ma_20.replace(0.0, np.nan))
+    if "turnover" in result.columns:
+        result["vp_turnover_1d"] = _numeric_feature(result, "turnover")
+
+    high_volume_1d = result["vp_volume_ratio_1d_to_20d"] >= 1.6
+    weak_close_1d = result["vp_close_position_1d"] <= 0.45
+    bearish_body_1d = result["vp_signed_body_1d"] <= -0.25
+    result["vp_high_volume_upper_shadow_flag"] = (high_volume_1d & weak_close_1d & (result["vp_upper_shadow_1d"] >= 0.35)).astype(float)
+    result["vp_high_volume_bearish_flag"] = (high_volume_1d & bearish_body_1d).astype(float)
+    result["vp_low_volume_stabilization_flag"] = (
+        (result["vp_volume_ratio_1d_to_20d"] <= 0.85)
+        & (result["vp_close_position_1d"] >= 0.50)
+        & (result["vp_return_1d"] >= -0.015)
+    ).astype(float)
+    result["vp_failed_breakout_1d_flag"] = (
+        high_volume_1d
+        & (result.get("distance_to_20d_high", pd.Series(np.nan, index=result.index)) >= -0.02)
+        & weak_close_1d
+    ).astype(float)
+
+    return_5d = close.pct_change(5, fill_method=None)
+    return_20d = close.pct_change(20, fill_method=None)
+    result["vp_return_5d"] = return_5d
+    result["vp_return_20d"] = return_20d
+    result["vp_volume_change_5d"] = volume.div(volume.shift(5).replace(0.0, np.nan)) - 1
+    result["vp_amount_change_5d"] = amount.div(amount.shift(5).replace(0.0, np.nan)) - 1
+    result["vp_volume_change_20d"] = volume.div(volume.shift(20).replace(0.0, np.nan)) - 1
+    result["vp_amount_change_20d"] = amount.div(amount.shift(20).replace(0.0, np.nan)) - 1
+
+    up_day = close > prev_close
+    down_day = close < prev_close
+    high_volume_day = result["vp_volume_ratio_1d_to_20d"] >= 1.4
+    weak_high_volume_day = high_volume_day & weak_close_1d
+    strong_high_volume_day = high_volume_day & (result["vp_close_position_1d"] >= 0.60) & up_day
+    up_volume_5d = volume.where(up_day, 0.0).rolling(5).sum()
+    down_volume_5d = volume.where(down_day, 0.0).rolling(5).sum()
+    total_volume_5d = volume.rolling(5).sum()
+    result["vp_5d_up_volume_share"] = up_volume_5d.div(total_volume_5d.replace(0.0, np.nan))
+    result["vp_5d_down_volume_share"] = down_volume_5d.div(total_volume_5d.replace(0.0, np.nan))
+    result["vp_5d_up_down_volume_ratio"] = up_volume_5d.div(down_volume_5d.replace(0.0, np.nan))
+    result["vp_5d_high_volume_weak_days"] = weak_high_volume_day.astype(float).rolling(5).sum()
+    result["vp_5d_high_volume_strong_days"] = strong_high_volume_day.astype(float).rolling(5).sum()
+    result["vp_5d_upper_shadow_pressure"] = result["vp_upper_shadow_1d"].rolling(5).mean()
+    result["vp_5d_lower_shadow_support"] = result["vp_lower_shadow_1d"].rolling(5).mean()
+    result["vp_5d_volume_concentration"] = volume.rolling(5).max().div(total_volume_5d.replace(0.0, np.nan))
+    result["vp_5d_price_volume_confirm"] = return_5d * result["vp_volume_change_5d"]
+    result["vp_5d_volume_without_price"] = result["vp_volume_change_5d"].clip(lower=0.0) * (-return_5d).clip(lower=0.0)
+    result["vp_5d_shrink_pullback_score"] = (-return_5d).clip(lower=0.0) * (1 - result["vp_volume_ratio_1d_to_20d"]).clip(lower=0.0)
+
+    rolling_high_20 = high.rolling(20).max()
+    rolling_low_20 = low.rolling(20).min()
+    result["vp_20d_range_position"] = (close - rolling_low_20).div((rolling_high_20 - rolling_low_20).replace(0.0, np.nan))
+    up_volume_20d = volume.where(up_day, 0.0).rolling(20).sum()
+    down_volume_20d = volume.where(down_day, 0.0).rolling(20).sum()
+    total_volume_20d = volume.rolling(20).sum()
+    result["vp_20d_up_volume_share"] = up_volume_20d.div(total_volume_20d.replace(0.0, np.nan))
+    result["vp_20d_down_volume_share"] = down_volume_20d.div(total_volume_20d.replace(0.0, np.nan))
+    result["vp_20d_up_down_volume_ratio"] = up_volume_20d.div(down_volume_20d.replace(0.0, np.nan))
+    result["vp_20d_high_volume_weak_days"] = weak_high_volume_day.astype(float).rolling(20).sum()
+    result["vp_20d_high_volume_strong_days"] = strong_high_volume_day.astype(float).rolling(20).sum()
+    result["vp_20d_volume_trend"] = volume_ma_5.div(volume_ma_20.replace(0.0, np.nan)) - 1
+    result["vp_20d_amount_trend"] = amount_ma_5.div(amount_ma_20.replace(0.0, np.nan)) - 1
+    result["vp_20d_price_progress_per_volume"] = return_20d.div(result["vp_volume_change_20d"].abs().add(0.20))
+    result["vp_20d_amount_progress_per_return"] = result["vp_amount_change_20d"].div(return_20d.abs().add(0.05))
+    result["vp_20d_accumulation_score"] = (
+        0.35 * result["vp_20d_range_position"].clip(0.0, 1.0)
+        + 0.30 * result["vp_20d_up_volume_share"].clip(0.0, 1.0)
+        + 0.20 * result["vp_5d_lower_shadow_support"].clip(0.0, 1.0)
+        + 0.15 * (1 - result["vp_20d_high_volume_weak_days"].div(20).clip(0.0, 1.0))
+    )
+    high_position_20d = result["vp_20d_range_position"] >= 0.70
+    result["vp_20d_distribution_score"] = (
+        0.35 * high_position_20d.astype(float)
+        + 0.30 * result["vp_20d_high_volume_weak_days"].div(20).clip(0.0, 1.0)
+        + 0.20 * result["vp_5d_upper_shadow_pressure"].clip(0.0, 1.0)
+        + 0.15 * result["vp_5d_volume_without_price"].clip(0.0, 1.0)
+    )
+
+    result["vp_5d_vs_20d_return_accel"] = return_5d - (return_20d / 4)
+    result["vp_5d_vs_20d_volume_accel"] = result["vp_volume_change_5d"] - (result["vp_volume_change_20d"] / 4)
+    result["vp_5d_vs_20d_amount_accel"] = result["vp_amount_change_5d"] - (result["vp_amount_change_20d"] / 4)
+    result["vp_volume_accel_without_price"] = result["vp_5d_vs_20d_volume_accel"].clip(lower=0.0) * (
+        -result["vp_5d_vs_20d_return_accel"]
+    ).clip(lower=0.0)
+    result["vp_short_shrink_after_strength"] = (
+        (return_20d > 0).astype(float)
+        * (-return_5d).clip(lower=0.0)
+        * (1 - result["vp_volume_change_5d"]).clip(lower=0.0)
+    )
+    result["vp_pullback_depth_in_20d"] = (-return_5d).clip(lower=0.0).div(return_20d.clip(lower=0.02))
+    return result
 
 
 def _add_low_level_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -1120,6 +2179,202 @@ def split_dataset(dataset: pd.DataFrame, *, train_end: date, valid_end: date, te
     return {"train": train, "valid": valid, "test": test}
 
 
+def generate_walkforward_windows(
+    trade_dates: pd.Series | list[date] | np.ndarray,
+    *,
+    windows: int,
+    train_days: int,
+    valid_days: int,
+    test_days: int,
+    min_train_days: int,
+) -> pd.DataFrame:
+    dates = sorted(pd.to_datetime(pd.Series(trade_dates), errors="coerce").dropna().dt.date.unique())
+    if windows < 1:
+        raise ValueError("windows must be at least 1.")
+    if min(train_days, valid_days, test_days, min_train_days) < 1:
+        raise ValueError("train_days, valid_days, test_days, and min_train_days must be positive.")
+    available_train_days = len(dates) - valid_days - test_days
+    effective_train_days = min(train_days, available_train_days)
+    if effective_train_days < min_train_days:
+        return pd.DataFrame()
+
+    total_days = effective_train_days + valid_days + test_days
+    max_start = len(dates) - total_days
+    if max_start < 0:
+        return pd.DataFrame()
+    if windows == 1:
+        start_indices = [max_start]
+    else:
+        start_indices = sorted({int(round(value)) for value in np.linspace(0, max_start, num=windows)})
+
+    rows: list[dict[str, object]] = []
+    for window_id, start_index in enumerate(start_indices, start=1):
+        train_start_index = start_index
+        train_end_index = train_start_index + effective_train_days - 1
+        valid_start_index = train_end_index + 1
+        valid_end_index = valid_start_index + valid_days - 1
+        test_start_index = valid_end_index + 1
+        test_end_index = test_start_index + test_days - 1
+        if test_end_index >= len(dates):
+            continue
+        rows.append(
+            {
+                "window_id": window_id,
+                "train_start": dates[train_start_index],
+                "train_end": dates[train_end_index],
+                "valid_start": dates[valid_start_index],
+                "valid_end": dates[valid_end_index],
+                "test_start": dates[test_start_index],
+                "test_end": dates[test_end_index],
+                "train_days": effective_train_days,
+                "valid_days": valid_days,
+                "test_days": test_days,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+WALKFORWARD_TOP20_THRESHOLDS: dict[str, float] = {
+    "mean_win_rate": 0.70,
+    "worst_win_rate": 0.55,
+    "mean_avg_return_20d": 0.05,
+    "mean_stop_loss_rate_20d": 0.06,
+    "mean_bad_risk_rate": 0.15,
+    "mean_coverage": 0.20,
+}
+
+
+def summarize_walkforward_topn_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
+    if metrics.empty:
+        return pd.DataFrame()
+    numeric_metrics = [
+        "test_days",
+        "allowed_days",
+        "coverage",
+        "rows",
+        "win_rate",
+        "avg_return_20d",
+        "median_return_20d",
+        "take_profit_rate_20d",
+        "stop_loss_rate_20d",
+        "bad_risk_rate",
+        "avg_take_profit_20d",
+        "avg_stop_loss_20d",
+        "avg_positive_return_20d",
+        "avg_negative_return_20d",
+    ]
+    group_columns = ["model_version", "top_n"] if "model_version" in metrics.columns else ["top_n"]
+    rows: list[dict[str, object]] = []
+    for keys, group in metrics.groupby(group_columns, dropna=False, sort=True):
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        row = dict(zip(group_columns, keys, strict=False))
+        row["windows"] = int(group["window_id"].nunique()) if "window_id" in group.columns else int(len(group))
+        for column in numeric_metrics:
+            if column not in group.columns:
+                continue
+            values = pd.to_numeric(group[column], errors="coerce").dropna()
+            if values.empty:
+                row[f"{column}_mean"] = float("nan")
+                row[f"{column}_std"] = float("nan")
+                row[f"{column}_min"] = float("nan")
+                row[f"{column}_max"] = float("nan")
+                continue
+            row[f"{column}_mean"] = float(values.mean())
+            row[f"{column}_std"] = float(values.std(ddof=0))
+            row[f"{column}_min"] = float(values.min())
+            row[f"{column}_max"] = float(values.max())
+
+        if int(row.get("top_n", -1)) == 20:
+            mean_win = float(row.get("win_rate_mean", float("nan")))
+            min_win = float(row.get("win_rate_min", float("nan")))
+            mean_return = float(row.get("avg_return_20d_mean", float("nan")))
+            mean_stop_loss = float(row.get("stop_loss_rate_20d_mean", float("nan")))
+            mean_bad_risk = float(row.get("bad_risk_rate_mean", float("nan")))
+            mean_coverage = float(row.get("coverage_mean", float("nan")))
+            row["pass_mean_win_rate"] = int(mean_win >= WALKFORWARD_TOP20_THRESHOLDS["mean_win_rate"])
+            row["pass_worst_win_rate"] = int(min_win >= WALKFORWARD_TOP20_THRESHOLDS["worst_win_rate"])
+            row["pass_mean_avg_return_20d"] = int(
+                mean_return > WALKFORWARD_TOP20_THRESHOLDS["mean_avg_return_20d"]
+            )
+            row["pass_mean_stop_loss_rate_20d"] = int(
+                mean_stop_loss <= WALKFORWARD_TOP20_THRESHOLDS["mean_stop_loss_rate_20d"]
+            )
+            row["pass_mean_bad_risk_rate"] = int(
+                mean_bad_risk <= WALKFORWARD_TOP20_THRESHOLDS["mean_bad_risk_rate"]
+            )
+            row["pass_mean_coverage"] = int(mean_coverage >= WALKFORWARD_TOP20_THRESHOLDS["mean_coverage"])
+            per_window_pass = (
+                pd.to_numeric(group.get("win_rate"), errors="coerce").ge(WALKFORWARD_TOP20_THRESHOLDS["mean_win_rate"])
+                & pd.to_numeric(group.get("avg_return_20d"), errors="coerce").gt(
+                    WALKFORWARD_TOP20_THRESHOLDS["mean_avg_return_20d"]
+                )
+                & pd.to_numeric(group.get("stop_loss_rate_20d"), errors="coerce").le(
+                    WALKFORWARD_TOP20_THRESHOLDS["mean_stop_loss_rate_20d"]
+                )
+                & pd.to_numeric(group.get("bad_risk_rate"), errors="coerce").le(
+                    WALKFORWARD_TOP20_THRESHOLDS["mean_bad_risk_rate"]
+                )
+                & pd.to_numeric(group.get("coverage"), errors="coerce").ge(
+                    WALKFORWARD_TOP20_THRESHOLDS["mean_coverage"]
+                )
+            )
+            row["window_pass_rate"] = float(per_window_pass.mean()) if len(per_window_pass) else float("nan")
+            pass_columns = [
+                "pass_mean_win_rate",
+                "pass_worst_win_rate",
+                "pass_mean_avg_return_20d",
+                "pass_mean_stop_loss_rate_20d",
+                "pass_mean_bad_risk_rate",
+                "pass_mean_coverage",
+            ]
+            row["pass_all_top20_thresholds"] = int(all(int(row[column]) == 1 for column in pass_columns))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _empty_walkforward_topn_metrics(
+    *,
+    window: dict[str, object],
+    top_n_list: tuple[int, ...],
+    model_version: str,
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for top_n in top_n_list:
+        rows.append(
+            {
+                "dataset_split": "test",
+                "top_n": top_n,
+                "days": 0,
+                "rows": 0,
+                "win_rate": float("nan"),
+                "avg_return_20d": float("nan"),
+                "median_return_20d": float("nan"),
+                "take_profit_rate_20d": float("nan"),
+                "stop_loss_rate_20d": float("nan"),
+                "bad_risk_rate": float("nan"),
+                "avg_take_profit_20d": float("nan"),
+                "avg_stop_loss_20d": float("nan"),
+                "avg_positive_return_20d": float("nan"),
+                "avg_negative_return_20d": float("nan"),
+                "window_id": int(window["window_id"]),
+                "model_version": model_version,
+                "train_start": window["train_start"],
+                "train_end": window["train_end"],
+                "valid_start": window["valid_start"],
+                "valid_end": window["valid_end"],
+                "test_start": window["test_start"],
+                "test_end": window["test_end"],
+                "train_days": int(window["train_days"]),
+                "valid_days": int(window["valid_days"]),
+                "test_days": int(window["test_days"]),
+                "allowed_days": 0,
+                "coverage": 0.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def build_stage1_oof_predictions(
     frame: pd.DataFrame,
     *,
@@ -1469,6 +2724,586 @@ def add_v41_long_quality_labels(frame: pd.DataFrame) -> pd.DataFrame:
         grade.loc[rank_pct > 0.90] = 4
         result.loc[grade.index, "long_quality_grade"] = grade
     return result
+
+
+def add_v5_volume_price_extreme_risk_flag(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    high_position = _numeric_feature(result, "vp_20d_range_position") >= 0.72
+    high_volume = (
+        (_numeric_feature(result, "vp_volume_ratio_1d_to_20d") >= 1.8)
+        | (_numeric_feature(result, "vp_amount_ratio_1d_to_20d") >= 1.8)
+    )
+    long_upper_shadow = _numeric_feature(result, "vp_upper_shadow_1d") >= 0.40
+    weak_close = _numeric_feature(result, "vp_close_position_1d") <= 0.45
+    bearish_body = _numeric_feature(result, "vp_signed_body_1d") <= -0.25
+    below_ma20 = _numeric_feature(result, "distance_to_ma20") < 0
+    breakdown = (_numeric_feature(result, "vp_return_1d") <= -0.035) & high_volume & below_ma20
+    repeated_weak_volume = _numeric_feature(result, "vp_5d_high_volume_weak_days") >= 2
+    distribution = _numeric_feature(result, "vp_20d_distribution_score") >= 0.62
+    failed_breakout = _numeric_feature(result, "vp_failed_breakout_1d_flag") >= 0.5
+
+    flag = (
+        (high_position & high_volume & long_upper_shadow & weak_close)
+        | (high_position & high_volume & bearish_body)
+        | breakdown
+        | (high_position & repeated_weak_volume & distribution)
+        | (high_position & failed_breakout)
+    )
+    result["volume_price_extreme_risk_flag"] = flag.fillna(False).astype(bool)
+
+    reasons = pd.Series("none", index=result.index, dtype="object")
+    reasons.loc[high_position & high_volume & long_upper_shadow & weak_close] = "high_volume_upper_shadow"
+    reasons.loc[high_position & high_volume & bearish_body] = "high_volume_bearish"
+    reasons.loc[breakdown] = "high_volume_breakdown"
+    reasons.loc[high_position & repeated_weak_volume & distribution] = "repeated_high_volume_weak_close"
+    reasons.loc[high_position & failed_breakout] = "high_volume_failed_breakout"
+    result["volume_price_extreme_risk_reason"] = reasons
+    return result
+
+
+def add_v5_volume_price_labels(frame: pd.DataFrame) -> pd.DataFrame:
+    result = add_v5_volume_price_extreme_risk_flag(frame)
+    if "bad_risk" not in result.columns and "outcome_20d" in result.columns:
+        result = add_v4_risk_upside_labels(result)
+
+    period20 = _numeric_feature(result, "period_return_20d")
+    upside20 = _numeric_feature(result, "max_upside_20d")
+    drawdown20 = _numeric_feature(result, "max_drawdown_20d")
+    period60 = _numeric_feature(result, "period_return_60d")
+    drawdown60 = _numeric_feature(result, "max_drawdown_60d")
+    bad_risk = _numeric_feature(result, "bad_risk")
+
+    risk_label = (
+        bad_risk.eq(1)
+        | result.get("outcome_20d", pd.Series("", index=result.index)).astype(str).eq("down")
+        | drawdown20.gt(0.10)
+        | (period20.lt(-0.02) & drawdown20.gt(0.06))
+        | (period60.lt(-0.04) & drawdown60.gt(0.12))
+    )
+    risk_ready = period20.notna() & drawdown20.notna()
+    result["volume_price_risk_label"] = risk_label.astype(float)
+    result.loc[~risk_ready, "volume_price_risk_label"] = pd.NA
+
+    close_strength20 = _safe_ratio(period20, upside20).clip(-1.0, 1.0)
+    quality = (
+        0.50 * (period20 / 0.15).clip(-1.0, 1.5)
+        + 0.20 * (upside20 / 0.15).clip(0.0, 1.5)
+        + 0.15 * (period60 / 0.30).clip(-1.0, 1.2).fillna(0.0)
+        + 0.10 * close_strength20.fillna(0.0)
+        - 0.25 * (drawdown20 / 0.08).clip(0.0, 1.8)
+        - 0.10 * (drawdown60 / 0.15).clip(0.0, 1.5).fillna(0.0)
+        - 0.35 * result["volume_price_risk_label"].fillna(0.0)
+    )
+    result["volume_price_quality_value"] = quality
+    result.loc[~risk_ready | upside20.isna(), "volume_price_quality_value"] = pd.NA
+    result["volume_price_quality_rank_pct"] = pd.NA
+    result["volume_price_quality_grade"] = pd.NA
+    for _, day_frame in result.groupby("trade_date", sort=False):
+        values = pd.to_numeric(day_frame["volume_price_quality_value"], errors="coerce")
+        valid_day = values.notna()
+        if not valid_day.any():
+            continue
+        rank_pct = values.loc[valid_day].rank(method="first", pct=True, ascending=True)
+        result.loc[rank_pct.index, "volume_price_quality_rank_pct"] = rank_pct
+        grade = pd.Series(2, index=rank_pct.index, dtype="int64")
+        grade.loc[rank_pct <= 0.15] = 0
+        grade.loc[(rank_pct > 0.15) & (rank_pct <= 0.40)] = 1
+        grade.loc[(rank_pct > 0.75) & (rank_pct <= 0.90)] = 3
+        grade.loc[rank_pct > 0.90] = 4
+        result.loc[grade.index, "volume_price_quality_grade"] = grade
+    return result
+
+
+def volume_price_feature_columns(frame: pd.DataFrame) -> list[str]:
+    excluded = {
+        "volume_price_extreme_risk_flag",
+        "volume_price_risk_label",
+        "volume_price_quality_value",
+        "volume_price_quality_rank_pct",
+        "volume_price_quality_grade",
+    }
+    columns = [
+        column
+        for column in frame.columns
+        if column.startswith("vp_")
+        and column not in excluded
+        and pd.api.types.is_numeric_dtype(frame[column])
+    ]
+    return columns
+
+
+def fit_volume_price_risk_model(frame: pd.DataFrame, *, feature_columns: list[str], max_iter: int) -> object:
+    y = pd.to_numeric(frame["volume_price_risk_label"], errors="coerce")
+    valid = y.notna()
+    X = _model_matrix(frame.loc[valid], feature_columns)
+    y = y.loc[valid].astype(int)
+    if y.nunique(dropna=True) < 2:
+        return ConstantClassifier(int(y.iloc[0]) if len(y) else 0)
+    positive_rate = float(y.mean())
+    sample_weight = pd.Series(1.0, index=y.index, dtype="float64")
+    if 0 < positive_rate < 1:
+        sample_weight.loc[y.eq(1)] = min(4.0, 0.5 / positive_rate)
+        sample_weight.loc[y.eq(0)] = min(4.0, 0.5 / (1.0 - positive_rate))
+    model = HistGradientBoostingClassifier(
+        max_iter=max(max_iter, 30),
+        learning_rate=0.06,
+        max_leaf_nodes=23,
+        l2_regularization=0.05,
+        random_state=51,
+    )
+    model.fit(X, y, sample_weight=sample_weight)
+    return model
+
+
+def fit_volume_price_quality_model(frame: pd.DataFrame, *, feature_columns: list[str], max_iter: int) -> object:
+    y = pd.to_numeric(frame["volume_price_quality_value"], errors="coerce")
+    valid = y.notna()
+    X = _model_matrix(frame.loc[valid], feature_columns)
+    y = y.loc[valid]
+    if y.nunique(dropna=True) < 2:
+        return ConstantRegressor(float(y.mean()) if len(y) else 0.0)
+    model = HistGradientBoostingRegressor(
+        max_iter=max(max_iter + 30, 40),
+        learning_rate=0.05,
+        max_leaf_nodes=23,
+        l2_regularization=0.05,
+        random_state=52,
+    )
+    model.fit(X, y)
+    return model
+
+
+def score_volume_price_submodels(
+    frame: pd.DataFrame,
+    *,
+    risk_model: object,
+    quality_model: object,
+    feature_columns: list[str],
+) -> pd.DataFrame:
+    result = add_v5_volume_price_labels(frame)
+    X = _model_matrix(result, feature_columns)
+    result["volume_price_risk_score"] = _predict_positive_probability(risk_model, X)
+    result["volume_price_quality_score"] = quality_model.predict(X)
+    result["volume_price_quality_score_pct"] = _daily_score_percentile(
+        result, "volume_price_quality_score", higher_is_better=True
+    )
+    result["volume_price_risk_score_pct"] = _daily_score_percentile(
+        result, "volume_price_risk_score", higher_is_better=False
+    )
+    return result
+
+
+def v5_fusion_feature_columns(frame: pd.DataFrame) -> list[str]:
+    columns = [
+        "opportunity_score",
+        "risk_score",
+        "long_upside_score",
+        "volume_price_risk_score",
+        "volume_price_quality_score",
+        "volume_price_quality_score_pct",
+        "volume_price_risk_score_pct",
+        "down_prob_20d",
+        "down_prob_60d",
+        "stage2_weighted_down_prob",
+        "long_stage2_weighted_up_prob",
+        "long_stage2_weighted_down_prob",
+        "long_stage2_weighted_expected_value",
+        "vp_close_position_1d",
+        "vp_upper_shadow_1d",
+        "vp_signed_body_1d",
+        "vp_volume_ratio_1d_to_20d",
+        "vp_amount_ratio_1d_to_20d",
+        "vp_5d_price_volume_confirm",
+        "vp_5d_volume_without_price",
+        "vp_5d_shrink_pullback_score",
+        "vp_5d_high_volume_weak_days",
+        "vp_20d_accumulation_score",
+        "vp_20d_distribution_score",
+        "vp_20d_up_down_volume_ratio",
+        "vp_5d_vs_20d_return_accel",
+        "vp_5d_vs_20d_volume_accel",
+        "vp_volume_accel_without_price",
+        "vp_short_shrink_after_strength",
+        "vp_pullback_depth_in_20d",
+    ]
+    return [column for column in columns if column in frame.columns and pd.api.types.is_numeric_dtype(frame[column])]
+
+
+def add_v5_fusion_target(frame: pd.DataFrame) -> pd.DataFrame:
+    result = add_v5_volume_price_labels(frame)
+    long_value = _numeric_feature(result, "long_upside_value")
+    volume_quality = _numeric_feature(result, "volume_price_quality_value")
+    bad_risk = _numeric_feature(result, "bad_risk")
+    volume_risk = _numeric_feature(result, "volume_price_risk_label")
+    result["v5_fusion_value"] = (
+        0.55 * long_value.fillna(0.0)
+        + 0.45 * volume_quality.fillna(0.0)
+        - 0.80 * bad_risk.fillna(0.0)
+        - 0.30 * volume_risk.fillna(0.0)
+    )
+    ready = long_value.notna() & volume_quality.notna()
+    result.loc[~ready, "v5_fusion_value"] = pd.NA
+    return result
+
+
+def fit_v5_fusion_model(frame: pd.DataFrame, *, feature_columns: list[str], max_iter: int) -> object:
+    y = pd.to_numeric(frame["v5_fusion_value"], errors="coerce")
+    valid = y.notna()
+    train = frame.loc[valid].copy()
+    y = y.loc[valid]
+    if train.empty or y.nunique(dropna=True) < 2:
+        return ConstantRegressor(float(y.mean()) if len(y) else 0.0)
+    X = _model_matrix(train, feature_columns)
+    sample_weight = pd.Series(1.0, index=train.index, dtype="float64")
+    if "action" in train.columns:
+        sample_weight.loc[train["action"].eq("candidate")] = 1.4
+    model = HistGradientBoostingRegressor(
+        max_iter=max(max_iter + 40, 50),
+        learning_rate=0.05,
+        max_leaf_nodes=31,
+        l2_regularization=0.05,
+        random_state=53,
+    )
+    model.fit(X, y, sample_weight=sample_weight)
+    return model
+
+
+def score_v5_fusion_frame(frame: pd.DataFrame, *, fusion_model: object, fusion_features: list[str]) -> pd.DataFrame:
+    result = add_v5_fusion_target(frame)
+    X = _model_matrix(result, fusion_features)
+    result["final_score_v5"] = fusion_model.predict(X)
+    result["buy_score_v5"] = 100 * _daily_score_percentile(result, "final_score_v5", higher_is_better=True)
+    result["model_version_v5"] = "v5_volume_price_fusion"
+    return result
+
+
+def apply_v5_decision(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    if "action" not in result.columns:
+        result["action"] = "candidate"
+    result["pre_v5_action"] = result["action"]
+    extreme = result.get("volume_price_extreme_risk_flag", pd.Series(False, index=result.index)).fillna(False).astype(bool)
+    block = result["action"].eq("candidate") & extreme
+    result.loc[block, "action"] = "avoid"
+    result.loc[block, "final_action"] = "avoid"
+    if "risk_gate_reason" not in result.columns:
+        result["risk_gate_reason"] = "passed"
+    reason = result.get("volume_price_extreme_risk_reason", pd.Series("extreme_volume_price_risk", index=result.index))
+    result.loc[block, "risk_gate_reason"] = "volume_price_" + reason.loc[block].astype(str)
+    result["action_rank_v5"] = np.select(
+        [result["action"].eq("candidate"), result["action"].eq("no_trade")],
+        [0, 1],
+        default=2,
+    )
+    return result
+
+
+def v51_candidate_mask(frame: pd.DataFrame) -> pd.Series:
+    action = frame.get("action", pd.Series("candidate", index=frame.index)).astype(str)
+    permission = frame.get("trade_permission", pd.Series("allow", index=frame.index)).astype(str)
+    extreme = frame.get("volume_price_extreme_risk_flag", pd.Series(False, index=frame.index)).fillna(False).astype(bool)
+    return action.eq("candidate") & permission.eq("allow") & ~extreme
+
+
+def add_v51_candidate_rank_labels(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    if "bad_risk" not in result.columns and "outcome_20d" in result.columns:
+        result = add_v4_risk_upside_labels(result)
+    eligible = v51_candidate_mask(result)
+
+    period20 = _numeric_feature(result, "period_return_20d")
+    period60 = _numeric_feature(result, "period_return_60d")
+    drawdown20 = _numeric_feature(result, "max_drawdown_20d")
+    bad_risk = _numeric_feature(result, "bad_risk")
+    outcome20 = result.get("outcome_20d", pd.Series("", index=result.index)).astype(str)
+    take_profit20 = outcome20.eq("up").astype(float)
+    stop_loss20 = outcome20.eq("down").astype(float)
+
+    value = (
+        0.45 * (period20 / 0.15).clip(-1.0, 1.5)
+        + 0.20 * take_profit20
+        - 0.30 * stop_loss20
+        - 0.25 * (drawdown20 / 0.08).clip(0.0, 2.0)
+        + 0.15 * (period60 / 0.30).clip(-1.0, 1.2).fillna(0.0)
+        - 0.35 * bad_risk.fillna(0.0)
+    )
+    ready = eligible & period20.notna() & drawdown20.notna() & bad_risk.notna()
+    result["v51_candidate_eligible"] = eligible
+    result["v51_rank_value"] = pd.NA
+    result.loc[ready, "v51_rank_value"] = value.loc[ready]
+    result["v51_rank_pct"] = pd.NA
+    result["v51_rank_grade"] = pd.NA
+
+    for _, day_frame in result.loc[ready].groupby("trade_date", sort=False):
+        values = pd.to_numeric(day_frame["v51_rank_value"], errors="coerce")
+        valid = values.notna()
+        if not valid.any():
+            continue
+        rank_pct = values.loc[valid].rank(method="first", pct=True, ascending=True)
+        result.loc[rank_pct.index, "v51_rank_pct"] = rank_pct
+        grade = pd.Series(2, index=rank_pct.index, dtype="int64")
+        grade.loc[rank_pct <= 0.15] = 0
+        grade.loc[(rank_pct > 0.15) & (rank_pct <= 0.35)] = 1
+        grade.loc[(rank_pct > 0.75) & (rank_pct <= 0.90)] = 3
+        grade.loc[rank_pct > 0.90] = 4
+        result.loc[grade.index, "v51_rank_grade"] = grade
+    return result
+
+
+def add_v51_cross_sectional_rank_features(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    rank_columns = [
+        "long_upside_score",
+        "risk_score",
+        "opportunity_score",
+        "final_score_v42",
+        "buy_score_v42",
+        "down_prob_20d",
+        "down_prob_60d",
+        "stage2_weighted_down_prob",
+        "volume_price_risk_score",
+        "volume_price_quality_score",
+        "volume_price_risk_score_pct",
+        "volume_price_quality_score_pct",
+        "final_score_v5",
+        "buy_score_v5",
+        "vp_close_position_1d",
+        "vp_upper_shadow_1d",
+        "vp_signed_body_1d",
+        "vp_volume_ratio_1d_to_20d",
+        "vp_amount_ratio_1d_to_20d",
+        "vp_5d_price_volume_confirm",
+        "vp_5d_volume_without_price",
+        "vp_5d_shrink_pullback_score",
+        "vp_20d_accumulation_score",
+        "vp_20d_distribution_score",
+        "vp_5d_vs_20d_return_accel",
+        "vp_5d_vs_20d_volume_accel",
+        "vp_volume_accel_without_price",
+        "vp_short_shrink_after_strength",
+    ]
+    for column in rank_columns:
+        if column not in result.columns:
+            continue
+        values = pd.to_numeric(result[column], errors="coerce")
+        rank = pd.Series(np.nan, index=result.index, dtype="float64")
+        for _, day_index in result.groupby("trade_date", sort=False).groups.items():
+            day_values = values.loc[day_index]
+            valid = day_values.notna()
+            if valid.any():
+                rank.loc[day_values.loc[valid].index] = day_values.loc[valid].rank(method="first", pct=True)
+        result[f"v51_cs_rank_{column}"] = rank
+    return result
+
+
+def v51_candidate_ranker_feature_columns(frame: pd.DataFrame) -> list[str]:
+    columns = [
+        "long_upside_score",
+        "risk_score",
+        "opportunity_score",
+        "final_score_v42",
+        "buy_score_v42",
+        "down_prob_20d",
+        "down_prob_60d",
+        "stage2_weighted_down_prob",
+        "long_stage2_weighted_up_prob",
+        "long_stage2_weighted_down_prob",
+        "long_stage2_weighted_expected_value",
+        "volume_price_risk_score",
+        "volume_price_quality_score",
+        "volume_price_risk_score_pct",
+        "volume_price_quality_score_pct",
+        "final_score_v5",
+        "buy_score_v5",
+        "vp_close_position_1d",
+        "vp_signed_body_1d",
+        "vp_upper_shadow_1d",
+        "vp_lower_shadow_1d",
+        "vp_return_1d",
+        "vp_volume_ratio_1d_to_20d",
+        "vp_amount_ratio_1d_to_20d",
+        "vp_high_volume_upper_shadow_flag",
+        "vp_high_volume_bearish_flag",
+        "vp_low_volume_stabilization_flag",
+        "vp_failed_breakout_1d_flag",
+        "vp_return_5d",
+        "vp_volume_change_5d",
+        "vp_amount_change_5d",
+        "vp_5d_up_down_volume_ratio",
+        "vp_5d_high_volume_weak_days",
+        "vp_5d_upper_shadow_pressure",
+        "vp_5d_lower_shadow_support",
+        "vp_5d_volume_concentration",
+        "vp_5d_price_volume_confirm",
+        "vp_5d_volume_without_price",
+        "vp_5d_shrink_pullback_score",
+        "vp_return_20d",
+        "vp_volume_change_20d",
+        "vp_amount_change_20d",
+        "vp_20d_range_position",
+        "vp_20d_up_down_volume_ratio",
+        "vp_20d_high_volume_weak_days",
+        "vp_20d_high_volume_strong_days",
+        "vp_20d_volume_trend",
+        "vp_20d_accumulation_score",
+        "vp_20d_distribution_score",
+        "vp_5d_vs_20d_return_accel",
+        "vp_5d_vs_20d_volume_accel",
+        "vp_volume_accel_without_price",
+        "vp_short_shrink_after_strength",
+        "vp_pullback_depth_in_20d",
+    ]
+    columns.extend([column for column in frame.columns if column.startswith("v51_cs_rank_")])
+    seen: set[str] = set()
+    result: list[str] = []
+    for column in columns:
+        if column in frame.columns and column not in seen and pd.api.types.is_numeric_dtype(frame[column]):
+            result.append(column)
+            seen.add(column)
+    return result
+
+
+def fit_v51_candidate_ranker_model(
+    frame: pd.DataFrame,
+    *,
+    feature_columns: list[str],
+    max_iter: int,
+) -> tuple[object, str]:
+    train = add_v51_cross_sectional_rank_features(add_v51_candidate_rank_labels(frame))
+    train = train[train["v51_candidate_eligible"].fillna(False).astype(bool)].copy()
+    y_grade = pd.to_numeric(train["v51_rank_grade"], errors="coerce")
+    valid = y_grade.notna()
+    train = train.loc[valid].copy()
+    y_grade = y_grade.loc[valid].astype(int)
+    if train.empty or y_grade.nunique(dropna=True) < 2:
+        fallback = pd.to_numeric(train.get("v51_rank_pct", pd.Series(dtype=float)), errors="coerce")
+        return ConstantRegressor(float(fallback.mean()) if len(fallback.dropna()) else 0.5), "constant"
+
+    train["trade_date"] = pd.to_datetime(train["trade_date"])
+    train = train.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
+    y_grade = pd.to_numeric(train["v51_rank_grade"], errors="coerce").astype(int)
+    X = _model_matrix(train, feature_columns)
+    groups = train.groupby("trade_date", sort=False).size().astype(int).tolist()
+
+    if LGBMRanker is not None and len(train) >= 50 and len(groups) >= 5:
+        kwargs = {
+            "objective": "lambdarank",
+            "metric": "ndcg",
+            "n_estimators": max(max_iter + 120, 60),
+            "learning_rate": 0.035,
+            "num_leaves": 31,
+            "min_child_samples": 20,
+            "subsample": 0.90,
+            "colsample_bytree": 0.90,
+            "random_state": 61,
+            "verbosity": -1,
+            "label_gain": [0, 1, 3, 7, 15],
+        }
+        try:
+            model = LGBMRanker(**kwargs)
+        except TypeError:  # pragma: no cover - version compatibility guard.
+            kwargs.pop("label_gain", None)
+            model = LGBMRanker(**kwargs)
+        model.fit(X, y_grade, group=groups)
+        return model, "lightgbm_lambdarank"
+
+    target = pd.to_numeric(train["v51_rank_pct"], errors="coerce").fillna(0.5)
+    sample_weight = pd.Series(1.0, index=train.index, dtype="float64")
+    sample_weight.loc[y_grade.isin([0, 4])] = 1.7
+    sample_weight.loc[y_grade.eq(3)] = 1.3
+    model = HistGradientBoostingRegressor(
+        max_iter=max(max_iter + 70, 50),
+        learning_rate=0.045,
+        max_leaf_nodes=31,
+        l2_regularization=0.04,
+        random_state=62,
+    )
+    model.fit(X, target, sample_weight=sample_weight)
+    return model, "hist_gradient_boosting_regressor"
+
+
+def score_v51_candidate_ranker_frame(
+    frame: pd.DataFrame,
+    *,
+    ranker_model: object,
+    feature_columns: list[str],
+) -> pd.DataFrame:
+    result = add_v51_cross_sectional_rank_features(add_v51_candidate_rank_labels(frame))
+    X = _model_matrix(result, feature_columns)
+    result["candidate_rank_score_v51"] = ranker_model.predict(X)
+    result["candidate_rank_score_pct_v51"] = _daily_score_percentile(
+        result,
+        "candidate_rank_score_v51",
+        higher_is_better=True,
+    )
+    result["rank_source_v51"] = "candidate_ranker"
+    result["model_version_v51"] = "v51_candidate_ranker"
+    result["action_rank_v51"] = np.select(
+        [result["action"].eq("candidate"), result["action"].eq("no_trade")],
+        [0, 1],
+        default=2,
+    )
+    return result
+
+
+def apply_v51_blend_score(frame: pd.DataFrame, params: dict[str, object]) -> pd.DataFrame:
+    result = frame.copy()
+    weight = float(params.get("blend_weight", 1.0))
+    v51_pct = pd.to_numeric(result.get("candidate_rank_score_pct_v51", pd.Series(0.5, index=result.index)), errors="coerce")
+    if "opportunity_rank_score_pct" in result.columns:
+        baseline_pct = pd.to_numeric(result["opportunity_rank_score_pct"], errors="coerce")
+    elif "buy_score_v42" in result.columns:
+        baseline_pct = pd.to_numeric(result["buy_score_v42"], errors="coerce") / 100
+    else:
+        baseline_pct = _daily_score_percentile(result, "final_score_v42", higher_is_better=True)
+    result["v51_blend_weight"] = weight
+    result["final_score_v51_raw"] = pd.to_numeric(result["candidate_rank_score_v51"], errors="coerce")
+    result["final_score_v51"] = weight * v51_pct.fillna(0.5) + (1 - weight) * baseline_pct.fillna(0.5)
+    result["buy_score_v51"] = 100 * _daily_score_percentile(result, "final_score_v51", higher_is_better=True)
+    result["rank_source_v51"] = np.where(weight >= 0.999, "candidate_ranker", "candidate_ranker_v42_blend")
+    return result
+
+
+def select_v51_blend_params(
+    scored_valid: pd.DataFrame,
+    *,
+    top_n_list: tuple[int, ...],
+) -> tuple[dict[str, object], pd.DataFrame]:
+    rows: list[dict[str, object]] = []
+    selection_top_n = 20 if 20 in set(top_n_list) else min(top_n_list)
+    for weight in (0.50, 0.65, 0.80, 1.00):
+        applied = apply_v51_blend_score(scored_valid, {"blend_weight": weight})
+        top_rows = _topn_rows_by_score(
+            applied,
+            split_name="valid",
+            top_n_list=top_n_list,
+            score_column="final_score_v51",
+            model_version="v51_candidate_ranker",
+        )
+        for row in top_rows:
+            row["blend_weight"] = weight
+            row["objective"] = (
+                1.00 * row.get("avg_return_20d", 0.0)
+                + 0.35 * row.get("win_rate", 0.0)
+                + 0.25 * row.get("take_profit_rate_20d", 0.0)
+                - 0.90 * row.get("stop_loss_rate_20d", 0.0)
+                - 0.45 * row.get("bad_risk_rate", 0.0)
+                - 0.50 * row.get("avg_max_drawdown_20d", 0.0)
+            )
+            rows.append(row)
+    grid = pd.DataFrame(rows)
+    if grid.empty:
+        return {"blend_weight": 1.0, "selected_on": "fallback_ranker_only"}, grid
+    selection = grid[grid["top_n"].eq(selection_top_n)].copy()
+    selected = selection.sort_values(
+        ["objective", "avg_return_20d", "win_rate", "stop_loss_rate_20d"],
+        ascending=[False, False, False, True],
+    ).iloc[0]
+    return {
+        "blend_weight": float(selected["blend_weight"]),
+        "selected_on": f"valid_top{selection_top_n}",
+        "objective": float(selected["objective"]),
+    }, grid
 
 
 def build_v42_opportunity_frame(
@@ -2661,6 +4496,276 @@ def compare_v42_topn_metrics(
     return pd.concat(rows, ignore_index=True, copy=False) if rows else pd.DataFrame()
 
 
+def evaluate_v5_topn_metrics(scored: pd.DataFrame, *, top_n_list: tuple[int, ...]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for split_name, split_frame in scored.groupby("dataset_split", sort=False):
+        rows.extend(
+            _topn_rows_by_score(
+                split_frame,
+                split_name=split_name,
+                top_n_list=top_n_list,
+                score_column="final_score_v5",
+                model_version=None,
+            )
+        )
+    return pd.DataFrame(rows)
+
+
+def evaluate_volume_price_risk_metrics(scored: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    if scored.empty:
+        return pd.DataFrame()
+    for split_name, split_frame in scored.groupby("dataset_split", sort=False):
+        for group_name, group in [
+            ("all", split_frame),
+            ("candidate", split_frame[split_frame["pre_v5_action"].eq("candidate")] if "pre_v5_action" in split_frame.columns else split_frame),
+            ("v5_candidate", split_frame[split_frame["action"].eq("candidate")] if "action" in split_frame.columns else split_frame),
+        ]:
+            y = pd.to_numeric(group.get("volume_price_risk_label", pd.Series(dtype=float)), errors="coerce")
+            score = pd.to_numeric(group.get("volume_price_risk_score", pd.Series(dtype=float)), errors="coerce")
+            valid = y.notna() & score.notna()
+            row: dict[str, object] = {
+                "dataset_split": split_name,
+                "action_group": group_name,
+                "rows": int(valid.sum()),
+                "volume_price_risk_rate": float(y.loc[valid].mean()) if valid.any() else float("nan"),
+                "avg_volume_price_risk_score": _safe_mean(score),
+                "extreme_risk_rate": (
+                    float(group["volume_price_extreme_risk_flag"].fillna(False).astype(bool).mean())
+                    if "volume_price_extreme_risk_flag" in group.columns and not group.empty
+                    else float("nan")
+                ),
+            }
+            if valid.any():
+                pred = score.loc[valid].ge(0.5).astype(int)
+                yv = y.loc[valid].astype(int)
+                row["risk_accuracy_0p5"] = float(accuracy_score(yv, pred))
+                positive_pred = pred.eq(1)
+                row["risk_precision_0p5"] = (
+                    float(yv.loc[positive_pred].mean()) if positive_pred.any() else float("nan")
+                )
+                actual_positive = yv.eq(1)
+                row["risk_recall_0p5"] = (
+                    float(pred.loc[actual_positive].mean()) if actual_positive.any() else float("nan")
+                )
+                try:
+                    row["risk_auc"] = float(roc_auc_score(yv, score.loc[valid]))
+                except ValueError:
+                    row["risk_auc"] = float("nan")
+                if "volume_price_extreme_risk_flag" in group.columns:
+                    extreme = group.loc[valid, "volume_price_extreme_risk_flag"].fillna(False).astype(bool)
+                    row["extreme_risk_precision"] = float(yv.loc[extreme].mean()) if extreme.any() else float("nan")
+                    row["extreme_risk_recall"] = float(extreme.loc[actual_positive].mean()) if actual_positive.any() else float("nan")
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def evaluate_volume_price_quality_metrics(scored: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    if scored.empty:
+        return pd.DataFrame()
+    for split_name, split_frame in scored.groupby("dataset_split", sort=False):
+        for group_name, group in [
+            ("all", split_frame),
+            ("candidate", split_frame[split_frame["pre_v5_action"].eq("candidate")] if "pre_v5_action" in split_frame.columns else split_frame),
+            ("v5_candidate", split_frame[split_frame["action"].eq("candidate")] if "action" in split_frame.columns else split_frame),
+        ]:
+            y = pd.to_numeric(group.get("volume_price_quality_value", pd.Series(dtype=float)), errors="coerce")
+            pred = pd.to_numeric(group.get("volume_price_quality_score", pd.Series(dtype=float)), errors="coerce")
+            valid = y.notna() & pred.notna()
+            if not valid.any():
+                rows.append(
+                    {
+                        "dataset_split": split_name,
+                        "action_group": group_name,
+                        "rows": 0,
+                        "avg_volume_price_quality_value": float("nan"),
+                        "avg_volume_price_quality_score": float("nan"),
+                    }
+                )
+                continue
+            yv = y.loc[valid]
+            pv = pred.loc[valid]
+            row: dict[str, object] = {
+                "dataset_split": split_name,
+                "action_group": group_name,
+                "rows": int(valid.sum()),
+                "avg_volume_price_quality_value": float(yv.mean()),
+                "avg_volume_price_quality_score": float(pv.mean()),
+                "mae": float(mean_absolute_error(yv, pv)),
+                "rmse": float(math.sqrt(mean_squared_error(yv, pv))),
+                "pearson_corr": float(yv.corr(pv)) if len(yv) > 1 else float("nan"),
+                "spearman_corr": float(yv.corr(pv, method="spearman")) if len(yv) > 1 else float("nan"),
+                "avg_return_20d": _safe_mean(group.loc[valid, "period_return_20d"]) if "period_return_20d" in group.columns else float("nan"),
+                "avg_drawdown_20d": _safe_mean(group.loc[valid, "max_drawdown_20d"]) if "max_drawdown_20d" in group.columns else float("nan"),
+            }
+            grade = pd.to_numeric(group.get("volume_price_quality_grade", pd.Series(dtype=float)), errors="coerce")
+            if grade.loc[valid].nunique(dropna=True) > 1 and pv.nunique(dropna=True) > 1:
+                try:
+                    row["ndcg_at_20"] = float(
+                        ndcg_score(
+                            [grade.loc[valid].fillna(0).to_numpy(dtype=float)],
+                            [pv.to_numpy(dtype=float)],
+                            k=min(20, int(valid.sum())),
+                        )
+                    )
+                except ValueError:
+                    row["ndcg_at_20"] = float("nan")
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def compare_v5_topn_metrics(
+    baseline_scored: pd.DataFrame,
+    v5_scored: pd.DataFrame,
+    *,
+    top_n_list: tuple[int, ...],
+) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+    baseline_rows: list[dict[str, object]] = []
+    for split_name, split_frame in baseline_scored.groupby("dataset_split", sort=False):
+        baseline_rows.extend(
+            _topn_rows_by_score(
+                split_frame,
+                split_name=split_name,
+                top_n_list=top_n_list,
+                score_column="final_score_v42",
+                model_version="v42_gate_v4_rank",
+            )
+        )
+    if baseline_rows:
+        rows.append(pd.DataFrame(baseline_rows))
+
+    v5_rows: list[dict[str, object]] = []
+    for split_name, split_frame in v5_scored.groupby("dataset_split", sort=False):
+        v5_rows.extend(
+            _topn_rows_by_score(
+                split_frame,
+                split_name=split_name,
+                top_n_list=top_n_list,
+                score_column="final_score_v5",
+                model_version="v5_volume_price_fusion",
+            )
+        )
+    if v5_rows:
+        rows.append(pd.DataFrame(v5_rows))
+    return pd.concat(rows, ignore_index=True, copy=False) if rows else pd.DataFrame()
+
+
+def evaluate_v51_topn_metrics(scored: pd.DataFrame, *, top_n_list: tuple[int, ...]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for split_name, split_frame in scored.groupby("dataset_split", sort=False):
+        rows.extend(
+            _topn_rows_by_score(
+                split_frame,
+                split_name=split_name,
+                top_n_list=top_n_list,
+                score_column="final_score_v51",
+                model_version=None,
+            )
+        )
+    return pd.DataFrame(rows)
+
+
+def evaluate_v51_ranker_metrics(scored: pd.DataFrame, *, top_n_list: tuple[int, ...]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    eval_at = tuple(sorted(set(top_n_list)))
+    if scored.empty:
+        return pd.DataFrame()
+    for split_name, split_frame in scored.groupby("dataset_split", sort=False):
+        candidates = split_frame[split_frame.get("v51_candidate_eligible", pd.Series(False, index=split_frame.index)).fillna(False).astype(bool)]
+        y = pd.to_numeric(candidates.get("v51_rank_value", pd.Series(dtype=float)), errors="coerce")
+        pred = pd.to_numeric(candidates.get("candidate_rank_score_v51", pd.Series(dtype=float)), errors="coerce")
+        valid = y.notna() & pred.notna()
+        row: dict[str, object] = {
+            "dataset_split": split_name,
+            "action_group": "v51_candidate",
+            "rows": int(valid.sum()),
+            "avg_v51_rank_value": float(y.loc[valid].mean()) if valid.any() else float("nan"),
+            "avg_candidate_rank_score_v51": float(pred.loc[valid].mean()) if valid.any() else float("nan"),
+            "pearson_corr": float(y.loc[valid].corr(pred.loc[valid])) if valid.sum() > 1 else float("nan"),
+            "spearman_corr": float(y.loc[valid].corr(pred.loc[valid], method="spearman")) if valid.sum() > 1 else float("nan"),
+        }
+        grade = pd.to_numeric(candidates.get("v51_rank_grade", pd.Series(dtype=float)), errors="coerce")
+        for top_n in eval_at:
+            scores: list[float] = []
+            for _, day_frame in candidates.groupby("trade_date", sort=False):
+                label = pd.to_numeric(day_frame.get("v51_rank_grade", pd.Series(dtype=float)), errors="coerce")
+                score = pd.to_numeric(day_frame.get("candidate_rank_score_v51", pd.Series(dtype=float)), errors="coerce")
+                day_valid = label.notna() & score.notna()
+                if day_valid.sum() < 2:
+                    continue
+                try:
+                    scores.append(
+                        float(
+                            ndcg_score(
+                                [label.loc[day_valid].to_numpy(dtype=float)],
+                                [score.loc[day_valid].to_numpy(dtype=float)],
+                                k=min(top_n, int(day_valid.sum())),
+                            )
+                        )
+                    )
+                except ValueError:
+                    continue
+            row[f"ndcg_at_{top_n}"] = float(np.mean(scores)) if scores else float("nan")
+        if valid.any() and grade.loc[valid].notna().any():
+            row["avg_grade"] = float(grade.loc[valid].mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def compare_v51_topn_metrics(
+    *,
+    baseline_scored: pd.DataFrame,
+    v5_scored: pd.DataFrame,
+    v51_scored: pd.DataFrame,
+    top_n_list: tuple[int, ...],
+) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+    baseline_rows: list[dict[str, object]] = []
+    for split_name, split_frame in baseline_scored.groupby("dataset_split", sort=False):
+        baseline_rows.extend(
+            _topn_rows_by_score(
+                split_frame,
+                split_name=split_name,
+                top_n_list=top_n_list,
+                score_column="final_score_v42",
+                model_version="v42_gate_v4_rank",
+            )
+        )
+    if baseline_rows:
+        rows.append(pd.DataFrame(baseline_rows))
+
+    v5_rows: list[dict[str, object]] = []
+    for split_name, split_frame in v5_scored.groupby("dataset_split", sort=False):
+        v5_rows.extend(
+            _topn_rows_by_score(
+                split_frame,
+                split_name=split_name,
+                top_n_list=top_n_list,
+                score_column="final_score_v5",
+                model_version="v5_volume_price_fusion",
+            )
+        )
+    if v5_rows:
+        rows.append(pd.DataFrame(v5_rows))
+
+    v51_rows: list[dict[str, object]] = []
+    for split_name, split_frame in v51_scored.groupby("dataset_split", sort=False):
+        v51_rows.extend(
+            _topn_rows_by_score(
+                split_frame,
+                split_name=split_name,
+                top_n_list=top_n_list,
+                score_column="final_score_v51",
+                model_version="v51_candidate_ranker",
+            )
+        )
+    if v51_rows:
+        rows.append(pd.DataFrame(v51_rows))
+    return pd.concat(rows, ignore_index=True, copy=False) if rows else pd.DataFrame()
+
+
 def stage2_feature_columns(frame: pd.DataFrame) -> list[str]:
     columns: list[str] = []
     for spec in HORIZONS:
@@ -2984,6 +5089,7 @@ def _metric_row(split_name: str, frame: pd.DataFrame, top_n: int | None) -> dict
             for column in (
                 "__selection_score",
                 "trade_value_pred",
+                "final_score_v5",
                 "final_score_v42",
                 "opportunity_rank_score",
                 "final_score_v41",
@@ -3006,6 +5112,9 @@ def _metric_row(split_name: str, frame: pd.DataFrame, top_n: int | None) -> dict
         return {"dataset_split": split_name, "top_n": top_n, "rows": 0}
     y_true = y_true[valid]
     y_pred = y_pred[valid]
+    returns_20d = pd.to_numeric(frame.loc[valid, "period_return_20d"], errors="coerce")
+    positive_returns_20d = returns_20d[returns_20d > 0]
+    negative_returns_20d = returns_20d[returns_20d < 0]
     row: dict[str, object] = {
         "dataset_split": split_name,
         "top_n": top_n if top_n is not None else "all",
@@ -3018,7 +5127,10 @@ def _metric_row(split_name: str, frame: pd.DataFrame, top_n: int | None) -> dict
         "rmse": float(math.sqrt(mean_squared_error(y_true, y_pred))),
         "pearson_corr": float(y_true.corr(y_pred)) if len(y_true) > 1 else np.nan,
         "spearman_corr": float(y_true.corr(y_pred, method="spearman")) if len(y_true) > 1 else np.nan,
-        "avg_return_20d": _safe_mean(frame.loc[valid, "period_return_20d"]),
+        "avg_return_20d": _safe_mean(returns_20d),
+        "median_return_20d": float(returns_20d.median()) if returns_20d.notna().any() else float("nan"),
+        "avg_positive_return_20d": _safe_mean(positive_returns_20d),
+        "avg_negative_return_20d": _safe_mean(negative_returns_20d),
         "avg_max_drawdown_20d": _safe_mean(frame.loc[valid, "max_drawdown_20d"]),
         "take_profit_rate_20d": _outcome_rate(frame.loc[valid], "20d", "up"),
         "stop_loss_rate_20d": _outcome_rate(frame.loc[valid], "20d", "down"),
@@ -3100,6 +5212,181 @@ def prepare_opportunity_ranker_prediction_report(scored: pd.DataFrame) -> pd.Dat
     return scored.loc[:, [column for column in columns if column in scored.columns]].copy()
 
 
+def prepare_v5_prediction_report(scored: pd.DataFrame) -> pd.DataFrame:
+    report = scored.copy()
+    if "model_version" not in report.columns:
+        report["model_version"] = report.get("model_version_v5", "v5_volume_price_fusion")
+    columns = [
+        "rank",
+        "model_version",
+        "trade_date",
+        "symbol",
+        "name",
+        "action",
+        "pre_v5_action",
+        "risk_candidate_action",
+        "risk_action",
+        "final_action",
+        "trade_permission",
+        "risk_tier",
+        "risk_gate_reason",
+        "opportunity_score",
+        "opportunity_threshold",
+        "risk_score",
+        "long_upside_score",
+        "opportunity_rank_score",
+        "final_score_v42",
+        "buy_score_v42",
+        "rank_source_v42",
+        "volume_price_extreme_risk_flag",
+        "volume_price_extreme_risk_reason",
+        "volume_price_risk_score",
+        "volume_price_risk_score_pct",
+        "volume_price_quality_score",
+        "volume_price_quality_score_pct",
+        "final_score_v5",
+        "buy_score_v5",
+        "top_risk_horizon",
+        "top_upside_horizon",
+        "stage2_weighted_down_prob",
+    ]
+    for spec in HORIZONS:
+        columns.extend([f"up_prob_{spec.name}", f"down_prob_{spec.name}", f"neutral_prob_{spec.name}"])
+    explanation = [
+        "close",
+        "distance_to_ma20",
+        "distance_to_ma60",
+        "return_5d",
+        "return_20d",
+        "return_60d",
+        "volume_ratio_20",
+        "amount_ratio_20",
+        "vp_close_position_1d",
+        "vp_signed_body_1d",
+        "vp_upper_shadow_1d",
+        "vp_lower_shadow_1d",
+        "vp_return_1d",
+        "vp_gap_1d",
+        "vp_volume_ratio_1d_to_20d",
+        "vp_amount_ratio_1d_to_20d",
+        "vp_high_volume_upper_shadow_flag",
+        "vp_high_volume_bearish_flag",
+        "vp_failed_breakout_1d_flag",
+        "vp_return_5d",
+        "vp_volume_change_5d",
+        "vp_amount_change_5d",
+        "vp_5d_up_down_volume_ratio",
+        "vp_5d_high_volume_weak_days",
+        "vp_5d_upper_shadow_pressure",
+        "vp_5d_lower_shadow_support",
+        "vp_5d_price_volume_confirm",
+        "vp_5d_volume_without_price",
+        "vp_5d_shrink_pullback_score",
+        "vp_return_20d",
+        "vp_volume_change_20d",
+        "vp_amount_change_20d",
+        "vp_20d_range_position",
+        "vp_20d_up_down_volume_ratio",
+        "vp_20d_accumulation_score",
+        "vp_20d_distribution_score",
+        "vp_5d_vs_20d_return_accel",
+        "vp_5d_vs_20d_volume_accel",
+        "vp_volume_accel_without_price",
+        "vp_short_shrink_after_strength",
+        "vp_pullback_depth_in_20d",
+        "macd_hist",
+        "rsi_14",
+        "stoch_k",
+        "stoch_d",
+        "stoch_j",
+        "atr_pct_14",
+    ]
+    columns.extend([column for column in explanation if column in report.columns])
+    return report.loc[:, [column for column in columns if column in report.columns]].copy()
+
+
+def prepare_v51_prediction_report(scored: pd.DataFrame) -> pd.DataFrame:
+    report = scored.copy()
+    if "model_version" not in report.columns:
+        report["model_version"] = report.get("model_version_v51", "v51_candidate_ranker")
+    columns = [
+        "rank",
+        "model_version",
+        "trade_date",
+        "symbol",
+        "name",
+        "action",
+        "pre_v5_action",
+        "risk_candidate_action",
+        "risk_action",
+        "final_action",
+        "trade_permission",
+        "risk_tier",
+        "risk_gate_reason",
+        "opportunity_score",
+        "opportunity_threshold",
+        "risk_score",
+        "long_upside_score",
+        "opportunity_rank_score",
+        "final_score_v42",
+        "buy_score_v42",
+        "rank_source_v42",
+        "volume_price_extreme_risk_flag",
+        "volume_price_extreme_risk_reason",
+        "volume_price_risk_score",
+        "volume_price_quality_score",
+        "final_score_v5",
+        "buy_score_v5",
+        "candidate_rank_score_v51",
+        "candidate_rank_score_pct_v51",
+        "final_score_v51_raw",
+        "final_score_v51",
+        "buy_score_v51",
+        "v51_blend_weight",
+        "rank_source_v51",
+        "top_risk_horizon",
+        "top_upside_horizon",
+        "stage2_weighted_down_prob",
+    ]
+    for spec in HORIZONS:
+        columns.extend([f"up_prob_{spec.name}", f"down_prob_{spec.name}", f"neutral_prob_{spec.name}"])
+    explanation = [
+        "close",
+        "distance_to_ma20",
+        "distance_to_ma60",
+        "return_5d",
+        "return_20d",
+        "return_60d",
+        "volume_ratio_20",
+        "amount_ratio_20",
+        "vp_close_position_1d",
+        "vp_signed_body_1d",
+        "vp_upper_shadow_1d",
+        "vp_return_1d",
+        "vp_volume_ratio_1d_to_20d",
+        "vp_amount_ratio_1d_to_20d",
+        "vp_5d_price_volume_confirm",
+        "vp_5d_volume_without_price",
+        "vp_5d_shrink_pullback_score",
+        "vp_20d_range_position",
+        "vp_20d_up_down_volume_ratio",
+        "vp_20d_accumulation_score",
+        "vp_20d_distribution_score",
+        "vp_5d_vs_20d_return_accel",
+        "vp_5d_vs_20d_volume_accel",
+        "vp_volume_accel_without_price",
+        "vp_short_shrink_after_strength",
+        "macd_hist",
+        "rsi_14",
+        "stoch_k",
+        "stoch_d",
+        "stoch_j",
+        "atr_pct_14",
+    ]
+    columns.extend([column for column in explanation if column in report.columns])
+    return report.loc[:, [column for column in columns if column in report.columns]].copy()
+
+
 def format_metric_table(frame: pd.DataFrame, *, limit: int | None = None) -> str:
     if frame.empty:
         return "No metrics."
@@ -3152,6 +5439,97 @@ def format_opportunity_ranker_prediction_table(frame: pd.DataFrame, *, limit: in
             "top_risk_horizon",
             "top_upside_horizon",
         }:
+            continue
+        if pd.api.types.is_numeric_dtype(display[column]):
+            display[column] = display[column].map(lambda value: f"{value:.4f}" if pd.notna(value) else "")
+    return display.to_string(index=False)
+
+
+def format_volume_price_fusion_prediction_table(frame: pd.DataFrame, *, limit: int) -> str:
+    if frame.empty:
+        return "No predictions."
+    columns = [
+        "rank",
+        "symbol",
+        "name",
+        "action",
+        "pre_v5_action",
+        "trade_permission",
+        "risk_tier",
+        "risk_gate_reason",
+        "opportunity_score",
+        "risk_score",
+        "long_upside_score",
+        "volume_price_risk_score",
+        "volume_price_quality_score",
+        "final_score_v5",
+        "buy_score_v5",
+        "final_score_v42",
+        "buy_score_v42",
+        "volume_price_extreme_risk_flag",
+        "volume_price_extreme_risk_reason",
+    ]
+    display = frame.loc[:, [column for column in columns if column in frame.columns]].head(limit).copy()
+    text_columns = {
+        "rank",
+        "symbol",
+        "name",
+        "action",
+        "pre_v5_action",
+        "trade_permission",
+        "risk_tier",
+        "risk_gate_reason",
+        "volume_price_extreme_risk_flag",
+        "volume_price_extreme_risk_reason",
+    }
+    for column in display.columns:
+        if column in text_columns:
+            continue
+        if pd.api.types.is_numeric_dtype(display[column]):
+            display[column] = display[column].map(lambda value: f"{value:.4f}" if pd.notna(value) else "")
+    return display.to_string(index=False)
+
+
+def format_candidate_ranker_prediction_table(frame: pd.DataFrame, *, limit: int) -> str:
+    if frame.empty:
+        return "No predictions."
+    columns = [
+        "rank",
+        "symbol",
+        "name",
+        "action",
+        "trade_permission",
+        "risk_tier",
+        "risk_gate_reason",
+        "opportunity_score",
+        "risk_score",
+        "long_upside_score",
+        "volume_price_risk_score",
+        "volume_price_quality_score",
+        "final_score_v5",
+        "candidate_rank_score_v51",
+        "final_score_v51",
+        "buy_score_v51",
+        "v51_blend_weight",
+        "rank_source_v51",
+        "volume_price_extreme_risk_flag",
+        "volume_price_extreme_risk_reason",
+    ]
+    display = frame.loc[:, [column for column in columns if column in frame.columns]].head(limit).copy()
+    text_columns = {
+        "rank",
+        "symbol",
+        "name",
+        "action",
+        "trade_permission",
+        "risk_tier",
+        "risk_gate_reason",
+        "rank_source_v51",
+        "volume_price_extreme_risk_flag",
+        "volume_price_extreme_risk_reason",
+    }
+    for column in display.columns:
+        if column in text_columns:
             continue
         if pd.api.types.is_numeric_dtype(display[column]):
             display[column] = display[column].map(lambda value: f"{value:.4f}" if pd.notna(value) else "")

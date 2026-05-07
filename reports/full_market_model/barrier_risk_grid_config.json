@@ -1,0 +1,95 @@
+{
+  "start_date": "2015-01-01",
+  "end_date": "2026-05-07",
+  "limit": null,
+  "train_days": 1000,
+  "valid_days": 250,
+  "step_days": 250,
+  "max_windows": 6,
+  "horizon_days_grid": [
+    5,
+    10
+  ],
+  "pt_sl_grid": [
+    [
+      1.0,
+      1.0
+    ],
+    [
+      2.0,
+      2.0
+    ]
+  ],
+  "min_ret_grid": [
+    0.003,
+    0.005
+  ],
+  "volatility_lookback": 100,
+  "model_names": [
+    "lightgbm_classifier"
+  ],
+  "filter_rates": [
+    0.2
+  ],
+  "return_tolerance": 0.001,
+  "allow_short_sample": false,
+  "min_training_rows": 200,
+  "configs": [
+    {
+      "config_id": "mlfin_h5_pt1_sl1_minret0.003",
+      "horizon_days": 5,
+      "pt_mult": 1.0,
+      "sl_mult": 1.0,
+      "min_ret": 0.003
+    },
+    {
+      "config_id": "mlfin_h5_pt1_sl1_minret0.005",
+      "horizon_days": 5,
+      "pt_mult": 1.0,
+      "sl_mult": 1.0,
+      "min_ret": 0.005
+    },
+    {
+      "config_id": "mlfin_h5_pt2_sl2_minret0.003",
+      "horizon_days": 5,
+      "pt_mult": 2.0,
+      "sl_mult": 2.0,
+      "min_ret": 0.003
+    },
+    {
+      "config_id": "mlfin_h5_pt2_sl2_minret0.005",
+      "horizon_days": 5,
+      "pt_mult": 2.0,
+      "sl_mult": 2.0,
+      "min_ret": 0.005
+    },
+    {
+      "config_id": "mlfin_h10_pt1_sl1_minret0.003",
+      "horizon_days": 10,
+      "pt_mult": 1.0,
+      "sl_mult": 1.0,
+      "min_ret": 0.003
+    },
+    {
+      "config_id": "mlfin_h10_pt1_sl1_minret0.005",
+      "horizon_days": 10,
+      "pt_mult": 1.0,
+      "sl_mult": 1.0,
+      "min_ret": 0.005
+    },
+    {
+      "config_id": "mlfin_h10_pt2_sl2_minret0.003",
+      "horizon_days": 10,
+      "pt_mult": 2.0,
+      "sl_mult": 2.0,
+      "min_ret": 0.003
+    },
+    {
+      "config_id": "mlfin_h10_pt2_sl2_minret0.005",
+      "horizon_days": 10,
+      "pt_mult": 2.0,
+      "sl_mult": 2.0,
+      "min_ret": 0.005
+    }
+  ]
+}

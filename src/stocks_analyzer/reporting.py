@@ -8,6 +8,7 @@ DISPLAY_COLUMNS = [
     "symbol",
     "name",
     "pattern_id",
+    "风险情况",
     "strategy_name",
     "close",
     "old_high_date",

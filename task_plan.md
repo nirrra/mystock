@@ -6,7 +6,94 @@
 
 ## Current Phase
 
-Project consolidation after V4.2 hybrid deployment: old model paths removed, daily screening now uses `predict-model`, and documentation is being synced to the current state.
+Daily watchlist semantics have been adjusted. The current daily flow still runs full-market `update -> tradingview -> predict-model -> macd -> atr -> pattern`, but `trade_permission` is now a next-open warning rather than a hard entry gate. The main watchlist combines low-risk model Top20 names with low-risk pattern matches.
+
+V5 and V5.1 model iterations are complete as experimental research paths. V5 adds daily 1/5/20 volume-price risk and quality signals; V5.1 adds a candidate-only ranker on top of the already filtered candidate pool. Neither is promoted to `predict-model` because validation/test Top20 trading metrics do not consistently beat the current `v42_gate_v4_rank` daily model.
+
+## Active Initiative: Daily Watchlist Semantics
+
+### Goal
+
+Always produce a useful daily candidate list while preserving the model's next-open no-trade warning.
+
+### Implementation Phases
+
+- [x] Keep full-market daily stages unchanged.
+- [x] Make risk filtering the hard watchlist entry gate.
+- [x] Treat `trade_permission` as a top-level next-open warning.
+- [x] Build main `watchlist` from low-risk model Top20 plus low-risk pattern matches.
+- [x] Keep `watchlist_pattern` as low-risk pattern subset.
+- [x] Update pick-writing guide and README.
+- [x] Add watchlist regression tests.
+- **Status:** complete
+
+The active validation task is now lightweight walk-forward testing for the current mainline `v42_gate_v4_rank`, so the single-split 80% test win rate can be checked across multiple future windows.
+
+## Active Initiative: Lightweight Walk-Forward Validation
+
+### Goal
+
+Validate whether the current mainline model generalizes across multiple chronological market windows before treating its 80% single-split Top20 win rate as stable evidence.
+
+### Implementation Phases
+
+- [x] Write walk-forward validation design spec.
+- [x] Add chronological trading-date window generation.
+- [x] Add in-memory V4.2 hybrid retraining per window without overwriting daily model artifacts.
+- [x] Add per-window TopN reports and aggregate summary thresholds.
+- [x] Wire CLI command `validate-model-walkforward`.
+- [x] Add focused unit tests for window generation, summary aggregation, and CLI parsing.
+- [ ] Run a full multi-window local validation job and record the resulting stability metrics.
+- **Status:** implemented, awaiting full run
+
+## Active Initiative: V5.1 Candidate-Only Ranker
+
+### Goal
+
+Improve the unresolved stock-selection problem after the current risk/opportunity gates have already filtered the market: among allowed candidates, learn which stocks deserve higher buy priority.
+
+### Implementation Phases
+
+- [x] Add candidate-only rank labels focused on 20-day return quality with 60-day support.
+- [x] Add cross-sectional candidate-pool rank features.
+- [x] Train a V5.1 ranker using LightGBM LambdaRank when available, with a histogram-boosting fallback.
+- [x] Blend V5.1 ranker score with the existing V4.2 rank score using validation Top20 selection.
+- [x] Add artifact save/load, prediction reports, comparison metrics, CLI commands, and tests.
+- [x] Run full local training and compare V4.2, V5, and V5.1.
+- **Status:** complete, experimental; not promoted
+
+### Latest V5.1 Result
+
+- Trained full local dataset through `train-candidate-ranker --max-iter 40 --top-n 20,50 --predict-date 2026-04-30`.
+- Artifact: `data/ml/v51_candidate_ranker/v51_candidate_ranker.pkl`.
+- Reports: `reports/v51_candidate_ranker/`.
+- Selected blend: `0.65 * V5.1 ranker + 0.35 * V4.2 rank score`.
+- V5.1 improved rank diagnostics but degraded Top20 trading quality versus V5 and did not beat V4.2 on validation, so it is not eligible for daily promotion.
+
+## Active Initiative: V5 Volume-Price Fusion
+
+### Goal
+
+Implement the approved V5 design: keep the V4.2 opportunity gate and V4 risk/upside base, add multi-period daily volume-price risk and quality signals, then learn a fusion score that improves Top20 return quality without materially worsening stop-loss or bad-risk metrics.
+
+### Implementation Phases
+
+- [x] Inspect current V4.2 training/prediction functions and reusable helper boundaries.
+- [x] Add testable 1d/5d/20d volume-price feature generation.
+- [x] Add volume-price extreme risk flag, risk label, and healthy-path quality target.
+- [x] Train OOF volume-price risk and quality submodels.
+- [x] Add V5 fusion training, prediction reporting, artifact save/load, and comparison metrics.
+- [x] Wire CLI commands and keep `predict-model` promotion guarded until V5 beats V4.2 hybrid.
+- [x] Add focused tests and run targeted verification.
+- **Status:** complete, experimental; not promoted
+
+### Latest V5 Result
+
+- Trained full local dataset through `train-volume-price-fusion --reuse-base-artifact --max-iter 40 --top-n 20,50 --predict-date 2026-04-30`.
+- Artifact: `data/ml/v5_volume_price_fusion/v5_volume_price_fusion.pkl`.
+- Reports: `reports/v5_volume_price_fusion/`.
+- Baseline mode: reused existing V4.2 hybrid artifact for the base layer; the stricter retrain-base path is implemented but was too slow at `max_iter=80` for the current full dataset.
+- Test Top20 improved slightly versus `v42_gate_v4_rank`; validation Top20/Top50 did not, so V5 is not yet eligible for daily promotion.
 
 ## Active Initiative: Project Code Cleanup and Documentation Sync
 

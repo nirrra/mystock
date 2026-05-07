@@ -1,0 +1,17 @@
+{
+  "reference": "Karasan, Alp and Weber (2025), Machine learning approach to stock price crash risk",
+  "scope": "label generation only: NEGOUTLIER, CRASH, NCSKEW, DUVOL",
+  "frequency": "weekly",
+  "market_return": "local equal-weight weekly return built from available stock daily bars",
+  "start_date": "2015-01-01",
+  "end_date": "2026-05-07",
+  "limit": null,
+  "min_weeks_per_year": 26,
+  "mcd_support_fraction": 0.75,
+  "mcd_contamination": 0.04,
+  "local_deviations": [
+    "CRSP/Compustat accounting variables are not available, so pooled logistic regression is not reproduced",
+    "official market index is replaced by local equal-weight weekly market return",
+    "industry and year fixed-effect regressions are outside this label-generation phase"
+  ]
+}

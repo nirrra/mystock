@@ -1,5 +1,189 @@
 # Progress Log
 
+## Session: 2026-05-06 Daily Watchlist Semantics
+
+### Status
+
+- **Status:** implemented; targeted watchlist tests passing
+
+### Actions Taken
+
+- Changed `trade_permission` from a watchlist entry hard gate to a next-open trading-environment warning.
+- Changed main daily `watchlist` construction to combine:
+  - low-risk model Top20 names from `predict-model`
+  - low-risk pattern matches from `patterns_all`
+- Kept `watchlist_pattern` as the low-risk pattern subset.
+- Added watchlist top-level fields:
+  - `trade_permission`
+  - `next_open_trade_permission`
+  - `next_open_trade_warning`
+  - `trade_permission_note`
+- Updated `docs/picks-writing-guide.md` so daily writing starts with next-open permission and treats `no_trade` days as observation-only.
+
+### Verification
+
+- `python -m py_compile src\stocks_analyzer\watchlist.py src\stocks_analyzer\cli.py`
+- `python -m pytest tests\test_watchlist.py -q`
+- `python -m pytest tests\test_cli.py::test_build_parser_accepts_current_model_commands -q`
+- `python -m pytest tests\test_daily_screening.py -q`
+
+## Session: 2026-05-05 Lightweight Walk-Forward Validation
+
+### Status
+
+- **Status:** implemented; targeted verification passed
+- **Purpose:** verify whether the current mainline `v42_gate_v4_rank` result generalizes across multiple future time windows instead of relying on one train/valid/test split.
+
+### Actions Taken
+
+- Added design spec: `docs/superpowers/specs/2026-05-05-lightweight-walkforward-validation-design.md`.
+- Added `validate-model-walkforward` CLI command.
+- Added chronological window generation over actual trading dates.
+- Added in-memory V4.2 hybrid retraining for each window without overwriting the daily `predict-model` artifact.
+- Added per-window TopN metrics and aggregate summary reports.
+- Added Top20 diagnostic threshold flags:
+  - mean win rate >= `0.70`
+  - worst-window win rate >= `0.55`
+  - mean 20d return > `0.05`
+  - mean stop-loss rate <= `0.06`
+  - mean bad-risk rate <= `0.15`
+  - mean coverage >= `0.20`
+
+### Verification
+
+- `python -m py_compile src\stocks_analyzer\stacked_trade_value.py src\stocks_analyzer\cli.py`
+- `python -m pytest tests\test_cli.py::test_build_parser_accepts_current_model_commands tests\test_stacked_trade_value.py::test_generate_walkforward_windows_are_chronological tests\test_stacked_trade_value.py::test_generate_walkforward_windows_returns_empty_when_history_is_short tests\test_stacked_trade_value.py::test_summarize_walkforward_topn_metrics_adds_threshold_flags -q` -> 4 passed
+
+### Reports
+
+- `reports/model_walkforward/v42_walkforward_windows.csv`
+- `reports/model_walkforward/v42_walkforward_topn_metrics.csv`
+- `reports/model_walkforward/v42_walkforward_summary.csv`
+- `reports/model_walkforward/v42_walkforward_config.json`
+
+### Next Step
+
+Run a real multi-window job, preferably overnight:
+
+```bash
+python -m stocks_analyzer --project-root . validate-model-walkforward --model v42 --windows 8 --max-iter 40 --top-n 20,50
+```
+
+## Session: 2026-05-05 V5.1 Candidate-Only Ranker Implementation
+
+### Status
+
+- **Status:** complete, experimental; not promoted to `predict-model`
+- **Reason:** V5.1 improved candidate-pool rank diagnostics, but Top20/Top50 trading metrics did not beat V4.2 or V5.
+
+### Actions Taken
+
+- Implemented V5.1 candidate-only rank labels, daily candidate rank percentiles, and ordinal rank grades.
+- Added candidate-pool cross-sectional rank features.
+- Added V5.1 ranker training with optional LightGBM LambdaRank and histogram boosting fallback.
+- Added validation-selected blend with V4.2 ranking score.
+- Added V5.1 training/prediction artifact save/load, reports, prediction table, and CLI commands:
+  - `train-candidate-ranker`
+  - `predict-candidate-ranker`
+  - aliases: `train-v51-candidate-ranker`, `predict-v51-candidate-ranker`
+- Kept `predict-model` unchanged on V4.2 hybrid.
+
+### Verification
+
+- `python -m py_compile src\stocks_analyzer\stacked_trade_value.py src\stocks_analyzer\cli.py`
+- `python -m pytest tests\test_stacked_trade_value.py -q` -> 20 passed
+- `python -m pytest tests\test_cli.py::test_build_parser_accepts_current_model_commands tests\test_stacked_trade_value.py::test_v51_candidate_rank_labels_are_daily_candidate_only tests\test_stacked_trade_value.py::test_v51_candidate_ranker_scores_and_blends_candidates -q` -> 3 passed
+
+### Training Run
+
+- Command: `python -m stocks_analyzer --project-root . train-candidate-ranker --max-iter 40 --top-n 20,50 --predict-date 2026-04-30`
+- Model artifact: `data/ml/v51_candidate_ranker/v51_candidate_ranker.pkl`
+- Metadata: `data/ml/v51_candidate_ranker/v51_candidate_ranker_metadata.json`
+- Reports: `reports/v51_candidate_ranker/`
+- Prediction output: `reports/v51_candidate_ranker/predictions_2026-04-30.csv`
+- Engine: `lightgbm_lambdarank`
+- Feature count: `82`
+- Selected blend: `0.65 * V5.1 ranker + 0.35 * V4.2 rank score`
+
+### Key Metrics
+
+| Split | TopN | Model | Avg 20d Return | Win Rate | TP20 | SL20 | Bad Risk |
+|---|---:|---|---:|---:|---:|---:|---:|
+| valid | 20 | V4.2 hybrid | 0.1077 | 0.8627 | 0.4443 | 0.0076 | 0.0437 |
+| valid | 20 | V5 | 0.1047 | 0.8563 | 0.4342 | 0.0120 | 0.0449 |
+| valid | 20 | V5.1 | 0.1034 | 0.8563 | 0.4272 | 0.0114 | 0.0449 |
+| test | 20 | V4.2 hybrid | 0.1193 | 0.8000 | 0.4786 | 0.0286 | 0.1182 |
+| test | 20 | V5 | 0.1247 | 0.8048 | 0.4976 | 0.0238 | 0.1068 |
+| test | 20 | V5.1 | 0.1224 | 0.7833 | 0.5024 | 0.0357 | 0.1409 |
+
+### Ranker Diagnostics
+
+| Split | Candidate Rows | Spearman | NDCG@20 |
+|---|---:|---:|---:|
+| train | 34,719 | 0.2851 | 0.8908 |
+| valid | 45,042 | 0.2441 | 0.6639 |
+| test | 12,328 | 0.2810 | 0.6304 |
+
+### Conclusion
+
+V5.1 learned a measurable candidate-pool ranking signal, but the selected Top20 degraded on validation and test. The ranker is useful diagnostically, but not suitable for promotion. The next direction should not be another ranker wrapper; it should investigate why rank diagnostics do not translate into top-pick trading metrics, especially label shape, top-heavy loss, and interaction with no-trade/opportunity days.
+
+## Session: 2026-05-05 V5 Volume-Price Fusion Implementation
+
+### Status
+
+- **Status:** complete, experimental; not promoted to daily `predict-model`
+- **Reason:** V5 test Top20 improved slightly, but validation metrics did not improve consistently versus `v42_gate_v4_rank`.
+
+### Actions Taken
+
+- Implemented V5 multi-period daily volume-price features in `stacked_trade_value.py`.
+- Added 1-day trigger/risk hints, 5-day buy-point confirmation fields, 20-day volume-price structure fields, and 5-day versus 20-day acceleration/divergence fields.
+- Added sparse rule-based `volume_price_extreme_risk_flag`.
+- Added volume-price risk label and healthy-path quality target.
+- Added volume-price risk classifier, quality regressor, OOF scoring helper, V5 learned fusion model, prediction report, artifact save/load, and comparison metrics.
+- Added CLI commands:
+  - `train-volume-price-fusion`
+  - `predict-volume-price-fusion`
+- Kept `predict-model` on current V4.2 hybrid path because V5 is not yet a clear upgrade.
+- Added focused V5 tests for feature coverage, extreme-risk flag behavior, label quality, submodel scoring/fusion scoring, and CLI parsing.
+
+### Verification
+
+- `python -m py_compile src\stocks_analyzer\stacked_trade_value.py src\stocks_analyzer\cli.py`
+- `python -m pytest tests\test_stacked_trade_value.py -q` -> 18 passed
+- `python -m pytest tests\test_cli.py::test_build_parser_accepts_current_model_commands -q` -> 1 passed
+- `python -m pytest tests\test_cli.py::test_build_parser_accepts_current_model_commands tests\test_stacked_trade_value.py::test_v5_volume_price_features_cover_1d_5d_20d_windows tests\test_stacked_trade_value.py::test_v5_extreme_volume_price_risk_flags_high_volume_weak_candle tests\test_stacked_trade_value.py::test_v5_submodels_and_fusion_score_generate_rankable_fields -q` -> 4 passed
+
+### Training Run
+
+- Command: `python -m stocks_analyzer --project-root . train-volume-price-fusion --reuse-base-artifact --max-iter 40 --top-n 20,50 --predict-date 2026-04-30`
+- Model artifact: `data/ml/v5_volume_price_fusion/v5_volume_price_fusion.pkl`
+- Metadata: `data/ml/v5_volume_price_fusion/v5_volume_price_fusion_metadata.json`
+- Reports: `reports/v5_volume_price_fusion/`
+- Prediction output: `reports/v5_volume_price_fusion/predictions_2026-04-30.csv`
+- Split dates: train end `2025-03-06`, validation end `2025-09-25`, test end `2026-04-30`
+- Base mode: `reuse_existing_v42_artifact`
+
+### Key Metrics
+
+| Split | TopN | Model | Avg 20d Return | Win Rate | TP20 | SL20 | Bad Risk |
+|---|---:|---|---:|---:|---:|---:|---:|
+| valid | 20 | v42_gate_v4_rank | 0.1077 | 0.8627 | 0.4443 | 0.0076 | 0.0437 |
+| valid | 20 | v5_volume_price_fusion | 0.1047 | 0.8563 | 0.4342 | 0.0120 | 0.0449 |
+| test | 20 | v42_gate_v4_rank | 0.1193 | 0.8000 | 0.4786 | 0.0286 | 0.1182 |
+| test | 20 | v5_volume_price_fusion | 0.1247 | 0.8048 | 0.4976 | 0.0238 | 0.1068 |
+| valid | 50 | v42_gate_v4_rank | 0.0942 | 0.8111 | 0.3777 | 0.0187 | 0.0559 |
+| valid | 50 | v5_volume_price_fusion | 0.0932 | 0.8076 | 0.3643 | 0.0203 | 0.0585 |
+| test | 50 | v42_gate_v4_rank | 0.1112 | 0.7448 | 0.4524 | 0.0343 | 0.1391 |
+| test | 50 | v5_volume_price_fusion | 0.1075 | 0.7314 | 0.4333 | 0.0324 | 0.1373 |
+
+### Residual Risk
+
+- The rigorous `retrain_v42_hybrid_oof` base path is implemented, but the full `max_iter=80` run exceeded one hour on the current machine.
+- The successful full run used `--reuse-base-artifact`; this is useful for quick V5 evaluation, but the next serious comparison should either optimize the retrain-base path or run it overnight.
+- The volume-price quality model is still weak in the candidate pool: validation candidate Spearman correlation was about `0.028`, test candidate Spearman correlation was about `-0.113`.
+
 ## Session: 2026-04-09
 
 ### Phase 1: Requirements & Discovery
