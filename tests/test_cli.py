@@ -45,6 +45,7 @@ def test_build_parser_accepts_update_with_symbol() -> None:
     assert args.symbol == "603588"
     assert args.start_date == "20240101"
     assert args.data_interface == "sina"
+    assert args.index_interface == "sina"
     assert args.skip_index is False
     assert "sh000300" in args.index_symbols
 
@@ -52,12 +53,24 @@ def test_build_parser_accepts_update_with_symbol() -> None:
 def test_build_parser_accepts_update_index_options() -> None:
     parser = build_parser()
     args = parser.parse_args(
-        ["update", "--start-date", "20150101", "--data-interface", "sina", "--index-symbols", "sh000300,sz399001", "--skip-index"]
+        [
+            "update",
+            "--start-date",
+            "20150101",
+            "--data-interface",
+            "sina",
+            "--index-interface",
+            "eastmoney",
+            "--index-symbols",
+            "sh000300,sz399001",
+            "--skip-index",
+        ]
     )
 
     assert args.command == "update"
     assert args.symbol is None
     assert args.data_interface == "sina"
+    assert args.index_interface == "eastmoney"
     assert args.index_symbols == "sh000300,sz399001"
     assert args.skip_index is True
 
@@ -1070,6 +1083,7 @@ def test_run_update_reports_progress_for_each_symbol(monkeypatch) -> None:
         end_date="20260422",
         limit=None,
         update_indexes=False,
+        index_interface="sina",
     )
 
     assert progress_calls == [(1, 2), (2, 2)]

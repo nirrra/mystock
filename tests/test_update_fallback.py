@@ -300,7 +300,7 @@ def test_update_daily_cache_merges_new_rows_and_deduplicates_by_trade_date() -> 
     ]
 
 
-def test_run_update_uses_dedicated_baostock_provider_for_indexes(monkeypatch) -> None:
+def test_run_update_uses_selected_provider_for_indexes(monkeypatch) -> None:
     stock_provider = RecordingDailyProvider(_make_daily_frame("600000", ["2026-04-10"]))
     index_provider = ClosableProvider(_make_daily_frame("sh000300", ["2026-04-10"]))
     universe = pd.DataFrame([{"symbol": "600000"}])
@@ -308,7 +308,7 @@ def test_run_update_uses_dedicated_baostock_provider_for_indexes(monkeypatch) ->
 
     monkeypatch.setattr("stocks_analyzer.cli._refresh_or_load_universe", lambda storage, provider, exclude_st: universe.copy())
     monkeypatch.setattr("stocks_analyzer.cli._update_daily_cache_for_symbol", lambda **kwargs: Path("C:/tmp/daily.parquet"))
-    monkeypatch.setattr("stocks_analyzer.cli.create_data_provider", lambda name: index_provider if name == "baostock" else None)
+    monkeypatch.setattr("stocks_analyzer.cli._create_update_data_provider", lambda interface: index_provider if interface == "sina" else None)
     monkeypatch.setattr("stocks_analyzer.cli._update_index_daily_cache", lambda **kwargs: index_calls.append(kwargs) or Path("C:/tmp/index.parquet"))
     monkeypatch.setattr("stocks_analyzer.cli._log_scan_progress", lambda stage_name, current, total: None)
 
@@ -323,6 +323,7 @@ def test_run_update_uses_dedicated_baostock_provider_for_indexes(monkeypatch) ->
         limit=None,
         index_symbols=("sh000300",),
         update_indexes=True,
+        index_interface="sina",
     )
 
     assert index_calls[0]["provider"] is index_provider

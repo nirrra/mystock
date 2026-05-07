@@ -221,6 +221,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=",".join(DEFAULT_INDEX_SYMBOLS),
         help="批量更新股票后同步更新的指数代码，逗号分隔；默认沪深300/中证500/中证800等",
     )
+    update.add_argument(
+        "--index-interface",
+        choices=["baostock", "sina", "eastmoney"],
+        default="sina",
+        help="指数日线数据接口：baostock/sina/eastmoney，默认 sina",
+    )
     update.add_argument("--skip-index", action="store_true", help="批量 update 时跳过指数日线更新")
     pattern = subparsers.add_parser(
         "pattern",
@@ -758,6 +764,7 @@ def main() -> None:
                 args.limit,
                 index_symbols=tuple(_parse_str_list(args.index_symbols)),
                 update_indexes=not args.skip_index,
+                index_interface=args.index_interface,
             )
         finally:
             provider.close()
@@ -1230,6 +1237,7 @@ def _run_update(
     *,
     index_symbols: tuple[str, ...] = DEFAULT_INDEX_SYMBOLS,
     update_indexes: bool = True,
+    index_interface: str = "sina",
 ) -> None:
     if symbol:
         normalized_symbol = str(symbol).zfill(6)
@@ -1277,7 +1285,7 @@ def _run_update(
         logging.warning("Failed symbols sample: %s", ", ".join(failed_symbols[:20]))
 
     if update_indexes:
-        index_provider = create_data_provider("baostock")
+        index_provider = _create_update_data_provider(index_interface)
         try:
             _run_update_indexes(
                 storage=storage,
