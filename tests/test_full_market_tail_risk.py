@@ -65,7 +65,20 @@ def test_reproduce_tail_risk_writes_metrics_on_short_sample() -> None:
 
     assert result.metrics_path.exists()
     assert result.deciles_path.exists()
+    assert result.index_reproduction_path.exists()
+    assert result.index_dataset_path.exists()
     assert set(result.metrics["model_name"]) >= {"dummy_prior", "logistic_regression"}
+    assert set(result.index_reproduction["model_name"]) >= {
+        "logistic_regression",
+        "knn",
+        "decision_tree",
+        "random_forest",
+        "linear_discriminant_analysis",
+        "naive_bayes",
+        "quadratic_discriminant_analysis",
+        "adaboost",
+        "gradient_boosting",
+    }
 
 
 def _storage(root: Path) -> Storage:

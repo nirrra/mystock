@@ -28,7 +28,7 @@ from .event_risk_ranker import (
 )
 from .event_labels import EventLabelConfig
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
-from .full_market_risk import reproduce_tail_risk
+from .full_market_risk import DEFAULT_PANEL_MODEL_NAMES, reproduce_tail_risk
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
@@ -326,6 +326,18 @@ def build_parser() -> argparse.ArgumentParser:
     reproduce_tail.add_argument("--quantile", type=float, default=0.05, help="尾部风险分位，默认 0.05")
     reproduce_tail.add_argument("--horizon-days", type=int, default=1, help="预测未来第 N 个交易日风险，默认 1")
     reproduce_tail.add_argument("--min-training-rows", type=int, default=200, help="最少训练样本行数，默认 200")
+    reproduce_tail.add_argument(
+        "--index-source-column",
+        default="synthetic_equal_weight_index",
+        help="index-level 复现使用的 synthetic_market 指数列，默认 synthetic_equal_weight_index",
+    )
+    reproduce_tail.add_argument(
+        "--panel-models",
+        default=",".join(DEFAULT_PANEL_MODEL_NAMES),
+        help="panel 适配训练模型，逗号分隔；传 all 可尝试全部 Noh 分类器",
+    )
+    reproduce_tail.add_argument("--skip-index", action="store_true", help="跳过 index-level Noh 复现")
+    reproduce_tail.add_argument("--skip-panel", action="store_true", help="跳过 full-market panel 适配训练")
     reproduce_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式复现不要使用")
 
     synthetic_market = subparsers.add_parser(
@@ -856,12 +868,28 @@ def main() -> None:
             horizon_days=args.horizon_days,
             min_training_rows=args.min_training_rows,
             allow_short_sample=args.allow_short_sample,
+            index_source_column=args.index_source_column,
+            run_index=not args.skip_index,
+            run_panel=not args.skip_panel,
+            panel_model_names=_parse_tail_risk_panel_models(args.panel_models),
         )
         print("Tail-risk reproduction complete.")
-        print(result.metrics.to_string(index=False))
-        print(f"Saved dataset: {result.dataset_path}")
-        print(f"Saved metrics: {result.metrics_path}")
-        print(f"Saved deciles: {result.deciles_path}")
+        if not result.index_reproduction.empty:
+            print("Index-level reproduction:")
+            print(result.index_reproduction.to_string(index=False))
+        if not result.metrics.empty:
+            print("Panel-level metrics:")
+            print(result.metrics.to_string(index=False))
+        if not result.index_reproduction.empty and result.index_reproduction_path.exists():
+            print(f"Saved index reproduction: {result.index_reproduction_path}")
+        if not result.index_reproduction.empty and result.index_dataset_path.exists():
+            print(f"Saved index dataset: {result.index_dataset_path}")
+        if not result.metrics.empty and result.dataset_path.exists():
+            print(f"Saved dataset: {result.dataset_path}")
+        if not result.metrics.empty and result.metrics_path.exists():
+            print(f"Saved metrics: {result.metrics_path}")
+        if not result.deciles.empty and result.deciles_path.exists():
+            print(f"Saved deciles: {result.deciles_path}")
         return
 
     if args.command == "build-synthetic-market":
@@ -3951,6 +3979,14 @@ def _parse_str_list(value: str) -> list[str]:
     if not items:
         raise ValueError("Expected at least one text value")
     return items
+
+
+def _parse_tail_risk_panel_models(value: str) -> tuple[str, ...]:
+    if str(value).strip().lower() == "all":
+        from .full_market_risk import ALL_TAIL_RISK_MODEL_NAMES
+
+        return ALL_TAIL_RISK_MODEL_NAMES
+    return tuple(_parse_str_list(value))
 
 
 def _parse_optional_symbol_list(value: str | None) -> list[str] | None:

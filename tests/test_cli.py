@@ -427,6 +427,9 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "2025-12-31",
             "--limit",
             "10",
+            "--panel-models",
+            "logistic_regression,naive_bayes",
+            "--skip-panel",
             "--allow-short-sample",
         ]
     )
@@ -496,6 +499,10 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert reproduce_tail_args.train_end == "2023-12-31"
     assert reproduce_tail_args.valid_end == "2025-12-31"
     assert reproduce_tail_args.limit == 10
+    assert reproduce_tail_args.index_source_column == "synthetic_equal_weight_index"
+    assert reproduce_tail_args.panel_models == "logistic_regression,naive_bayes"
+    assert reproduce_tail_args.skip_index is False
+    assert reproduce_tail_args.skip_panel is True
     assert reproduce_tail_args.allow_short_sample is True
     assert synthetic_market_args.command == "build-synthetic-market"
     assert synthetic_market_args.start_date == "2015-01-01"

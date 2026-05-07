@@ -43,9 +43,10 @@ def build_tail_risk_frame(
         return pd.DataFrame()
 
     for column in ("open", "high", "low", "close", "volume", "amount"):
-        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
-    close = frame["close"]
-    log_return = np.log(close / close.shift(1))
+        values = frame[column] if column in frame.columns else pd.Series(np.nan, index=frame.index)
+        frame[column] = pd.to_numeric(values, errors="coerce")
+    close = frame["close"].where(frame["close"].gt(0))
+    log_return = np.log(close / close.shift(1)).replace([np.inf, -np.inf], np.nan)
     tail_threshold = log_return.shift(1).rolling(lookback_days, min_periods=lookback_days).quantile(quantile)
     tail_event = log_return.lt(tail_threshold)
 
@@ -61,9 +62,9 @@ def build_tail_risk_frame(
             "forward_log_return": log_return.shift(-horizon_days),
         }
     )
-    result["return_5d"] = close.pct_change(5)
-    result["return_20d"] = close.pct_change(20)
-    result["return_60d"] = close.pct_change(60)
+    result["return_5d"] = close.pct_change(5, fill_method=None)
+    result["return_20d"] = close.pct_change(20, fill_method=None)
+    result["return_60d"] = close.pct_change(60, fill_method=None)
     result["volatility_20d"] = log_return.rolling(20, min_periods=20).std()
     result["volatility_60d"] = log_return.rolling(60, min_periods=60).std()
     downside = log_return.where(log_return < 0, 0.0)
@@ -76,7 +77,7 @@ def build_tail_risk_frame(
     result["distance_to_ma60"] = close.div(ma60).sub(1.0)
     volume = frame["volume"]
     result["volume_ratio_5d_20d"] = volume.rolling(5, min_periods=5).mean().div(volume.rolling(20, min_periods=20).mean())
-    result["amount_log"] = np.log1p(frame["amount"])
+    result["amount_log"] = np.log1p(frame["amount"].where(frame["amount"].ge(0)))
     result["intraday_range_pct"] = frame["high"].sub(frame["low"]).div(close)
     result["future_max_drawdown_5d"] = _future_min_return(close, horizon=5)
     result["future_return_5d"] = close.shift(-5).div(close).sub(1.0)
