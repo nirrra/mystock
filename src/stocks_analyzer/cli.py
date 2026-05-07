@@ -28,6 +28,7 @@ from .event_risk_ranker import (
 )
 from .event_labels import EventLabelConfig
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
+from .full_market_risk import reproduce_tail_risk
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
@@ -296,6 +297,23 @@ def build_parser() -> argparse.ArgumentParser:
     audit_full_market.add_argument("--tail-lookback-days", type=int, default=100, help="尾部风险标签滚动窗口，默认 100")
     audit_full_market.add_argument("--max-horizon-days", type=int, default=20, help="最长 forward horizon，默认 20")
     audit_full_market.add_argument("--output-dir", default=None, help="可选输出目录，默认 reports/full_market_model")
+
+    reproduce_tail = subparsers.add_parser(
+        "reproduce-tail-risk",
+        help="复现日线尾部下跌风险分类模型",
+        description="按 Noh 2026 的滚动 100 日 5% 分位风险标签构建全市场日线风险分类基线。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    reproduce_tail.add_argument("--start-date", default=None, help="样本开始日期，格式 YYYY-MM-DD")
+    reproduce_tail.add_argument("--end-date", default=None, help="样本结束日期，格式 YYYY-MM-DD")
+    reproduce_tail.add_argument("--train-end", required=True, help="训练集结束日期，格式 YYYY-MM-DD")
+    reproduce_tail.add_argument("--valid-end", required=True, help="验证集结束日期，格式 YYYY-MM-DD")
+    reproduce_tail.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    reproduce_tail.add_argument("--lookback-days", type=int, default=100, help="滚动分位窗口，默认 100")
+    reproduce_tail.add_argument("--quantile", type=float, default=0.05, help="尾部风险分位，默认 0.05")
+    reproduce_tail.add_argument("--horizon-days", type=int, default=1, help="预测未来第 N 个交易日风险，默认 1")
+    reproduce_tail.add_argument("--min-training-rows", type=int, default=200, help="最少训练样本行数，默认 200")
+    reproduce_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式复现不要使用")
 
     train_opportunity = subparsers.add_parser(
         "train-opportunity-ranker",
@@ -799,6 +817,28 @@ def main() -> None:
         print(format_full_market_audit_summary(result.summary))
         print(f"Saved detail: {result.detail_path}")
         print(f"Saved summary: {result.summary_path}")
+        return
+
+    if args.command == "reproduce-tail-risk":
+        result = reproduce_tail_risk(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            train_end=datetime.fromisoformat(args.train_end).date(),
+            valid_end=datetime.fromisoformat(args.valid_end).date(),
+            limit=args.limit,
+            lookback_days=args.lookback_days,
+            quantile=args.quantile,
+            horizon_days=args.horizon_days,
+            min_training_rows=args.min_training_rows,
+            allow_short_sample=args.allow_short_sample,
+        )
+        print("Tail-risk reproduction complete.")
+        print(result.metrics.to_string(index=False))
+        print(f"Saved dataset: {result.dataset_path}")
+        print(f"Saved metrics: {result.metrics_path}")
+        print(f"Saved deciles: {result.deciles_path}")
         return
 
     if args.command == "train-opportunity-ranker":

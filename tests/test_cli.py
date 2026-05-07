@@ -397,6 +397,22 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "20",
         ]
     )
+    reproduce_tail_args = parser.parse_args(
+        [
+            "reproduce-tail-risk",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--train-end",
+            "2023-12-31",
+            "--valid-end",
+            "2025-12-31",
+            "--limit",
+            "10",
+            "--allow-short-sample",
+        ]
+    )
 
     assert train_opportunity_args.command == "train-opportunity-ranker"
     assert train_opportunity_args.max_iter == 4
@@ -446,6 +462,11 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert audit_full_market_args.min_exact_history_days == 900
     assert audit_full_market_args.tail_lookback_days == 100
     assert audit_full_market_args.max_horizon_days == 20
+    assert reproduce_tail_args.command == "reproduce-tail-risk"
+    assert reproduce_tail_args.train_end == "2023-12-31"
+    assert reproduce_tail_args.valid_end == "2025-12-31"
+    assert reproduce_tail_args.limit == 10
+    assert reproduce_tail_args.allow_short_sample is True
 
 
 def test_load_local_env_sets_missing_env_vars_only() -> None:
