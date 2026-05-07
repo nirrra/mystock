@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
 
 import numpy as np
 import pandas as pd
@@ -8,6 +9,7 @@ import pandas as pd
 from .storage import DailyBarsReadError, Storage
 
 
+PROGRESS_LOG_INTERVAL = 500
 TAIL_RISK_FEATURE_COLUMNS = (
     "log_return_1d",
     "return_5d",
@@ -99,7 +101,10 @@ def build_tail_risk_panel(
         universe = universe.head(max(int(limit), 0)).copy()
     rows: list[pd.DataFrame] = []
     skipped: list[dict[str, object]] = []
-    for instrument in universe.to_dict("records"):
+    instruments = universe.to_dict("records")
+    total_symbols = len(instruments)
+    for index, instrument in enumerate(instruments, start=1):
+        _log_progress("Tail-risk panel build", index, total_symbols)
         symbol = str(instrument.get("symbol", "")).zfill(6)
         name = str(instrument.get("name", ""))
         try:
@@ -130,6 +135,12 @@ def build_tail_risk_panel(
     dataset = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     if not dataset.empty:
         dataset = dataset.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
+    logging.info(
+        "Tail-risk panel build complete: symbols=%s rows=%s skipped=%s",
+        total_symbols,
+        len(dataset),
+        len(skipped),
+    )
     return dataset, pd.DataFrame(skipped)
 
 
@@ -140,3 +151,10 @@ def _future_min_return(close: pd.Series, *, horizon: int) -> pd.Series:
     if not values:
         return pd.Series(np.nan, index=close.index)
     return pd.concat(values, axis=1).min(axis=1)
+
+
+def _log_progress(stage_name: str, current: int, total: int) -> None:
+    if total <= 0:
+        return
+    if current == 1 or current % PROGRESS_LOG_INTERVAL == 0 or current == total:
+        logging.info("%s progress: %s/%s", stage_name, current, total)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from .storage import DailyBarsReadError, Storage
 
 MIN_VALID_DAILY_RETURN = -0.5
 MAX_VALID_DAILY_RETURN = 1.0
+PROGRESS_LOG_INTERVAL = 500
 SYNTHETIC_MARKET_COLUMNS = [
     "trade_date",
     "stock_count",
@@ -54,7 +56,10 @@ def build_synthetic_market_index(
 
     rows: list[pd.DataFrame] = []
     skipped: list[dict[str, object]] = []
-    for instrument in universe.to_dict("records"):
+    instruments = universe.to_dict("records")
+    total_symbols = len(instruments)
+    for index, instrument in enumerate(instruments, start=1):
+        _log_progress("Synthetic-market", index, total_symbols)
         symbol = str(instrument.get("symbol", "")).zfill(6)
         name = str(instrument.get("name", ""))
         try:
@@ -77,6 +82,13 @@ def build_synthetic_market_index(
     output_path = output if output is not None else synthetic_market_path(project_root)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     market.to_csv(output_path, index=False, encoding="utf-8-sig")
+    logging.info(
+        "Synthetic-market complete: symbols=%s rows=%s skipped=%s output=%s",
+        total_symbols,
+        len(market),
+        len(skipped),
+        output_path,
+    )
     return SyntheticMarketResult(frame=market, output_path=output_path, skipped=pd.DataFrame(skipped))
 
 
@@ -158,3 +170,10 @@ def _symbol_market_frame(bars: pd.DataFrame, *, symbol: str) -> pd.DataFrame:
             "limit_down_like": locked & daily_return.le(-0.095),
         }
     ).dropna(subset=["daily_return"])
+
+
+def _log_progress(stage_name: str, current: int, total: int) -> None:
+    if total <= 0:
+        return
+    if current == 1 or current % PROGRESS_LOG_INTERVAL == 0 or current == total:
+        logging.info("%s progress: %s/%s", stage_name, current, total)

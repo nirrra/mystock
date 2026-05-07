@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 import json
+import logging
 
 import numpy as np
 import pandas as pd
@@ -110,6 +111,7 @@ def reproduce_tail_risk(
     index_dataset = pd.DataFrame()
     index_reproduction = pd.DataFrame()
     if run_index:
+        logging.info("Tail-risk index dataset build started")
         index_dataset = build_tail_risk_index_dataset(
             storage=storage,
             project_root=project_root,
@@ -121,7 +123,9 @@ def reproduce_tail_risk(
             source_column=index_source_column,
             min_stock_count=1 if allow_short_sample else 500,
         )
+        logging.info("Tail-risk index dataset rows: %s", len(index_dataset))
         _assert_enough_index_history(index_dataset, lookback_days=lookback_days, allow_short_sample=allow_short_sample)
+        logging.info("Tail-risk index model reproduction started")
         index_reproduction = reproduce_tail_risk_index_models(
             index_dataset,
             train_end=train_end,
@@ -130,12 +134,14 @@ def reproduce_tail_risk(
         )
         index_dataset.to_csv(index_dataset_path, index=False, encoding="utf-8-sig")
         index_reproduction.to_csv(index_reproduction_path, index=False, encoding="utf-8-sig")
+        logging.info("Tail-risk index reports saved: %s, %s", index_reproduction_path, index_dataset_path)
 
     dataset = pd.DataFrame()
     skipped = pd.DataFrame()
     metrics = pd.DataFrame()
     deciles = pd.DataFrame()
     if run_panel:
+        logging.info("Tail-risk panel dataset build started")
         dataset, skipped = build_tail_risk_panel(
             storage=storage,
             start_date=start_date,
@@ -153,6 +159,7 @@ def reproduce_tail_risk(
 
         train = dataset[dataset["trade_date"].dt.date <= train_end].copy()
         valid = dataset[(dataset["trade_date"].dt.date > train_end) & (dataset["trade_date"].dt.date <= valid_end)].copy()
+        logging.info("Tail-risk panel split rows: train=%s valid=%s", len(train), len(valid))
         if len(train) < min_training_rows or valid.empty:
             raise RuntimeError(f"Insufficient tail-risk panel split rows: train={len(train)} valid={len(valid)}")
 
@@ -172,6 +179,7 @@ def reproduce_tail_risk(
         skipped.to_csv(skipped_path, index=False, encoding="utf-8-sig")
         metrics.to_csv(metrics_path, index=False, encoding="utf-8-sig")
         deciles.to_csv(deciles_path, index=False, encoding="utf-8-sig")
+        logging.info("Tail-risk panel reports saved: %s, %s, %s", dataset_path, metrics_path, deciles_path)
 
     summary_path.write_text(
         json.dumps(
@@ -337,7 +345,16 @@ def _fit_score_risk_models(
     X_train = train.loc[:, feature_columns]
     y_train = train["risk_label"].astype(int)
     models = _tail_risk_models(model_names)
-    for model_name, model in models.items():
+    total_models = len(models)
+    for model_index, (model_name, model) in enumerate(models.items(), start=1):
+        logging.info(
+            "Tail-risk %s model %s/%s started: %s train_rows=%s",
+            scope,
+            model_index,
+            total_models,
+            model_name,
+            len(train),
+        )
         if skip_large_knn and model_name == "knn" and _is_large_knn_problem(train, splits):
             for split_name, split in splits.items():
                 metrics_rows.append(
@@ -349,6 +366,7 @@ def _fit_score_risk_models(
                         error=f"skipped: KNN over panel rows exceeds {PANEL_KNN_MAX_ROWS}",
                     )
                 )
+            logging.info("Tail-risk %s model skipped: %s", scope, model_name)
             continue
         try:
             fitted = model.fit(X_train, y_train)
@@ -363,8 +381,17 @@ def _fit_score_risk_models(
                         error=f"fit_failed: {type(exc).__name__}: {exc}",
                     )
                 )
+            logging.warning("Tail-risk %s model fit failed: %s", scope, model_name)
             continue
+        logging.info("Tail-risk %s model fitted: %s", scope, model_name)
         for split_name, split in splits.items():
+            logging.info(
+                "Tail-risk %s model predicting split=%s model=%s rows=%s",
+                scope,
+                split_name,
+                model_name,
+                len(split),
+            )
             try:
                 proba = _predict_risk_proba(fitted, split.loc[:, feature_columns])
             except Exception as exc:
@@ -395,6 +422,7 @@ def _fit_score_risk_models(
             scored["model_name"] = model_name
             scored["risk_score"] = proba
             scored_parts.append(scored)
+        logging.info("Tail-risk %s model %s/%s complete: %s", scope, model_index, total_models, model_name)
     return {
         "metrics": pd.DataFrame(metrics_rows),
         "scored": pd.concat(scored_parts, ignore_index=True) if scored_parts else pd.DataFrame(),
