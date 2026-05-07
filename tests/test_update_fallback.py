@@ -5,7 +5,12 @@ from uuid import uuid4
 
 import pandas as pd
 
-from stocks_analyzer.cli import _refresh_or_load_universe, _resolve_update_provider_name, _update_daily_cache_for_symbol
+from stocks_analyzer.cli import (
+    _refresh_or_load_universe,
+    _resolve_update_provider_name,
+    _update_daily_cache_for_symbol,
+    _update_index_daily_cache,
+)
 from stocks_analyzer.config import load_config
 from stocks_analyzer.paths import ProjectPaths
 from stocks_analyzer.storage import Storage
@@ -31,6 +36,18 @@ class RecordingDailyProvider:
             }
         )
         return self.frame.copy()
+
+    def get_index_daily_bars(self, index_symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        self.calls.append(
+            {
+                "index_symbol": index_symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+        )
+        frame = self.frame.copy()
+        frame["symbol"] = index_symbol
+        return frame
 
 
 def _make_workspace_tmp_dir(name: str) -> Path:
@@ -211,6 +228,56 @@ def test_update_daily_cache_merges_new_rows_and_deduplicates_by_trade_date() -> 
     )
 
     merged = storage.load_daily_bars("600000")
+    assert merged["trade_date"].dt.date.astype(str).tolist() == [
+        "2026-04-09",
+        "2026-04-10",
+        "2026-04-11",
+        "2026-04-12",
+    ]
+
+
+def test_update_index_daily_cache_uses_index_storage_and_preserves_exchange_prefix() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    root = _make_workspace_tmp_dir("update_index_init")
+    config = load_config(project_root / "config" / "default.yaml")
+    paths = ProjectPaths(root, config.storage)
+    storage = Storage(paths)
+    provider = RecordingDailyProvider(_make_daily_frame("sh000300", ["2026-04-10", "2026-04-11"]))
+
+    target = _update_index_daily_cache(
+        storage=storage,
+        provider=provider,
+        index_symbol="sh000300",
+        start_date="20260401",
+        end_date="20260411",
+    )
+
+    assert target == storage.paths.index_daily_dir / "sh000300.parquet"
+    assert provider.calls == [{"index_symbol": "sh000300", "start_date": "20260401", "end_date": "20260411"}]
+    cached = storage.load_index_daily_bars("sh000300")
+    assert cached["symbol"].tolist() == ["sh000300", "sh000300"]
+    assert not storage.has_daily_bars("000300")
+
+
+def test_update_index_daily_cache_appends_incrementally() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    root = _make_workspace_tmp_dir("update_index_incremental")
+    config = load_config(project_root / "config" / "default.yaml")
+    paths = ProjectPaths(root, config.storage)
+    storage = Storage(paths)
+    storage.save_index_daily_bars("sh000300", _make_daily_frame("sh000300", ["2026-04-09", "2026-04-10"]))
+    provider = RecordingDailyProvider(_make_daily_frame("sh000300", ["2026-04-11", "2026-04-12"]))
+
+    _update_index_daily_cache(
+        storage=storage,
+        provider=provider,
+        index_symbol="sh000300",
+        start_date="20260415",
+        end_date="20260420",
+    )
+
+    assert provider.calls[0]["start_date"] == "20260411"
+    merged = storage.load_index_daily_bars("sh000300")
     assert merged["trade_date"].dt.date.astype(str).tolist() == [
         "2026-04-09",
         "2026-04-10",

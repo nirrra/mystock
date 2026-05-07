@@ -217,6 +217,58 @@ class BaoStockDataProvider(DataProvider):
             ],
         ].sort_values("trade_date").reset_index(drop=True)
 
+    def get_index_daily_bars(self, index_symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        normalized_index_symbol = _normalize_index_symbol(index_symbol)
+        result = bs.query_history_k_data_plus(
+            _with_dot_exchange_prefix(normalized_index_symbol),
+            "date,code,open,high,low,close,volume,amount,pctChg",
+            start_date=_normalize_date(start_date),
+            end_date=_normalize_date(end_date),
+            frequency="d",
+            adjustflag="3",
+        )
+        dataframe = _result_to_dataframe(result)
+        renamed = dataframe.rename(
+            columns={
+                "date": "trade_date",
+                "code": "raw_symbol",
+                "open": "open",
+                "close": "close",
+                "high": "high",
+                "low": "low",
+                "volume": "volume",
+                "amount": "amount",
+                "pctChg": "pct_change",
+            }
+        )
+        normalized = renamed.copy()
+        normalized["trade_date"] = pd.to_datetime(normalized["trade_date"])
+        normalized["symbol"] = normalized_index_symbol
+        for column in ["open", "close", "high", "low", "volume", "amount", "pct_change"]:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+        normalized["change"] = normalized["close"].diff()
+        normalized["amplitude"] = (
+            (normalized["high"] - normalized["low"]).div(normalized["close"].replace(0, pd.NA)).mul(100)
+        )
+        normalized["turnover"] = pd.NA
+        return normalized.loc[
+            :,
+            [
+                "trade_date",
+                "symbol",
+                "open",
+                "close",
+                "high",
+                "low",
+                "volume",
+                "amount",
+                "pct_change",
+                "change",
+                "amplitude",
+                "turnover",
+            ],
+        ].sort_values("trade_date").reset_index(drop=True)
+
     def get_intraday_bars(
         self,
         symbol: str,
@@ -268,6 +320,20 @@ def _with_exchange_prefix(symbol: str) -> str:
     if code.startswith(("600", "601", "603", "605", "688", "689", "900")):
         return f"sh.{code}"
     return f"sz.{code}"
+
+
+def _with_dot_exchange_prefix(index_symbol: str) -> str:
+    text = _normalize_index_symbol(index_symbol)
+    return f"{text[:2]}.{text[2:]}"
+
+
+def _normalize_index_symbol(index_symbol: str) -> str:
+    text = str(index_symbol).strip().lower().replace(".", "")
+    if text.startswith(("sh", "sz")):
+        return f"{text[:2]}{text[2:].zfill(6)}"
+    code = text.zfill(6)
+    prefix = "sz" if code.startswith("399") else "sh"
+    return f"{prefix}{code}"
 
 
 def _normalize_date(value: str) -> str:

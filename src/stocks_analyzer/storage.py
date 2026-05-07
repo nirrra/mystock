@@ -31,6 +31,12 @@ class Storage:
         dataframe.to_parquet(target, index=False)
         return target
 
+    def save_index_daily_bars(self, index_symbol: str, dataframe: pd.DataFrame) -> Path:
+        normalized = _normalize_index_symbol(index_symbol)
+        target = self.paths.index_daily_dir / f"{normalized}.parquet"
+        dataframe.to_parquet(target, index=False)
+        return target
+
     def load_daily_bars(self, symbol: str) -> pd.DataFrame:
         target = self.paths.daily_dir / f"{symbol}.parquet"
         if not target.exists():
@@ -40,8 +46,23 @@ class Storage:
         except Exception as exc:
             raise DailyBarsReadError(f"Daily bars are unreadable for {symbol}: {target}: {exc}") from exc
 
+    def load_index_daily_bars(self, index_symbol: str) -> pd.DataFrame:
+        normalized = _normalize_index_symbol(index_symbol)
+        target = self.paths.index_daily_dir / f"{normalized}.parquet"
+        if not target.exists():
+            raise FileNotFoundError(f"Index daily bars not found for {normalized}: {target}")
+        try:
+            return pd.read_parquet(target)
+        except Exception as exc:
+            raise DailyBarsReadError(f"Index daily bars are unreadable for {normalized}: {target}: {exc}") from exc
+
     def has_daily_bars(self, symbol: str) -> bool:
         target = self.paths.daily_dir / f"{symbol}.parquet"
+        return target.exists()
+
+    def has_index_daily_bars(self, index_symbol: str) -> bool:
+        normalized = _normalize_index_symbol(index_symbol)
+        target = self.paths.index_daily_dir / f"{normalized}.parquet"
         return target.exists()
 
     def save_signals(self, trade_date: date, dataframe: pd.DataFrame) -> Path:
@@ -59,3 +80,12 @@ class Storage:
         target = self.paths.reports_dir / f"report_{trade_date.isoformat()}.csv"
         dataframe.to_csv(target, index=False, encoding="utf-8-sig")
         return target
+
+
+def _normalize_index_symbol(index_symbol: str) -> str:
+    text = str(index_symbol).strip().lower().replace(".", "")
+    if text.startswith(("sh", "sz")):
+        return f"{text[:2]}{text[2:].zfill(6)}"
+    code = text.zfill(6)
+    prefix = "sz" if code.startswith("399") else "sh"
+    return f"{prefix}{code}"

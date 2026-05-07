@@ -157,6 +157,7 @@ PATTERN_LABEL_MAP = {
 }
 PROGRESS_LOG_INTERVAL = 100
 LOCAL_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
+DEFAULT_INDEX_SYMBOLS = ("sh000001", "sh000300", "sh000905", "sh000906", "sz399001", "sz399006")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -208,6 +209,12 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--start-date", default="20230101", help="开始日期，格式 YYYYMMDD")
     update.add_argument("--end-date", default=datetime.today().strftime("%Y%m%d"), help="结束日期，格式 YYYYMMDD")
     update.add_argument("--limit", type=int, default=None, help="仅更新前 N 只股票，便于小范围测试")
+    update.add_argument(
+        "--index-symbols",
+        default=",".join(DEFAULT_INDEX_SYMBOLS),
+        help="批量更新股票后同步更新的指数代码，逗号分隔；默认沪深300/中证500/中证800等",
+    )
+    update.add_argument("--skip-index", action="store_true", help="批量 update 时跳过指数日线更新")
     pattern = subparsers.add_parser(
         "pattern",
         help="识别本地日线数据中的 1 到 6 号模式",
@@ -728,6 +735,8 @@ def main() -> None:
                 args.start_date,
                 args.end_date,
                 args.limit,
+                index_symbols=tuple(_parse_str_list(args.index_symbols)),
+                update_indexes=not args.skip_index,
             )
         finally:
             provider.close()
@@ -1175,6 +1184,9 @@ def _run_update(
     start_date: str,
     end_date: str,
     limit: int | None,
+    *,
+    index_symbols: tuple[str, ...] = DEFAULT_INDEX_SYMBOLS,
+    update_indexes: bool = True,
 ) -> None:
     if symbol:
         normalized_symbol = str(symbol).zfill(6)
@@ -1220,6 +1232,15 @@ def _run_update(
     )
     if failed_symbols:
         logging.warning("Failed symbols sample: %s", ", ".join(failed_symbols[:20]))
+
+    if update_indexes:
+        _run_update_indexes(
+            storage=storage,
+            provider=provider,
+            index_symbols=index_symbols,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
 
 def _update_daily_cache_for_symbol(
@@ -1298,6 +1319,118 @@ def _update_daily_cache_for_symbol(
         target,
     )
     return target
+
+
+def _run_update_indexes(
+    *,
+    storage: Storage,
+    provider,
+    index_symbols: tuple[str, ...],
+    start_date: str,
+    end_date: str,
+) -> None:
+    success_count = 0
+    failed_indexes: list[str] = []
+    symbols = tuple(dict.fromkeys(str(symbol).strip() for symbol in index_symbols if str(symbol).strip()))
+    total_symbols = len(symbols)
+    for index, index_symbol in enumerate(symbols, start=1):
+        try:
+            _update_index_daily_cache(
+                storage=storage,
+                provider=provider,
+                index_symbol=index_symbol,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            success_count += 1
+        except Exception as exc:
+            failed_indexes.append(index_symbol)
+            logging.warning("[%s/%s] failed to fetch index %s: %s", index, total_symbols, index_symbol, exc)
+        _log_scan_progress("Index update", index, total_symbols)
+    logging.info("Index daily update finished: success=%s failed=%s", success_count, len(failed_indexes))
+    if failed_indexes:
+        logging.warning("Failed indexes: %s", ", ".join(failed_indexes))
+
+
+def _update_index_daily_cache(
+    *,
+    storage: Storage,
+    provider,
+    index_symbol: str,
+    start_date: str,
+    end_date: str,
+) -> Path:
+    try:
+        cached = storage.load_index_daily_bars(index_symbol)
+    except FileNotFoundError:
+        fresh = provider.get_index_daily_bars(index_symbol, start_date=start_date, end_date=end_date)
+        target = storage.save_index_daily_bars(index_symbol, fresh)
+        logging.info("Initialized %s rows for index %s to %s", len(fresh), index_symbol, target)
+        return target
+    except DailyBarsReadError as exc:
+        logging.warning("Cached index daily bars for %s are unreadable; rebuilding from %s: %s", index_symbol, start_date, exc)
+        fresh = provider.get_index_daily_bars(index_symbol, start_date=start_date, end_date=end_date)
+        target = storage.save_index_daily_bars(index_symbol, fresh)
+        logging.info("Rebuilt %s rows for index %s to %s", len(fresh), index_symbol, target)
+        return target
+
+    cached_frame = cached.copy()
+    if cached_frame.empty:
+        fresh = provider.get_index_daily_bars(index_symbol, start_date=start_date, end_date=end_date)
+        target = storage.save_index_daily_bars(index_symbol, fresh)
+        logging.info("Initialized %s rows for index %s to %s", len(fresh), index_symbol, target)
+        return target
+
+    cached_frame["trade_date"] = pd.to_datetime(cached_frame["trade_date"], errors="coerce")
+    valid_dates = cached_frame["trade_date"].dropna()
+    if valid_dates.empty:
+        logging.warning("Cached index daily bars for %s have no valid trade_date values; rebuilding from %s", index_symbol, start_date)
+        fresh = provider.get_index_daily_bars(index_symbol, start_date=start_date, end_date=end_date)
+        target = storage.save_index_daily_bars(index_symbol, fresh)
+        logging.info("Rebuilt %s rows for index %s to %s", len(fresh), index_symbol, target)
+        return target
+
+    last_trade_date = valid_dates.max().date()
+    requested_end_date = datetime.strptime(end_date, "%Y%m%d").date()
+    incremental_start_date = last_trade_date + timedelta(days=1)
+    normalized_index_symbol = _normalize_index_symbol_for_update(index_symbol)
+    target = storage.paths.index_daily_dir / f"{normalized_index_symbol}.parquet"
+    if incremental_start_date > requested_end_date:
+        logging.info(
+            "Skip index %s because cached daily bars already cover %s (last=%s)",
+            normalized_index_symbol,
+            requested_end_date.isoformat(),
+            last_trade_date.isoformat(),
+        )
+        return target
+
+    incremental_start = incremental_start_date.strftime("%Y%m%d")
+    fresh = provider.get_index_daily_bars(index_symbol, start_date=incremental_start, end_date=end_date)
+    if fresh.empty:
+        logging.info(
+            "No new index daily bars returned for %s from %s to %s",
+            normalized_index_symbol,
+            incremental_start_date.isoformat(),
+            requested_end_date.isoformat(),
+        )
+        return target
+
+    merged = pd.concat([cached_frame, fresh], ignore_index=True)
+    merged["trade_date"] = pd.to_datetime(merged["trade_date"], errors="coerce")
+    merged = merged.dropna(subset=["trade_date"]).drop_duplicates(subset=["trade_date"], keep="last")
+    merged = merged.sort_values("trade_date").reset_index(drop=True)
+    target = storage.save_index_daily_bars(index_symbol, merged)
+    logging.info("Appended %s rows for index %s from %s to %s", len(fresh), normalized_index_symbol, incremental_start, target)
+    return target
+
+
+def _normalize_index_symbol_for_update(index_symbol: str) -> str:
+    text = str(index_symbol).strip().lower().replace(".", "")
+    if text.startswith(("sh", "sz")):
+        return f"{text[:2]}{text[2:].zfill(6)}"
+    code = text.zfill(6)
+    prefix = "sz" if code.startswith("399") else "sh"
+    return f"{prefix}{code}"
 
 
 def _run_pattern(

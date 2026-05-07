@@ -11,6 +11,7 @@ class ProjectPaths:
         self.base_data_dir = root / storage.base_dir
         self.universe_path = self.base_data_dir / storage.universe_file
         self.daily_dir = self.base_data_dir / storage.daily_dir
+        self.index_daily_dir = self.base_data_dir / "index_daily"
         self.signals_dir = self.base_data_dir / storage.signals_dir
         self.features_dir = self.base_data_dir / "features"
         self.ml_dir = self.base_data_dir / "ml"
@@ -20,6 +21,7 @@ class ProjectPaths:
         self.base_data_dir.mkdir(parents=True, exist_ok=True)
         self.universe_path.parent.mkdir(parents=True, exist_ok=True)
         self.daily_dir.mkdir(parents=True, exist_ok=True)
+        self.index_daily_dir.mkdir(parents=True, exist_ok=True)
         self.signals_dir.mkdir(parents=True, exist_ok=True)
         self.features_dir.mkdir(parents=True, exist_ok=True)
         self.ml_dir.mkdir(parents=True, exist_ok=True)

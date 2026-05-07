@@ -43,6 +43,16 @@ class AKShareDataProvider(DataProvider):
         )
         return _normalize_daily_bars(dataframe, symbol=symbol)
 
+    def get_index_daily_bars(self, index_symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        normalized_index_symbol = _normalize_index_symbol(index_symbol)
+        dataframe = ak.index_zh_a_hist(
+            symbol=normalized_index_symbol[2:],
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return _normalize_daily_bars(dataframe, symbol=normalized_index_symbol)
+
     def get_intraday_bars(
         self,
         symbol: str,
@@ -357,3 +367,12 @@ def _with_exchange_prefix(symbol: str) -> str:
     if code.startswith(("600", "601", "603", "605", "688", "689", "900")):
         return f"sh{code}"
     return f"sz{code}"
+
+
+def _normalize_index_symbol(index_symbol: str) -> str:
+    text = str(index_symbol).strip().lower().replace(".", "")
+    if text.startswith(("sh", "sz")):
+        return f"{text[:2]}{text[2:].zfill(6)}"
+    code = text.zfill(6)
+    prefix = "sz" if code.startswith("399") else "sh"
+    return f"{prefix}{code}"
