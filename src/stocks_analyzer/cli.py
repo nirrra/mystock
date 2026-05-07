@@ -370,6 +370,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=",".join(DEFAULT_PANEL_MODEL_NAMES),
         help="panel 验证模型，逗号分隔；传 all 可尝试全部 Noh 分类器",
     )
+    validate_tail.add_argument("--filter-rates", default="0.2", help="风险过滤比例，逗号分隔；默认 0.2")
+    validate_tail.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
     validate_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
 
     train_tail_model = subparsers.add_parser(
@@ -968,12 +970,19 @@ def main() -> None:
             min_training_rows=args.min_training_rows,
             allow_short_sample=args.allow_short_sample,
             panel_model_names=_parse_tail_risk_panel_models(args.panel_models),
+            filter_rates=tuple(float(value) for value in _parse_str_list(args.filter_rates)),
+            return_tolerance=args.return_tolerance,
         )
         print("Tail-risk walk-forward validation complete.")
         print(result.summary.to_string(index=False))
+        if not result.filter_summary.empty:
+            print("Tail-risk filter impact summary:")
+            print(result.filter_summary.to_string(index=False))
         print(f"Saved windows: {result.windows_path}")
         print(f"Saved metrics: {result.metrics_path}")
         print(f"Saved deciles: {result.deciles_path}")
+        print(f"Saved filter impact: {result.filter_impact_path}")
+        print(f"Saved filter summary: {result.filter_summary_path}")
         print(f"Saved summary: {result.summary_path}")
         return
 

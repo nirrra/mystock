@@ -7,10 +7,12 @@ import pandas as pd
 
 from stocks_analyzer.full_market_labels import build_tail_risk_frame
 from stocks_analyzer.full_market_risk import (
+    build_risk_filter_impact,
     build_tail_risk_walkforward_windows,
     build_risk_decile_report,
     predict_tail_risk,
     reproduce_tail_risk,
+    summarize_risk_filter_impact,
     train_tail_risk_model,
     validate_tail_risk_walkforward,
 )
@@ -48,6 +50,32 @@ def test_build_risk_decile_report_orders_by_score() -> None:
     high = report[report["risk_decile"].eq(report["risk_decile"].max())].iloc[0]
     assert low["risk_label_rate"] == 0.0
     assert high["risk_label_rate"] == 1.0
+
+
+def test_build_risk_filter_impact_removes_highest_risk_bucket() -> None:
+    scored = pd.DataFrame(
+        {
+            "window_id": ["wf_01"] * 10,
+            "scope": ["panel_walkforward"] * 10,
+            "split": ["valid"] * 10,
+            "model_name": ["m"] * 10,
+            "symbol": [f"60000{index}" for index in range(10)],
+            "risk_score": [index / 10 for index in range(10)],
+            "risk_label": [0] * 8 + [1, 1],
+            "future_return_5d": [0.01] * 8 + [0.0, 0.0],
+            "future_max_drawdown_5d": [-0.02] * 8 + [-0.10, -0.12],
+        }
+    )
+
+    impact = build_risk_filter_impact(scored, filter_rates=(0.2,), return_tolerance=0.02)
+    summary = summarize_risk_filter_impact(impact)
+
+    row = impact.iloc[0]
+    assert row["removed_rows"] == 2
+    assert row["kept_rows"] == 8
+    assert row["future_max_drawdown_5d_delta"] > 0
+    assert bool(row["filter_pass"]) is True
+    assert bool(summary.iloc[0]["phase1_filter_pass"]) is True
 
 
 def test_reproduce_tail_risk_writes_metrics_on_short_sample() -> None:
@@ -132,9 +160,12 @@ def test_validate_tail_risk_walkforward_writes_reports_on_short_sample() -> None
     assert result.windows_path.exists()
     assert result.metrics_path.exists()
     assert result.deciles_path.exists()
+    assert result.filter_impact_path.exists()
+    assert result.filter_summary_path.exists()
     assert result.summary_path.exists()
     assert len(result.windows) == 2
     assert set(result.summary["model_name"]) == {"dummy_prior", "logistic_regression"}
+    assert set(result.filter_summary["model_name"]) == {"dummy_prior", "logistic_regression"}
 
 
 def test_train_and_predict_tail_risk_model_roundtrip_on_short_sample() -> None:

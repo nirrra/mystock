@@ -450,6 +450,10 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "2",
             "--panel-models",
             "logistic_regression,naive_bayes",
+            "--filter-rates",
+            "0.1,0.2",
+            "--return-tolerance",
+            "0.002",
         ]
     )
     train_tail_model_args = parser.parse_args(
@@ -553,6 +557,8 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert validate_tail_args.step_days == 250
     assert validate_tail_args.max_windows == 2
     assert validate_tail_args.panel_models == "logistic_regression,naive_bayes"
+    assert validate_tail_args.filter_rates == "0.1,0.2"
+    assert validate_tail_args.return_tolerance == 0.002
     assert train_tail_model_args.command == "train-tail-risk-model"
     assert train_tail_model_args.model_name == "logistic_regression"
     assert train_tail_model_args.limit == 10

@@ -83,11 +83,15 @@ class TailRiskWalkforwardResult:
     windows: pd.DataFrame
     metrics: pd.DataFrame
     deciles: pd.DataFrame
+    filter_impact: pd.DataFrame
+    filter_summary: pd.DataFrame
     summary: pd.DataFrame
     report_dir: Path
     windows_path: Path
     metrics_path: Path
     deciles_path: Path
+    filter_impact_path: Path
+    filter_summary_path: Path
     summary_path: Path
     config_path: Path
 
@@ -484,6 +488,8 @@ def validate_tail_risk_walkforward(
     min_training_rows: int = 200,
     allow_short_sample: bool = False,
     panel_model_names: tuple[str, ...] = DEFAULT_PANEL_MODEL_NAMES,
+    filter_rates: tuple[float, ...] = (0.2,),
+    return_tolerance: float = 0.001,
 ) -> TailRiskWalkforwardResult:
     if train_days <= 0 or valid_days <= 0 or step_days <= 0:
         raise ValueError("train_days, valid_days, and step_days must be positive.")
@@ -520,6 +526,7 @@ def validate_tail_risk_walkforward(
 
     metrics_parts: list[pd.DataFrame] = []
     decile_parts: list[pd.DataFrame] = []
+    filter_parts: list[pd.DataFrame] = []
     total_windows = len(windows)
     for index, window in enumerate(windows.to_dict("records"), start=1):
         window_id = str(window["window_id"])
@@ -550,12 +557,20 @@ def validate_tail_risk_walkforward(
         metrics = _attach_window_columns(result["metrics"], window)
         scored = _attach_window_columns(result["scored"], window)
         deciles = build_risk_decile_report(scored)
+        filter_impact = build_risk_filter_impact(
+            scored,
+            filter_rates=filter_rates,
+            return_tolerance=return_tolerance,
+        )
         metrics_parts.append(metrics)
         decile_parts.append(deciles)
+        filter_parts.append(filter_impact)
         logging.info("Tail-risk walk-forward window %s/%s complete: %s", index, total_windows, window_id)
 
     metrics_frame = pd.concat(metrics_parts, ignore_index=True) if metrics_parts else pd.DataFrame()
     deciles_frame = pd.concat(decile_parts, ignore_index=True) if decile_parts else pd.DataFrame()
+    filter_impact_frame = pd.concat(filter_parts, ignore_index=True) if filter_parts else pd.DataFrame()
+    filter_summary = summarize_risk_filter_impact(filter_impact_frame)
     summary = summarize_tail_risk_walkforward(metrics_frame, deciles_frame)
 
     report_dir = full_market_report_dir(project_root)
@@ -563,11 +578,15 @@ def validate_tail_risk_walkforward(
     windows_path = report_dir / "tail_risk_walkforward_windows.csv"
     metrics_path = report_dir / "tail_risk_walkforward_metrics.csv"
     deciles_path = report_dir / "tail_risk_walkforward_decile_report.csv"
+    filter_impact_path = report_dir / "tail_risk_filter_impact.csv"
+    filter_summary_path = report_dir / "tail_risk_filter_impact_summary.csv"
     summary_path = report_dir / "tail_risk_walkforward_summary.csv"
     config_path = report_dir / "tail_risk_walkforward_config.json"
     windows.to_csv(windows_path, index=False, encoding="utf-8-sig")
     metrics_frame.to_csv(metrics_path, index=False, encoding="utf-8-sig")
     deciles_frame.to_csv(deciles_path, index=False, encoding="utf-8-sig")
+    filter_impact_frame.to_csv(filter_impact_path, index=False, encoding="utf-8-sig")
+    filter_summary.to_csv(filter_summary_path, index=False, encoding="utf-8-sig")
     summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
     config_path.write_text(
         json.dumps(
@@ -586,6 +605,8 @@ def validate_tail_risk_walkforward(
                 "min_training_rows": int(min_training_rows),
                 "allow_short_sample": bool(allow_short_sample),
                 "panel_model_names": list(panel_model_names),
+                "filter_rates": [float(value) for value in filter_rates],
+                "return_tolerance": float(return_tolerance),
                 "skipped_symbols": int(len(skipped)),
             },
             ensure_ascii=False,
@@ -598,11 +619,15 @@ def validate_tail_risk_walkforward(
         windows=windows,
         metrics=metrics_frame,
         deciles=deciles_frame,
+        filter_impact=filter_impact_frame,
+        filter_summary=filter_summary,
         summary=summary,
         report_dir=report_dir,
         windows_path=windows_path,
         metrics_path=metrics_path,
         deciles_path=deciles_path,
+        filter_impact_path=filter_impact_path,
+        filter_summary_path=filter_summary_path,
         summary_path=summary_path,
         config_path=config_path,
     )
@@ -775,6 +800,94 @@ def build_risk_decile_report(scored: pd.DataFrame) -> pd.DataFrame:
                     "avg_future_max_drawdown_5d": float(pd.to_numeric(decile_frame["future_max_drawdown_5d"], errors="coerce").mean()),
                 }
             )
+    return pd.DataFrame(rows)
+
+
+def build_risk_filter_impact(
+    scored: pd.DataFrame,
+    *,
+    filter_rates: tuple[float, ...] = (0.2,),
+    return_tolerance: float = 0.001,
+) -> pd.DataFrame:
+    if scored.empty:
+        return pd.DataFrame()
+    rows: list[dict[str, Any]] = []
+    group_columns = [column for column in ("window_id", "scope", "split", "model_name") if column in scored.columns]
+    groups = scored.groupby(group_columns, sort=False) if group_columns else [((), scored)]
+    for key, group in groups:
+        key_values = key if isinstance(key, tuple) else (key,)
+        key_map = dict(zip(group_columns, key_values, strict=False))
+        frame = group.copy()
+        frame["risk_score"] = pd.to_numeric(frame["risk_score"], errors="coerce")
+        frame = frame.dropna(subset=["risk_score", "future_return_5d", "future_max_drawdown_5d"]).copy()
+        if frame.empty:
+            continue
+        ordered = frame.sort_values(["risk_score", "symbol"], ascending=[False, True])
+        for filter_rate in filter_rates:
+            rate = float(filter_rate)
+            if rate <= 0 or rate >= 1:
+                raise ValueError(f"filter_rates must be between 0 and 1, got {filter_rate}")
+            removed_rows = max(1, int(np.ceil(len(ordered) * rate)))
+            kept = ordered.iloc[removed_rows:].copy()
+            removed = ordered.iloc[:removed_rows].copy()
+            baseline_return = _safe_mean(ordered["future_return_5d"])
+            kept_return = _safe_mean(kept["future_return_5d"])
+            baseline_drawdown = _safe_mean(ordered["future_max_drawdown_5d"])
+            kept_drawdown = _safe_mean(kept["future_max_drawdown_5d"])
+            baseline_risk_rate = _safe_mean(ordered["risk_label"]) if "risk_label" in ordered.columns else float("nan")
+            kept_risk_rate = _safe_mean(kept["risk_label"]) if "risk_label" in kept.columns else float("nan")
+            drawdown_delta = kept_drawdown - baseline_drawdown
+            return_delta = kept_return - baseline_return
+            rows.append(
+                {
+                    **key_map,
+                    "filter_rate": rate,
+                    "rows": int(len(ordered)),
+                    "removed_rows": int(len(removed)),
+                    "kept_rows": int(len(kept)),
+                    "kept_rate": float(len(kept) / len(ordered)),
+                    "baseline_risk_label_rate": baseline_risk_rate,
+                    "kept_risk_label_rate": kept_risk_rate,
+                    "removed_risk_label_rate": _safe_mean(removed["risk_label"]) if "risk_label" in removed.columns else float("nan"),
+                    "risk_label_rate_delta": kept_risk_rate - baseline_risk_rate,
+                    "baseline_avg_future_return_5d": baseline_return,
+                    "kept_avg_future_return_5d": kept_return,
+                    "removed_avg_future_return_5d": _safe_mean(removed["future_return_5d"]),
+                    "future_return_5d_delta": return_delta,
+                    "baseline_avg_future_max_drawdown_5d": baseline_drawdown,
+                    "kept_avg_future_max_drawdown_5d": kept_drawdown,
+                    "removed_avg_future_max_drawdown_5d": _safe_mean(removed["future_max_drawdown_5d"]),
+                    "future_max_drawdown_5d_delta": drawdown_delta,
+                    "drawdown_improved": bool(drawdown_delta > 0),
+                    "return_not_materially_worse": bool(return_delta >= -float(return_tolerance)),
+                    "filter_pass": bool(drawdown_delta > 0 and return_delta >= -float(return_tolerance)),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def summarize_risk_filter_impact(filter_impact: pd.DataFrame) -> pd.DataFrame:
+    if filter_impact.empty:
+        return pd.DataFrame()
+    rows: list[dict[str, Any]] = []
+    group_columns = [column for column in ("model_name", "filter_rate") if column in filter_impact.columns]
+    for key, group in filter_impact.groupby(group_columns, sort=False):
+        key_values = key if isinstance(key, tuple) else (key,)
+        key_map = dict(zip(group_columns, key_values, strict=False))
+        rows.append(
+            {
+                **key_map,
+                "windows": int(group["window_id"].nunique()) if "window_id" in group.columns else int(len(group)),
+                "avg_kept_rate": _safe_mean(group["kept_rate"]),
+                "avg_risk_label_rate_delta": _safe_mean(group["risk_label_rate_delta"]),
+                "avg_future_return_5d_delta": _safe_mean(group["future_return_5d_delta"]),
+                "avg_future_max_drawdown_5d_delta": _safe_mean(group["future_max_drawdown_5d_delta"]),
+                "drawdown_improved_rate": _mean_bool(group["drawdown_improved"]),
+                "return_not_materially_worse_rate": _mean_bool(group["return_not_materially_worse"]),
+                "filter_pass_rate": _mean_bool(group["filter_pass"]),
+                "phase1_filter_pass": bool(_mean_bool(group["filter_pass"]) >= 0.70),
+            }
+        )
     return pd.DataFrame(rows)
 
 
