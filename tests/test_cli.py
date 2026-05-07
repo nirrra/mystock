@@ -452,6 +452,30 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "logistic_regression,naive_bayes",
         ]
     )
+    train_tail_model_args = parser.parse_args(
+        [
+            "train-tail-risk-model",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--model-name",
+            "logistic_regression",
+            "--limit",
+            "10",
+        ]
+    )
+    predict_tail_args = parser.parse_args(
+        [
+            "predict-tail-risk",
+            "--date",
+            "2026-05-07",
+            "--limit",
+            "10",
+            "--top-n",
+            "5",
+        ]
+    )
     synthetic_market_args = parser.parse_args(
         [
             "build-synthetic-market",
@@ -529,6 +553,12 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert validate_tail_args.step_days == 250
     assert validate_tail_args.max_windows == 2
     assert validate_tail_args.panel_models == "logistic_regression,naive_bayes"
+    assert train_tail_model_args.command == "train-tail-risk-model"
+    assert train_tail_model_args.model_name == "logistic_regression"
+    assert train_tail_model_args.limit == 10
+    assert predict_tail_args.command == "predict-tail-risk"
+    assert predict_tail_args.date == "2026-05-07"
+    assert predict_tail_args.top_n == 5
     assert synthetic_market_args.command == "build-synthetic-market"
     assert synthetic_market_args.start_date == "2015-01-01"
     assert synthetic_market_args.end_date == "2026-05-07"

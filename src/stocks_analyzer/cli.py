@@ -28,7 +28,14 @@ from .event_risk_ranker import (
 )
 from .event_labels import EventLabelConfig
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
-from .full_market_risk import DEFAULT_PANEL_MODEL_NAMES, reproduce_tail_risk, validate_tail_risk_walkforward
+from .full_market_risk import (
+    DEFAULT_PANEL_MODEL_NAMES,
+    format_tail_risk_prediction_table,
+    predict_tail_risk,
+    reproduce_tail_risk,
+    train_tail_risk_model,
+    validate_tail_risk_walkforward,
+)
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
@@ -364,6 +371,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="panel 验证模型，逗号分隔；传 all 可尝试全部 Noh 分类器",
     )
     validate_tail.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
+
+    train_tail_model = subparsers.add_parser(
+        "train-tail-risk-model",
+        help="训练 Phase 1 全市场尾部风险部署模型",
+        description="使用已验证的 full-market panel 特征训练一个可落盘的风险模型 artifact。默认模型为 logistic_regression。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    train_tail_model.add_argument("--start-date", default=None, help="训练样本开始日期，格式 YYYY-MM-DD")
+    train_tail_model.add_argument("--end-date", default=None, help="训练样本结束日期，格式 YYYY-MM-DD")
+    train_tail_model.add_argument("--model-name", default="logistic_regression", help="模型名，默认 logistic_regression")
+    train_tail_model.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    train_tail_model.add_argument("--lookback-days", type=int, default=100, help="滚动分位窗口，默认 100")
+    train_tail_model.add_argument("--quantile", type=float, default=0.05, help="尾部风险分位，默认 0.05")
+    train_tail_model.add_argument("--horizon-days", type=int, default=1, help="预测未来第 N 个交易日风险，默认 1")
+    train_tail_model.add_argument("--min-training-rows", type=int, default=200, help="最少训练样本行数，默认 200")
+
+    predict_tail = subparsers.add_parser(
+        "predict-tail-risk",
+        help="使用 Phase 1 风险 artifact 对指定日期全市场打分",
+        description="读取 data/ml/full_market_risk/tail_risk_model.pkl，输出按 risk_score 降序排列的全市场风险分数。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    predict_tail.add_argument("--date", required=True, help="预测日期，格式 YYYY-MM-DD")
+    predict_tail.add_argument("--limit", type=int, default=None, help="仅预测前 N 只股票，便于快速测试")
+    predict_tail.add_argument("--top-n", type=int, default=20, help="终端展示前 N 行")
+    predict_tail.add_argument("--output", default=None, help="可选 CSV 输出路径")
 
     synthetic_market = subparsers.add_parser(
         "build-synthetic-market",
@@ -942,6 +975,43 @@ def main() -> None:
         print(f"Saved metrics: {result.metrics_path}")
         print(f"Saved deciles: {result.deciles_path}")
         print(f"Saved summary: {result.summary_path}")
+        return
+
+    if args.command == "train-tail-risk-model":
+        result = train_tail_risk_model(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            model_name=args.model_name,
+            limit=args.limit,
+            lookback_days=args.lookback_days,
+            quantile=args.quantile,
+            horizon_days=args.horizon_days,
+            min_training_rows=args.min_training_rows,
+        )
+        print("Tail-risk deployment training complete.")
+        print(f"Model: {result.model_name}")
+        print(f"Rows: {result.train_rows}")
+        print(f"Train dates: {result.train_start} -> {result.train_end}")
+        print(f"Saved model: {result.model_path}")
+        print(f"Saved metadata: {result.metadata_path}")
+        return
+
+    if args.command == "predict-tail-risk":
+        output = Path(args.output).resolve() if args.output else None
+        result = predict_tail_risk(
+            storage=storage,
+            project_root=project_root,
+            trade_date=datetime.fromisoformat(args.date).date(),
+            output=output,
+            limit=args.limit,
+        )
+        print("Tail-risk prediction complete.")
+        print(format_tail_risk_prediction_table(result.predictions, top_n=args.top_n))
+        print(f"Saved predictions: {result.output_path}")
+        if not result.skipped.empty:
+            print(f"Skipped symbols: {len(result.skipped)}")
         return
 
     if args.command == "build-synthetic-market":

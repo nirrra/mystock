@@ -9,7 +9,9 @@ from stocks_analyzer.full_market_labels import build_tail_risk_frame
 from stocks_analyzer.full_market_risk import (
     build_tail_risk_walkforward_windows,
     build_risk_decile_report,
+    predict_tail_risk,
     reproduce_tail_risk,
+    train_tail_risk_model,
     validate_tail_risk_walkforward,
 )
 from stocks_analyzer.models import StorageConfig
@@ -133,6 +135,37 @@ def test_validate_tail_risk_walkforward_writes_reports_on_short_sample() -> None
     assert result.summary_path.exists()
     assert len(result.windows) == 2
     assert set(result.summary["model_name"]) == {"dummy_prior", "logistic_regression"}
+
+
+def test_train_and_predict_tail_risk_model_roundtrip_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "tail_risk_artifact"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}]))
+    storage.save_daily_bars("600000", _bars([10 + i * 0.06 for i in range(180)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.03 + (-0.9 if i % 23 == 0 else 0) for i in range(180)]))
+
+    train_result = train_tail_risk_model(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 8, 30),
+        lookback_days=10,
+        min_training_rows=20,
+    )
+    predict_result = predict_tail_risk(
+        storage=storage,
+        project_root=root,
+        trade_date=date(2024, 8, 30),
+    )
+
+    assert train_result.model_path.exists()
+    assert train_result.metadata_path.exists()
+    assert train_result.model_name == "logistic_regression"
+    assert predict_result.output_path.exists()
+    assert not predict_result.predictions.empty
+    assert set(predict_result.predictions["symbol"]) == {"600000", "600001"}
+    assert predict_result.predictions["risk_score"].between(0.0, 1.0).all()
 
 
 def _storage(root: Path) -> Storage:

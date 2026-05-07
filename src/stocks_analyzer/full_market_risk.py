@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 import json
 import logging
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -29,12 +30,13 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
-from .full_market_labels import TAIL_RISK_FEATURE_COLUMNS, build_tail_risk_panel
+from .full_market_labels import TAIL_RISK_FEATURE_COLUMNS, build_tail_risk_frame, build_tail_risk_panel
 from .full_market_panel import full_market_report_dir
-from .storage import Storage
+from .storage import DailyBarsReadError, Storage
 from .synthetic_market import build_synthetic_market_index, synthetic_market_path
 
 
+TAIL_RISK_MODEL_VERSION = "tail_risk_phase1_v1"
 NOH_INDEX_FEATURE_COLUMNS = ("log_return_1d",)
 PANEL_KNN_MAX_ROWS = 50_000
 ALL_TAIL_RISK_MODEL_NAMES = (
@@ -88,6 +90,235 @@ class TailRiskWalkforwardResult:
     deciles_path: Path
     summary_path: Path
     config_path: Path
+
+
+@dataclass(slots=True)
+class TailRiskTrainResult:
+    model_path: Path
+    metadata_path: Path
+    model_name: str
+    train_rows: int
+    train_start: str
+    train_end: str
+    feature_columns: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class TailRiskPredictionResult:
+    predictions: pd.DataFrame
+    skipped: pd.DataFrame
+    output_path: Path
+    artifact_path: Path
+
+
+def train_tail_risk_model(
+    *,
+    storage: Storage,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    model_name: str = "logistic_regression",
+    limit: int | None = None,
+    lookback_days: int = 100,
+    quantile: float = 0.05,
+    horizon_days: int = 1,
+    min_training_rows: int = 200,
+) -> TailRiskTrainResult:
+    logging.info("Tail-risk deployment training dataset build started")
+    dataset, skipped = build_tail_risk_panel(
+        storage=storage,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        lookback_days=lookback_days,
+        quantile=quantile,
+        horizon_days=horizon_days,
+    )
+    if len(dataset) < min_training_rows:
+        raise RuntimeError(f"Insufficient tail-risk training rows: {len(dataset)}")
+    if dataset["risk_label"].astype(int).nunique() < 2:
+        raise RuntimeError("Tail-risk training requires both risk and non-risk labels.")
+
+    models = _tail_risk_models((model_name,))
+    model = models[model_name]
+    X_train = dataset.loc[:, TAIL_RISK_FEATURE_COLUMNS]
+    y_train = dataset["risk_label"].astype(int)
+    logging.info("Tail-risk deployment model fit started: model=%s rows=%s", model_name, len(dataset))
+    fitted = model.fit(X_train, y_train)
+
+    trade_dates = pd.to_datetime(dataset["trade_date"], errors="coerce").dropna()
+    train_start = trade_dates.min().date().isoformat()
+    train_end = trade_dates.max().date().isoformat()
+    artifact = {
+        "model_version": TAIL_RISK_MODEL_VERSION,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "model_name": model_name,
+        "model": fitted,
+        "feature_columns": tuple(TAIL_RISK_FEATURE_COLUMNS),
+        "label_config": {
+            "lookback_days": int(lookback_days),
+            "quantile": float(quantile),
+            "horizon_days": int(horizon_days),
+        },
+        "train_config": {
+            "start_date": start_date.isoformat() if start_date else "",
+            "end_date": end_date.isoformat() if end_date else "",
+            "limit": limit,
+            "min_training_rows": int(min_training_rows),
+        },
+        "train_rows": int(len(dataset)),
+        "train_start": train_start,
+        "train_end": train_end,
+        "risk_rate": float(y_train.mean()),
+        "skipped_symbols": int(len(skipped)),
+    }
+    model_path, metadata_path = save_tail_risk_model_artifact(project_root, artifact)
+    logging.info("Tail-risk deployment model saved: %s", model_path)
+    return TailRiskTrainResult(
+        model_path=model_path,
+        metadata_path=metadata_path,
+        model_name=model_name,
+        train_rows=int(len(dataset)),
+        train_start=train_start,
+        train_end=train_end,
+        feature_columns=tuple(TAIL_RISK_FEATURE_COLUMNS),
+    )
+
+
+def predict_tail_risk(
+    *,
+    storage: Storage,
+    project_root: Path,
+    trade_date: date,
+    output: Path | None = None,
+    limit: int | None = None,
+) -> TailRiskPredictionResult:
+    artifact = load_tail_risk_model_artifact(project_root)
+    label_config = artifact.get("label_config", {})
+    feature_columns = tuple(artifact["feature_columns"])
+    universe = storage.load_universe().copy()
+    if limit is not None:
+        universe = universe.head(max(int(limit), 0)).copy()
+
+    rows: list[dict[str, Any]] = []
+    skipped: list[dict[str, object]] = []
+    instruments = universe.to_dict("records")
+    total_symbols = len(instruments)
+    for index, instrument in enumerate(instruments, start=1):
+        _log_prediction_progress(index, total_symbols)
+        symbol = str(instrument.get("symbol", "")).zfill(6)
+        name = str(instrument.get("name", ""))
+        try:
+            bars = storage.load_daily_bars(symbol)
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            skipped.append({"symbol": symbol, "name": name, "reason": type(exc).__name__})
+            continue
+        bars = bars.copy()
+        bars["trade_date"] = pd.to_datetime(bars["trade_date"], errors="coerce")
+        bars = bars.dropna(subset=["trade_date"])
+        bars = bars[bars["trade_date"].dt.date <= trade_date].copy()
+        frame = build_tail_risk_frame(
+            bars,
+            symbol=symbol,
+            name=name,
+            lookback_days=int(label_config.get("lookback_days", 100)),
+            quantile=float(label_config.get("quantile", 0.05)),
+            horizon_days=int(label_config.get("horizon_days", 1)),
+        )
+        if frame.empty:
+            skipped.append({"symbol": symbol, "name": name, "reason": "empty_tail_risk_frame"})
+            continue
+        row = frame[frame["trade_date"].dt.date.eq(trade_date)]
+        if row.empty:
+            skipped.append({"symbol": symbol, "name": name, "reason": "no_trade_date"})
+            continue
+        row = row.tail(1).copy()
+        row = row.dropna(subset=list(feature_columns))
+        if row.empty:
+            skipped.append({"symbol": symbol, "name": name, "reason": "no_feature_row"})
+            continue
+        risk_score = float(_predict_risk_proba(artifact["model"], row.loc[:, feature_columns])[0])
+        record: dict[str, Any] = {
+            "trade_date": trade_date.isoformat(),
+            "symbol": symbol,
+            "name": name,
+            "risk_score": risk_score,
+            "model_name": artifact["model_name"],
+            "model_version": artifact["model_version"],
+        }
+        for column in feature_columns:
+            record[column] = float(row.iloc[0][column])
+        rows.append(record)
+
+    predictions = pd.DataFrame(rows)
+    if not predictions.empty:
+        predictions = predictions.sort_values(["risk_score", "symbol"], ascending=[False, True]).reset_index(drop=True)
+    skipped_frame = pd.DataFrame(skipped)
+    output_path = output if output is not None else tail_risk_predictions_path(project_root, trade_date)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(output_path, index=False, encoding="utf-8-sig")
+    skipped_path = output_path.with_name(f"{output_path.stem}_skipped.csv")
+    skipped_frame.to_csv(skipped_path, index=False, encoding="utf-8-sig")
+    logging.info(
+        "Tail-risk predictions saved: rows=%s skipped=%s output=%s",
+        len(predictions),
+        len(skipped_frame),
+        output_path,
+    )
+    return TailRiskPredictionResult(
+        predictions=predictions,
+        skipped=skipped_frame,
+        output_path=output_path,
+        artifact_path=tail_risk_model_path(project_root),
+    )
+
+
+def tail_risk_model_dir(project_root: Path) -> Path:
+    return project_root / "data" / "ml" / "full_market_risk"
+
+
+def tail_risk_model_path(project_root: Path) -> Path:
+    return tail_risk_model_dir(project_root) / "tail_risk_model.pkl"
+
+
+def tail_risk_metadata_path(project_root: Path) -> Path:
+    return tail_risk_model_dir(project_root) / "tail_risk_model_metadata.json"
+
+
+def tail_risk_predictions_path(project_root: Path, trade_date: date) -> Path:
+    return full_market_report_dir(project_root) / f"tail_risk_predictions_{trade_date.isoformat()}.csv"
+
+
+def save_tail_risk_model_artifact(project_root: Path, artifact: dict[str, Any]) -> tuple[Path, Path]:
+    model_dir = tail_risk_model_dir(project_root)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = tail_risk_model_path(project_root)
+    metadata_path = tail_risk_metadata_path(project_root)
+    with model_path.open("wb") as file:
+        pickle.dump(artifact, file)
+    metadata = {key: value for key, value in artifact.items() if key != "model"}
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return model_path, metadata_path
+
+
+def load_tail_risk_model_artifact(project_root: Path) -> dict[str, Any]:
+    model_path = tail_risk_model_path(project_root)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Tail-risk model artifact not found: {model_path}")
+    with model_path.open("rb") as file:
+        artifact = pickle.load(file)
+    return artifact
+
+
+def format_tail_risk_prediction_table(predictions: pd.DataFrame, *, top_n: int = 20) -> str:
+    if predictions.empty:
+        return "No tail-risk predictions."
+    columns = ["trade_date", "symbol", "name", "risk_score", "model_name"]
+    available = [column for column in columns if column in predictions.columns]
+    frame = predictions.loc[:, available].head(max(int(top_n), 0)).copy()
+    if "risk_score" in frame.columns:
+        frame["risk_score"] = frame["risk_score"].map(lambda value: f"{float(value):.6f}")
+    return frame.to_string(index=False)
 
 
 def reproduce_tail_risk(
@@ -545,6 +776,13 @@ def build_risk_decile_report(scored: pd.DataFrame) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _log_prediction_progress(current: int, total: int) -> None:
+    if total <= 0:
+        return
+    if current == 1 or current % 500 == 0 or current == total:
+        logging.info("Tail-risk prediction progress: %s/%s", current, total)
 
 
 def _window_slice(dataset: pd.DataFrame, *, start: str, end: str) -> pd.DataFrame:
