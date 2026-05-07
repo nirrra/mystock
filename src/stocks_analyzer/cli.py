@@ -41,6 +41,7 @@ from .full_market_risk import (
     validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
 )
+from .full_market_return import validate_alpha158_qlib_return
 from .macd_divergence import summarize_recent_macd_divergence
 from .features import build_feature_frame
 from .indicators import add_indicators
@@ -473,6 +474,21 @@ def build_parser() -> argparse.ArgumentParser:
     alpha158_risk.add_argument("--return-tolerance", type=float, default=0.001, help="平均收益可接受劣化幅度，默认 0.001")
     alpha158_risk.add_argument("--min-training-rows", type=int, default=200, help="每个窗口最少训练样本行数，默认 200")
     alpha158_risk.add_argument("--allow-short-sample", action="store_true", help="允许短样本 smoke test；正式验证不要使用")
+
+    alpha158_qlib_return = subparsers.add_parser(
+        "validate-alpha158-qlib-return",
+        help="严格复现 Phase 4 Qlib Alpha158 + LightGBM 收益回归模型",
+        description="使用 Qlib Alpha158 公式、LABEL0=T+1 到 T+2 收益、Qlib benchmark LightGBM 回归参数验证收益模型。",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    alpha158_qlib_return.add_argument("--start-date", default="2015-01-01", help="样本开始日期，格式 YYYY-MM-DD")
+    alpha158_qlib_return.add_argument("--end-date", default="2026-05-07", help="样本结束日期，格式 YYYY-MM-DD")
+    alpha158_qlib_return.add_argument("--train-end", required=True, help="训练集结束日期，格式 YYYY-MM-DD")
+    alpha158_qlib_return.add_argument("--valid-end", required=True, help="验证集结束日期，格式 YYYY-MM-DD")
+    alpha158_qlib_return.add_argument("--limit", type=int, default=None, help="仅使用前 N 只股票，便于快速测试")
+    alpha158_qlib_return.add_argument("--topk", type=int, default=50, help="TopKDropout topk，默认 50")
+    alpha158_qlib_return.add_argument("--drop", type=int, default=5, help="TopKDropout n_drop，默认 5")
+    alpha158_qlib_return.add_argument("--min-training-rows", type=int, default=200, help="最少训练样本行数，默认 200")
 
     train_tail_model = subparsers.add_parser(
         "train-tail-risk-model",
@@ -1201,6 +1217,33 @@ def main() -> None:
         print(f"Saved filter impact: {result.filter_impact_path}")
         print(f"Saved filter summary: {result.filter_summary_path}")
         print(f"Saved comparison: {result.comparison_path}")
+        return
+
+    if args.command == "validate-alpha158-qlib-return":
+        result = validate_alpha158_qlib_return(
+            storage=storage,
+            project_root=project_root,
+            start_date=_parse_optional_date(args.start_date),
+            end_date=_parse_optional_date(args.end_date),
+            train_end=_parse_required_date(args.train_end),
+            valid_end=_parse_required_date(args.valid_end),
+            limit=args.limit,
+            topk=args.topk,
+            n_drop=args.drop,
+            min_training_rows=args.min_training_rows,
+        )
+        print("Alpha158 Qlib return validation complete.")
+        print("Signal metrics:")
+        print(result.signal_metrics.to_string(index=False))
+        print("TopK summary:")
+        print(result.topk_summary.to_string(index=False))
+        print(f"Saved feature audit: {result.feature_audit_path}")
+        print(f"Saved signal metrics: {result.signal_metrics_path}")
+        print(f"Saved daily IC: {result.daily_ic_path}")
+        print(f"Saved deciles: {result.deciles_path}")
+        print(f"Saved TopK daily: {result.topk_daily_path}")
+        print(f"Saved TopK summary: {result.topk_summary_path}")
+        print(f"Saved config: {result.config_path}")
         return
 
     if args.command == "train-tail-risk-model":
@@ -4305,6 +4348,10 @@ def _load_instruments(storage: Storage, symbols: list[str] | None = None) -> lis
 def _parse_optional_date(value: str | None) -> date | None:
     if value is None:
         return None
+    return datetime.fromisoformat(value).date()
+
+
+def _parse_required_date(value: str) -> date:
     return datetime.fromisoformat(value).date()
 
 

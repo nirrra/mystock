@@ -529,6 +529,23 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "2",
         ]
     )
+    alpha158_qlib_return_args = parser.parse_args(
+        [
+            "validate-alpha158-qlib-return",
+            "--start-date",
+            "2015-01-01",
+            "--end-date",
+            "2026-05-07",
+            "--train-end",
+            "2021-12-31",
+            "--valid-end",
+            "2023-12-31",
+            "--topk",
+            "50",
+            "--drop",
+            "5",
+        ]
+    )
     train_tail_model_args = parser.parse_args(
         [
             "train-tail-risk-model",
@@ -650,6 +667,11 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert alpha158_risk_args.pt_mult == 1.0
     assert alpha158_risk_args.sl_mult == 1.0
     assert alpha158_risk_args.min_ret == 0.005
+    assert alpha158_qlib_return_args.command == "validate-alpha158-qlib-return"
+    assert alpha158_qlib_return_args.train_end == "2021-12-31"
+    assert alpha158_qlib_return_args.valid_end == "2023-12-31"
+    assert alpha158_qlib_return_args.topk == 50
+    assert alpha158_qlib_return_args.drop == 5
     assert train_tail_model_args.command == "train-tail-risk-model"
     assert train_tail_model_args.model_name == "logistic_regression"
     assert train_tail_model_args.limit == 10

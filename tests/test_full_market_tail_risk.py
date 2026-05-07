@@ -6,7 +6,8 @@ from pathlib import Path
 import pandas as pd
 
 from stocks_analyzer.full_market_labels import build_barrier_risk_frame, build_mlfin_barrier_risk_frame, build_tail_risk_frame
-from stocks_analyzer.full_market_alpha158 import build_alpha158_feature_frame
+from stocks_analyzer.full_market_alpha158 import build_alpha158_feature_frame, build_alpha158_return_frame
+from stocks_analyzer.full_market_return import validate_alpha158_qlib_return
 from stocks_analyzer.full_market_risk import (
     build_risk_filter_impact,
     build_tail_risk_walkforward_windows,
@@ -82,10 +83,20 @@ def test_build_mlfin_barrier_risk_frame_uses_cusum_events_and_bins() -> None:
 
 
 def test_build_alpha158_feature_frame_adds_window_features() -> None:
-    frame = build_alpha158_feature_frame(_bars([10 + i * 0.1 for i in range(90)]), symbol="600000")
+    closes = [10 + i * 0.1 for i in range(90)]
+    frame = build_alpha158_feature_frame(_bars(closes), symbol="600000")
 
     assert {"KMID", "ROC5", "MA20", "CORR60", "VSUMD30"}.issubset(frame.columns)
     assert len([column for column in frame.columns if column not in {"trade_date", "symbol", "name", "future_return_5d", "future_max_drawdown_5d"}]) >= 150
+    assert abs(frame.loc[5, "ROC5"] - closes[0] / closes[5]) < 1e-12
+
+
+def test_build_alpha158_return_frame_uses_qlib_label() -> None:
+    bars = _bars([10.0, 11.0, 12.1, 13.31, 14.641])
+
+    frame = build_alpha158_return_frame(bars, symbol="600000")
+
+    assert abs(frame.loc[0, "LABEL0_raw"] - (12.1 / 11.0 - 1.0)) < 1e-12
 
 
 def test_build_risk_decile_report_orders_by_score() -> None:
@@ -352,6 +363,35 @@ def test_validate_alpha158_risk_walkforward_writes_reports_on_short_sample() -> 
     assert result.comparison_path.exists()
     assert not result.feature_audit.empty
     assert set(result.metrics["model_name"]) == {"lightgbm_classifier"}
+
+
+def test_validate_alpha158_qlib_return_writes_reports_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "alpha158_qlib_return"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}, {"symbol": "600002", "name": "丙"}]))
+    storage.save_daily_bars("600000", _bars([10 * (1.002 ** i) for i in range(180)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.02 + (-0.3 if i % 17 == 0 else 0.2 if i % 29 == 0 else 0) for i in range(180)]))
+    storage.save_daily_bars("600002", _bars([9 + i * 0.01 + (0.25 if i % 13 == 0 else -0.15 if i % 31 == 0 else 0) for i in range(180)]))
+
+    result = validate_alpha158_qlib_return(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 9, 6),
+        train_end=date(2024, 4, 30),
+        valid_end=date(2024, 6, 28),
+        topk=2,
+        n_drop=1,
+        min_training_rows=20,
+    )
+
+    assert result.signal_metrics_path.exists()
+    assert result.daily_ic_path.exists()
+    assert result.deciles_path.exists()
+    assert result.topk_summary_path.exists()
+    assert not result.signal_metrics.empty
+    assert set(result.signal_metrics["split"]) == {"valid", "test"}
 
 
 def test_train_and_predict_tail_risk_model_roundtrip_on_short_sample() -> None:
