@@ -151,6 +151,117 @@ def build_barrier_risk_frame(
     return features
 
 
+def build_mlfin_barrier_risk_frame(
+    bars: pd.DataFrame,
+    *,
+    symbol: str,
+    name: str = "",
+    vertical_barrier_days: int = 20,
+    volatility_lookback: int = 100,
+    pt_mult: float = 1.0,
+    sl_mult: float = 1.0,
+    min_ret: float = 0.005,
+    cusum_threshold: float | None = None,
+    cusum_threshold_mult: float = 1.0,
+) -> pd.DataFrame:
+    if vertical_barrier_days <= 0:
+        raise ValueError("vertical_barrier_days must be positive.")
+    if volatility_lookback <= 1:
+        raise ValueError("volatility_lookback must be greater than 1.")
+    frame = _prepare_price_frame(bars)
+    if frame.empty:
+        return pd.DataFrame()
+    close = frame["close"].where(frame["close"].gt(0))
+    log_return = np.log(close / close.shift(1)).replace([np.inf, -np.inf], np.nan)
+    daily_vol = log_return.ewm(span=volatility_lookback, min_periods=volatility_lookback).std()
+    threshold = float(cusum_threshold) if cusum_threshold is not None else float(daily_vol.dropna().mean() * cusum_threshold_mult)
+    if not np.isfinite(threshold) or threshold <= 0:
+        return pd.DataFrame()
+
+    event_indices = _symmetric_cusum_events(log_return, threshold=threshold)
+    if not event_indices:
+        return pd.DataFrame()
+    kept_indices: list[int] = []
+    entry_dates: list[pd.Timestamp] = []
+    entry_prices: list[float] = []
+    exit_dates: list[pd.Timestamp] = []
+    exit_prices: list[float] = []
+    outcomes: list[str] = []
+    bins: list[int] = []
+    risk_labels: list[float] = []
+    realized_returns: list[float] = []
+    max_drawdowns: list[float] = []
+    forward_logs: list[float] = []
+    targets: list[float] = []
+    close_values = close.to_numpy(dtype=float)
+    low_values = frame["low"].to_numpy(dtype=float)
+    dates = frame["trade_date"].to_numpy()
+    for event_index in event_indices:
+        target = float(daily_vol.iloc[event_index]) if pd.notna(daily_vol.iloc[event_index]) else np.nan
+        if not np.isfinite(target) or target < float(min_ret):
+            continue
+        end_index = min(event_index + int(vertical_barrier_days), len(frame) - 1)
+        if end_index <= event_index:
+            continue
+        event_close = float(close_values[event_index])
+        if not np.isfinite(event_close) or event_close <= 0:
+            continue
+        pt_return = float(pt_mult) * target if pt_mult > 0 else np.inf
+        sl_return = -float(sl_mult) * target if sl_mult > 0 else -np.inf
+        outcome = "vertical"
+        touch_index = end_index
+        for bar_index in range(event_index + 1, end_index + 1):
+            bar_close = float(close_values[bar_index])
+            if not np.isfinite(bar_close) or bar_close <= 0:
+                continue
+            path_return = bar_close / event_close - 1.0
+            if path_return <= sl_return:
+                outcome = "down_first"
+                touch_index = bar_index
+                break
+            if path_return >= pt_return:
+                outcome = "up_first"
+                touch_index = bar_index
+                break
+
+        exit_close = float(close_values[touch_index])
+        realized_return = exit_close / event_close - 1.0 if np.isfinite(exit_close) and exit_close > 0 else np.nan
+        window_low = low_values[event_index + 1 : end_index + 1]
+        finite_lows = window_low[np.isfinite(window_low)]
+        max_drawdown = float(finite_lows.min() / event_close - 1.0) if len(finite_lows) else np.nan
+        kept_indices.append(event_index)
+        entry_dates.append(pd.Timestamp(dates[event_index]))
+        entry_prices.append(event_close)
+        exit_dates.append(pd.Timestamp(dates[touch_index]))
+        exit_prices.append(exit_close)
+        outcomes.append(outcome)
+        bin_value = -1 if outcome == "down_first" else (1 if outcome == "up_first" else 0)
+        bins.append(bin_value)
+        risk_labels.append(1.0 if bin_value == -1 else 0.0)
+        realized_returns.append(realized_return)
+        max_drawdowns.append(max_drawdown)
+        forward_logs.append(np.log(exit_close / event_close) if np.isfinite(exit_close) and exit_close > 0 else np.nan)
+        targets.append(target)
+    if not kept_indices:
+        return pd.DataFrame()
+    result = _base_feature_frame(frame, symbol=symbol, name=name).iloc[kept_indices].copy().reset_index(drop=True)
+    result["entry_date"] = entry_dates
+    result["entry_price"] = entry_prices
+    result["exit_date"] = exit_dates
+    result["exit_price"] = exit_prices
+    result["barrier_outcome"] = outcomes
+    result["barrier_bin"] = bins
+    result["risk_label"] = risk_labels
+    result["barrier_realized_return"] = realized_returns
+    result["barrier_max_drawdown"] = max_drawdowns
+    result["forward_log_return"] = forward_logs
+    result["mlfin_target"] = targets
+    result["mlfin_cusum_threshold"] = threshold
+    result["pt_mult"] = float(pt_mult)
+    result["sl_mult"] = float(sl_mult)
+    return result
+
+
 def build_tail_risk_frame(
     bars: pd.DataFrame,
     *,
@@ -272,7 +383,16 @@ def build_barrier_risk_panel(
     downside_pct: float | None = None,
     upside_pct: float | None = None,
     label_variant: str = "barrier_down_first",
+    label_method: str = "a_share_daily",
+    volatility_lookback: int = 100,
+    pt_mult: float = 1.0,
+    sl_mult: float = 1.0,
+    min_ret: float = 0.005,
+    cusum_threshold: float | None = None,
+    cusum_threshold_mult: float = 1.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if label_method not in {"a_share_daily", "mlfin_cusum"}:
+        raise ValueError(f"Unsupported barrier label method: {label_method}")
     universe = storage.load_universe().copy()
     if limit is not None:
         universe = universe.head(max(int(limit), 0)).copy()
@@ -289,17 +409,31 @@ def build_barrier_risk_panel(
         except (FileNotFoundError, DailyBarsReadError) as exc:
             skipped.append({"symbol": symbol, "name": name, "reason": type(exc).__name__})
             continue
-        frame = build_barrier_risk_frame(
-            bars,
-            symbol=symbol,
-            name=name,
-            horizon_days=horizon_days,
-            downside_atr_mult=downside_atr_mult,
-            upside_atr_mult=upside_atr_mult,
-            downside_pct=downside_pct,
-            upside_pct=upside_pct,
-            label_variant=label_variant,
-        )
+        if label_method == "mlfin_cusum":
+            frame = build_mlfin_barrier_risk_frame(
+                bars,
+                symbol=symbol,
+                name=name,
+                vertical_barrier_days=horizon_days,
+                volatility_lookback=volatility_lookback,
+                pt_mult=pt_mult,
+                sl_mult=sl_mult,
+                min_ret=min_ret,
+                cusum_threshold=cusum_threshold,
+                cusum_threshold_mult=cusum_threshold_mult,
+            )
+        else:
+            frame = build_barrier_risk_frame(
+                bars,
+                symbol=symbol,
+                name=name,
+                horizon_days=horizon_days,
+                downside_atr_mult=downside_atr_mult,
+                upside_atr_mult=upside_atr_mult,
+                downside_pct=downside_pct,
+                upside_pct=upside_pct,
+                label_variant=label_variant,
+            )
         if frame.empty:
             skipped.append({"symbol": symbol, "name": name, "reason": "empty_barrier_risk_frame"})
             continue
@@ -409,6 +543,24 @@ def _atr14(frame: pd.DataFrame) -> pd.Series:
     )
     true_range = ranges.max(axis=1)
     return true_range.rolling(14, min_periods=14).mean()
+
+
+def _symmetric_cusum_events(log_return: pd.Series, *, threshold: float) -> list[int]:
+    positive_sum = 0.0
+    negative_sum = 0.0
+    events: list[int] = []
+    for index, value in enumerate(pd.to_numeric(log_return, errors="coerce")):
+        if not np.isfinite(value):
+            continue
+        positive_sum = max(0.0, positive_sum + float(value))
+        negative_sum = min(0.0, negative_sum + float(value))
+        if negative_sum < -threshold:
+            negative_sum = 0.0
+            events.append(index)
+        elif positive_sum > threshold:
+            positive_sum = 0.0
+            events.append(index)
+    return events
 
 
 def _append_empty_barrier(

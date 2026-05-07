@@ -403,6 +403,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="barrier_down_first",
         help="风险标签口径，默认 barrier_down_first",
     )
+    reproduce_barrier.add_argument(
+        "--label-method",
+        choices=["a_share_daily", "mlfin_cusum"],
+        default="a_share_daily",
+        help="标签构建方法：a_share_daily 或接近 mlfin 原版的 mlfin_cusum，默认 a_share_daily",
+    )
+    reproduce_barrier.add_argument("--volatility-lookback", type=int, default=100, help="mlfin_cusum daily volatility EWMA lookback，默认 100")
+    reproduce_barrier.add_argument("--pt-mult", type=float, default=1.0, help="mlfin_cusum profit-taking target 倍数，默认 1.0")
+    reproduce_barrier.add_argument("--sl-mult", type=float, default=1.0, help="mlfin_cusum stop-loss target 倍数，默认 1.0")
+    reproduce_barrier.add_argument("--min-ret", type=float, default=0.005, help="mlfin_cusum 最小 target return，默认 0.005")
+    reproduce_barrier.add_argument("--cusum-threshold", type=float, default=None, help="mlfin_cusum 固定 CUSUM 阈值；默认使用平均 daily volatility")
+    reproduce_barrier.add_argument("--cusum-threshold-mult", type=float, default=1.0, help="mlfin_cusum 平均 daily volatility 阈值倍数，默认 1.0")
     reproduce_barrier.add_argument("--min-training-rows", type=int, default=200, help="每个窗口最少训练样本行数，默认 200")
     reproduce_barrier.add_argument(
         "--models",
@@ -1043,6 +1055,13 @@ def main() -> None:
             downside_pct=args.downside_pct,
             upside_pct=args.upside_pct,
             label_variant=args.label_variant,
+            label_method=args.label_method,
+            volatility_lookback=args.volatility_lookback,
+            pt_mult=args.pt_mult,
+            sl_mult=args.sl_mult,
+            min_ret=args.min_ret,
+            cusum_threshold=args.cusum_threshold,
+            cusum_threshold_mult=args.cusum_threshold_mult,
             min_training_rows=args.min_training_rows,
             allow_short_sample=args.allow_short_sample,
             model_names=tuple(_parse_str_list(args.models)),

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from stocks_analyzer.full_market_labels import build_barrier_risk_frame, build_tail_risk_frame
+from stocks_analyzer.full_market_labels import build_barrier_risk_frame, build_mlfin_barrier_risk_frame, build_tail_risk_frame
 from stocks_analyzer.full_market_risk import (
     build_risk_filter_impact,
     build_tail_risk_walkforward_windows,
@@ -54,6 +54,28 @@ def test_build_barrier_risk_frame_uses_next_open_and_conservative_same_day_touch
     assert row["entry_price"] == 12.0
     assert row["barrier_outcome"] == "down_first"
     assert row["risk_label"] == 1.0
+
+
+def test_build_mlfin_barrier_risk_frame_uses_cusum_events_and_bins() -> None:
+    closes = [10.0]
+    for index in range(1, 140):
+        closes.append(closes[-1] * (1.012 if index % 7 == 0 else 0.996))
+    bars = _bars(closes)
+
+    frame = build_mlfin_barrier_risk_frame(
+        bars,
+        symbol="600000",
+        vertical_barrier_days=5,
+        volatility_lookback=20,
+        pt_mult=1.0,
+        sl_mult=1.0,
+        min_ret=0.001,
+        cusum_threshold=0.01,
+    )
+
+    assert not frame.empty
+    assert set(frame["barrier_bin"].dropna().unique()).issubset({-1, 0, 1})
+    assert frame["risk_label"].eq(frame["barrier_bin"].eq(-1).astype(float)).all()
 
 
 def test_build_risk_decile_report_orders_by_score() -> None:
@@ -205,9 +227,9 @@ def test_validate_barrier_risk_walkforward_writes_reports_on_short_sample() -> N
         project_root=root,
         start_date=date(2024, 1, 1),
         end_date=date(2024, 9, 6),
-        train_days=50,
-        valid_days=20,
-        step_days=20,
+        train_days=8,
+        valid_days=4,
+        step_days=4,
         embargo_days=1,
         max_windows=2,
         horizon_days=5,
@@ -221,6 +243,39 @@ def test_validate_barrier_risk_walkforward_writes_reports_on_short_sample() -> N
     assert result.label_distribution_path.exists()
     assert result.metrics_path.exists()
     assert result.comparison_path.exists()
+    assert not result.label_distribution.empty
+    assert set(result.metrics["model_name"]) == {"logistic_regression"}
+
+
+def test_validate_mlfin_barrier_risk_walkforward_writes_reports_on_short_sample() -> None:
+    root = Path(__file__).resolve().parents[1] / ".tmp_tests" / "mlfin_barrier_risk_walkforward"
+    root.mkdir(parents=True, exist_ok=True)
+    storage = _storage(root)
+    storage.save_universe(pd.DataFrame([{"symbol": "600000", "name": "甲"}, {"symbol": "600001", "name": "乙"}]))
+    storage.save_daily_bars("600000", _bars([10 * (1.003 ** i) for i in range(220)]))
+    storage.save_daily_bars("600001", _bars([12 + i * 0.02 + (-0.5 if i % 17 == 0 else 0.4 if i % 23 == 0 else 0) for i in range(220)]))
+
+    result = validate_barrier_risk_walkforward(
+        storage=storage,
+        project_root=root,
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 10, 1),
+        train_days=8,
+        valid_days=4,
+        step_days=4,
+        embargo_days=1,
+        max_windows=2,
+        horizon_days=5,
+        label_method="mlfin_cusum",
+        volatility_lookback=20,
+        min_ret=0.001,
+        cusum_threshold=0.01,
+        min_training_rows=4,
+        allow_short_sample=True,
+        model_names=("logistic_regression",),
+    )
+
+    assert result.label_distribution_path.exists()
     assert not result.label_distribution.empty
     assert set(result.metrics["model_name"]) == {"logistic_regression"}
 

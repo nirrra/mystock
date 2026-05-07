@@ -475,6 +475,16 @@ def test_build_parser_accepts_current_model_commands() -> None:
             "2.0",
             "--models",
             "logistic_regression,lightgbm_classifier",
+            "--label-method",
+            "mlfin_cusum",
+            "--volatility-lookback",
+            "100",
+            "--pt-mult",
+            "1.0",
+            "--sl-mult",
+            "1.0",
+            "--min-ret",
+            "0.005",
             "--max-windows",
             "2",
         ]
@@ -587,6 +597,9 @@ def test_build_parser_accepts_current_model_commands() -> None:
     assert reproduce_barrier_args.downside_atr_mult == 1.0
     assert reproduce_barrier_args.upside_atr_mult == 2.0
     assert reproduce_barrier_args.models == "logistic_regression,lightgbm_classifier"
+    assert reproduce_barrier_args.label_method == "mlfin_cusum"
+    assert reproduce_barrier_args.volatility_lookback == 100
+    assert reproduce_barrier_args.min_ret == 0.005
     assert train_tail_model_args.command == "train-tail-risk-model"
     assert train_tail_model_args.model_name == "logistic_regression"
     assert train_tail_model_args.limit == 10
