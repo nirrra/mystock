@@ -39,6 +39,21 @@ def test_build_parser_accepts_daily_screening_main_commands() -> None:
     assert update.data_interface == "sina"
     assert update.update_index is False
 
+    intraday = parser.parse_args(["intraday-update", "--data-interface", "sina_raw", "--limit", "5", "--watchlist-only"])
+    assert intraday.command == "intraday-update"
+    assert intraday.symbol is None
+    assert intraday.data_interface == "sina_raw"
+    assert intraday.limit == 5
+    assert intraday.watchlist_only is True
+
+    intraday_screening = parser.parse_args(["intraday-screening", "--date", "2026-05-08", "--skip-intraday-update", "--watchlist-only"])
+    assert intraday_screening.command == "intraday-screening"
+    assert intraday_screening.date == "2026-05-08"
+    assert intraday_screening.data_interface == "eastmoney_direct"
+    assert intraday_screening.skip_intraday_update is True
+    assert intraday_screening.watchlist_only is True
+    assert intraday_screening.keep_report_dates == 10
+
     pattern = parser.parse_args(["pattern", "--1", "--5", "--as-of", "2026-05-07"])
     assert pattern.command == "pattern"
     assert pattern.pattern1 is True
@@ -49,6 +64,14 @@ def test_build_parser_accepts_daily_screening_main_commands() -> None:
     assert daily.date == "2026-05-07"
     assert daily.start_date == "20150101"
 
+    backtest = parser.parse_args(
+        ["backtest-daily-screening-components", "--start-date", "2026-01-01", "--end-date", "2026-04-30"]
+    )
+    assert backtest.command == "backtest-daily-screening-components"
+    assert backtest.horizons == "5,10,20,60"
+    assert backtest.top_n == 20
+    assert backtest.phase1_filter_rate == 0.2
+
 
 def test_build_parser_exposes_current_phase_commands_only() -> None:
     parser = build_parser()
@@ -58,10 +81,15 @@ def test_build_parser_exposes_current_phase_commands_only() -> None:
     assert parser.parse_args(["predict-alpha158-qlib-return", "--date", "2026-05-07"]).command == "predict-alpha158-qlib-return"
     assert parser.parse_args(["predict-trade-day-gate", "--date", "2026-05-07"]).command == "predict-trade-day-gate"
     assert parser.parse_args(["validate-mcd-crash-risk", "--end-date", "2026-05-07"]).command == "validate-mcd-crash-risk"
+    assert parser.parse_args(
+        ["backtest-daily-screening-components", "--start-date", "2026-01-01", "--end-date", "2026-04-30"]
+    ).command == "backtest-daily-screening-components"
 
 
 def test_command_needs_network_only_for_update() -> None:
     assert _command_needs_network("update") is True
+    assert _command_needs_network("intraday-update") is True
+    assert _command_needs_network("intraday-screening") is True
     assert _command_needs_network("macd") is False
     assert _command_needs_network("daily-screening") is False
 

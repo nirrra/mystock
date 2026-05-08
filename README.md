@@ -1,5 +1,11 @@
 # A Share Analyzer
 
+盘中筛选名单：[reports/intraday_screening](reports/intraday_screening/)
+
+盘后筛选名单：[reports/watchlists](reports/watchlists/)
+
+---
+
 面向 A 股日线数据的技术筛选、风险过滤和收益排序工具。当前主流程是：
 
 ```text
@@ -19,60 +25,50 @@ daily-screening
 
 项目定位是“生成候选池和风险信息”，不是自动交易系统。它不会自动下单，也不会自动修改 `选股.md`。
 
-## 最常用指令
+## 每个交易日执行流程
 
-### 每日完整筛选
-
-盘后最常用就是这一条：
+以下指令默认在项目根目录执行。先设置当天交易日：
 
 ```powershell
-python -m stocks_analyzer --project-root . daily-screening --date 2026-05-07
+$DATE = "2026-05-08"
 ```
 
-默认会从 `20240101` 开始做增量更新。如果首次补历史数据，建议显式给更早日期：
+### 11:40 盘中第一次筛选
 
 ```powershell
-python -m stocks_analyzer --project-root . daily-screening --date 2026-05-07 --start-date 20150101
+python -m stocks_analyzer --project-root . intraday-screening --date $DATE
 ```
 
-`daily-screening` 会先判断目标日是否为交易日。不是交易日则跳过。
-
-### 已经更新过日线后的模块指令
-
-如果当天已经跑过 `update`，只想手工补跑中间模块，可以按下面顺序执行：
+### 14:30 盘中第二次筛选
 
 ```powershell
-$env:PYTHONPATH = "src"
-$DATE = "2026-05-07"
-
-python -m stocks_analyzer --project-root . macd --date $DATE
-python -m stocks_analyzer --project-root . atr --date $DATE
-python -m stocks_analyzer --project-root . predict-tail-risk --date $DATE
-python -m stocks_analyzer --project-root . predict-barrier-risk --date $DATE
-python -m stocks_analyzer --project-root . predict-alpha158-qlib-return --date $DATE
-python -m stocks_analyzer --project-root . predict-trade-day-gate --date $DATE
-python -m stocks_analyzer --project-root . validate-mcd-crash-risk --start-date 2015-01-01 --end-date $DATE
-python -m stocks_analyzer --project-root . pattern --as-of $DATE
-python -m stocks_analyzer --project-root . track-stock --date $DATE
+python -m stocks_analyzer --project-root . intraday-screening --date $DATE
 ```
 
-注意：上面这组指令只生成中间 CSV、旧的 `watchlist_pattern` 和手动跟踪表 Sheet2，不会合成最终 Phase watchlist。最终 Phase watchlist 合成目前挂在 `daily-screening` 内部。日常仍建议直接跑 `daily-screening`，让流程一次性产出完整结果。
+### 14:45 生成日中选股名单
 
-### 手动跟踪股票表
+给 GPT 的固定指令：
 
-在项目根目录维护 `track_stock.xlsx`：
+```text
+1. 参照 [intraday-picks-writing-guide.md](docs/intraday-picks-writing-guide.md)，结合最新的 [主线.md](主线.md)，更新 [选股-盘中.md](选股-盘中.md)。如果 [选股-盘中.md](选股-盘中.md) 中已经有对应日期的选股列表，删除并完全忽略它，只根据最新筛选结果重新列出选股列表；
+2. 优先参考 [intraday_top20_YYYY-MM-DD.csv](reports/intraday_screening/intraday_top20_YYYY-MM-DD.csv)，并结合 [intraday_top20_previous_YYYY-MM-DD.csv](reports/intraday_screening/intraday_top20_previous_YYYY-MM-DD.csv) 判断上一轮重点股是否延续；必要时再查看 [intraday_screening_YYYY-MM-DD.csv](reports/intraday_screening/intraday_screening_YYYY-MM-DD.csv) 做补充解释；如果没有上一轮重点股，直接忽略；
+3. 日中名单必须优先服从主线，不要只按 Phase4 排序选股；盘中数据只作为临时参考，不写成收盘确认。
+```
 
-- `Sheet1` 只填写要跟踪的股票代码，不需要股票名称。第一列标题可用 `symbol`、`code`、`股票代码`、`代码` 或 `证券代码`。
-- 股票代码列会被设置为文本格式，`000001` 这类代码不会丢失前导 0。
-- `Sheet2` 由程序覆盖更新，不要手动改。
-
-单独更新跟踪表：
+### 18:00 盘后完整筛选
 
 ```powershell
-python -m stocks_analyzer --project-root . track-stock --date 2026-05-07
+python -m stocks_analyzer --project-root . daily-screening --date $DATE
 ```
 
-`daily-screening` 最后一阶段会自动执行同样的更新。`Sheet2` 使用中文表头，字段顺序是 Phase1/2/4/5/7 的 0-100 买入友好分、pattern 是否命中、MACD/ATR 技术指标。表格里不展示模型原始分数；所有 `Phase*_score_100` 都是越高越值得看，越低代表风险越大或排序越弱。
+### 22:30 更新主线和选股名单
+
+给 GPT 的固定指令：
+
+```text
+1. 根据 [xueqiu](reports/xueqiu) 下的最新博主观点，更新 [主线.md](主线.md)；
+2. 参照 [picks-writing-guide.md](docs/picks-writing-guide.md)，根据最新的 [主线.md](主线.md) 和 watchlist，更新 [选股.md](选股.md)。如果 [选股.md](选股.md) 中已经有 watchlist 对应日期的选股列表，删除并完全忽略它，只根据最新筛选结果重新列出选股列表。
+```
 
 ## daily-screening 做什么
 
@@ -359,18 +355,53 @@ python -m stocks_analyzer --project-root . validate-trade-day-gate --start-date 
 | Phase1 尾部风险 | 有效 | walk-forward `PR-AUC 0.151` vs 基准 `0.057`，`ROC-AUC 0.702`；高风险 decile 在所有窗口里都对应更高风险、更差回撤。过滤最高风险 20% 后，5 日未来收益略改善，最大回撤改善。 | 个股级硬风险过滤，排除最高风险 20%。 |
 | Phase2 triple-barrier 风险 | 有效，交易影响强于 Phase1 | 最优网格里过滤最高风险 20% 后，5 日未来收益改善约 `0.258%`，未来最大回撤改善约 `0.40pct`；多个网格均通过风险过滤检验。 | 个股级硬风险过滤，排除最高风险 20%；保留 CUSUM event 作为事件标记。 |
 | Phase4 Alpha158/Qlib 收益 | 有明显排序信号 | 测试集 `IC 0.0587`、`RankIC 0.0414`，正 IC 日比例约 `78%`；TopK 组合测试期 hit rate 约 `60%`。 | 通过 Phase1/2 后的收益排序核心，补入 Phase4 Top20。 |
-| Phase5 MCD crash-risk | 风险画像合理，但不适合直接当日线硬过滤 | `NEGOUTLIER` 总体比例约 `14.8%`；与 `MINRET` 相关性约 `-0.605`，与 `SIGMA` 相关性约 `0.509`。 | 长周期极端风险提示，暂不做硬过滤。 |
+| Phase5 MCD crash-risk | 风险画像合理，且小样本排序结果值得继续验证 | `NEGOUTLIER` 总体比例约 `14.8%`；与 `MINRET` 相关性约 `-0.605`，与 `SIGMA` 相关性约 `0.509`；30 日小样本组合回测中 Phase5 Top 表现最好。 | 长周期极端风险提示；是否升级为排序/过滤组件，需要更长样本确认。 |
 | Phase7 交易日闸门 | 有效 | 最佳摘要 `PR-AUC 0.574` vs 基准 `0.446`；allow 日未来收益和最大回撤均优于整体。 | 日期级交易许可，`no_trade` 日只观察不积极开新仓。 |
+
+### 组合小样本回测结论
+
+截至 2026-05-08，已完成一次 `daily-screening` 组件小样本消融：
+
+- 样本：30 个信号日，`2025-11-05` 到 `2025-12-16`
+- 股票池：universe 前 500 只
+- 选股数量：每日 Top20
+- 入场：次日开盘
+- 回看窗口：5/10/20/60 个交易日
+- 止损/止盈：`8% / 15%`
+- 输出：`reports/daily_screening_smoke_backtest/summary.csv`、`comparison.csv`、`trades.csv`、`daily_portfolio.csv`
+
+下面是带止损止盈后的平均收益 `avg_barrier_return`：
+
+| 策略 | 5日 | 10日 | 20日 | 60日 |
+| --- | ---: | ---: | ---: | ---: |
+| 随机全市场 | `-0.26%` | `-0.67%` | `0.21%` | `2.38%` |
+| Phase1 过滤 | `-0.23%` | `-0.55%` | `0.43%` | `2.81%` |
+| Phase2 过滤 | `-0.13%` | `-0.45%` | `0.42%` | `2.70%` |
+| Phase4 Top | `-0.20%` | `-0.63%` | `0.50%` | `2.40%` |
+| Phase5 Top | `0.29%` | `0.53%` | `2.50%` | `5.64%` |
+| Phase1 + Phase4 | `-0.07%` | `-0.26%` | `1.02%` | `3.39%` |
+| Phase1 + Phase2 + Phase4 | `-0.12%` | `-0.34%` | `0.88%` | `3.42%` |
+| Patterns only | `-0.53%` | `-0.97%` | `-0.03%` | `2.37%` |
+| 当前 watchlist，不含 Phase7 阻断 | `-0.07%` | `-0.43%` | `0.79%` | `3.57%` |
+| 当前 watchlist，含 Phase7 阻断 | `-0.21%` | `-0.54%` | `0.76%` | `3.48%` |
+
+当前判断：
+
+- 5/10 日窗口整体偏弱，大多数策略都是负收益；20/60 日开始转正。
+- 当前 watchlist 在 60 日窗口为 `3.57%`，高于随机全市场 `2.38%`，说明组合有初步增益。
+- Phase1/Phase2 的主要价值仍是降低回撤。60 日平均最大回撤从随机的 `-8.12%` 改善到 Phase1 `-7.55%`、Phase2 `-7.63%`。
+- Phase4 单独排序有收益信号，但回撤更大。60 日平均最大回撤为 `-10.08%`，不适合裸用。
+- Phase5 Top 在这段样本里明显最好：60 日 `avg_barrier_return = 5.64%`，固定持有收益 `17.02%`，平均最大回撤 `-6.87%`。这可能是有效信号，也可能是该时间段偏差，必须扩大样本确认后再调整 daily-screening。
+- Phase7 在该样本中只阻断 `1/30` 个交易日，加入后略微降低结果，暂时不能证明增益。
 
 当前还缺的结果：
 
 - 新版 `pattern 1-6` 在 2016-2026 全量区间的独立回测。
-- `patterns_only` 是否打赢随机。
-- `patterns + Phase1/2` 是否明显优于 pure patterns。
-- `patterns + Phase1/2 + Phase4` 是否优于 `Phase4 only`。
-- 当前完整 `daily-screening watchlist` 是否优于各单组件基准。
+- 更长时间跨度的 `daily-screening` 组合消融，尤其要验证 Phase5 Top 是否稳定。
+- 单独 pattern 1-6 的分组消融，以及 pattern 与 Phase1/2/4/5 的组合关系。
+- 加入涨跌停、无法成交、交易成本、仓位去重后的更接近实盘口径回测。
 
-因此当前判断是：模型侧 Phase1/2/4/7 已有独立价值；Phase5 暂作风险提示；pattern 和最终组合仍需要进一步消融回测确认。
+因此当前判断是：模型侧 Phase1/2/4/7 已有独立价值；当前 watchlist 相对随机有初步增益；Phase5 的排序效果值得优先复核；pattern 和最终组合仍需要更长样本消融回测确认。
 
 ### 回测 pattern
 
@@ -390,7 +421,25 @@ python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-0
 docs/superpowers/specs/2026-05-07-daily-screening-component-backtest-commands.md
 ```
 
-其中统一组合回测命令 `backtest-daily-screening-components` 仍待实现。
+小样本快速验证可以直接运行：
+
+```powershell
+python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2026-01-05 --end-date 2026-02-06 --horizons 5,10,20,60 --top-n 5 --max-signal-days 2 --symbol-limit 80 --output-dir reports\daily_screening_smoke_backtest_test --progress
+```
+
+已跑通的 30 信号日小样本命令：
+
+```powershell
+python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2025-01-01 --end-date 2025-12-16 --horizons 5,10,20,60 --top-n 20 --max-signal-days 30 --symbol-limit 500 --output-dir reports\daily_screening_smoke_backtest --progress
+```
+
+更大样本可继续扩大到 60 个信号日，但运行时间会明显增加：
+
+```powershell
+python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2025-01-01 --end-date 2026-02-06 --horizons 5,10,20,60 --top-n 20 --max-signal-days 60 --symbol-limit 500 --output-dir reports\daily_screening_smoke_backtest --progress
+```
+
+输出为 `trades.csv`、`daily_portfolio.csv`、`summary.csv`、`comparison.csv`。
 
 ## 目录和输出
 

@@ -7,9 +7,20 @@ This document lists the commands needed to evaluate the current `daily-screening
 Important status:
 
 - Existing CLI already supports Phase-level validation and pure pattern backtests.
-- Existing CLI does not yet have one unified command that can replay historical daily-screening combinations across Phase1/Phase2/Phase4/Phase5/Phase7 and patterns.
-- The combination commands below assume the next implementation adds a command named `backtest-daily-screening-components`.
-- Until that command exists, run the "Existing Commands" section first, then implement the unified command according to the "Combination Backtest Command Contract" section.
+- Existing CLI now includes `backtest-daily-screening-components`, which replays a small historical sample across Phase1/Phase2/Phase4/Phase5/Phase7 and patterns.
+- The older per-strategy examples later in this file are retained as design notes. Prefer the runnable combined commands in this section.
+
+Runnable smoke command:
+
+```powershell
+python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2026-01-05 --end-date 2026-02-06 --horizons 5,10,20,60 --top-n 5 --max-signal-days 2 --symbol-limit 80 --output-dir reports\daily_screening_smoke_backtest_test --progress
+```
+
+Runnable larger small-sample command:
+
+```powershell
+python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2025-01-01 --end-date 2026-02-06 --horizons 5,10,20,60 --top-n 20 --max-signal-days 60 --symbol-limit 500 --output-dir reports\daily_screening_smoke_backtest --progress
+```
 
 ## 1. Recommended Backtest Window
 
@@ -92,47 +103,39 @@ python -m stocks_analyzer --project-root . backtest-patterns --start-date $START
 
 ## 3. Combination Backtest Command Contract
 
-Add a new CLI command:
+Current CLI command:
 
 ```text
 backtest-daily-screening-components
 ```
 
-Required common arguments:
+Important arguments:
 
 ```text
 --start-date YYYY-MM-DD
 --end-date YYYY-MM-DD
---strategy STRATEGY_NAME
---entry next_open
---horizons 5,10,20
---top-n 10,20,50
+--strategies STRATEGY_A,STRATEGY_B
+--horizons 5,10,20,60
+--top-n 20
+--phase4-top-n 20
 --phase1-filter-rate 0.2
 --phase2-filter-rate 0.2
---phase7-block-rate 0.2
+--stop-loss-pct 0.08
+--take-profit-pct 0.15
+--max-signal-days 30
+--symbol-limit 500
 --output-dir PATH
-```
-
-Recommended optional arguments:
-
-```text
---portfolio-top-n 10
---max-holding-days 20
---dedupe-symbol-per-day
---include-limit-up-filter
 --progress
 ```
 
-Output files per run:
+Output files:
 
 ```text
-reports/daily_screening_component_backtests/
-  <strategy>_trades.csv
-  <strategy>_daily_portfolio.csv
-  <strategy>_summary.csv
-  <strategy>_by_year.csv
-  <strategy>_by_phase7_permission.csv
-  <strategy>_decile_report.csv
+reports/daily_screening_smoke_backtest/
+  trades.csv
+  daily_portfolio.csv
+  summary.csv
+  comparison.csv
 ```
 
 Metrics required in every summary:

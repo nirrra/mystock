@@ -31,6 +31,11 @@ class Storage:
         dataframe.to_parquet(target, index=False)
         return target
 
+    def save_intraday_bars(self, symbol: str, dataframe: pd.DataFrame) -> Path:
+        target = self.paths.intraday_dir / f"{symbol}.parquet"
+        dataframe.to_parquet(target, index=False)
+        return target
+
     def save_index_daily_bars(self, index_symbol: str, dataframe: pd.DataFrame) -> Path:
         normalized = _normalize_index_symbol(index_symbol)
         target = self.paths.index_daily_dir / f"{normalized}.parquet"
@@ -45,6 +50,12 @@ class Storage:
             return pd.read_parquet(target)
         except Exception as exc:
             raise DailyBarsReadError(f"Daily bars are unreadable for {symbol}: {target}: {exc}") from exc
+
+    def load_intraday_bars(self, symbol: str) -> pd.DataFrame:
+        target = self.paths.intraday_dir / f"{symbol}.parquet"
+        if not target.exists():
+            raise FileNotFoundError(f"Intraday bars not found for {symbol}: {target}")
+        return pd.read_parquet(target)
 
     def load_index_daily_bars(self, index_symbol: str) -> pd.DataFrame:
         normalized = _normalize_index_symbol(index_symbol)

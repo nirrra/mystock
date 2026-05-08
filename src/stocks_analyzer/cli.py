@@ -13,6 +13,11 @@ import pandas as pd
 from .atr import build_atr_export_frame, build_atr_snapshot_row, normalize_atr_summary_frame
 from .config import load_config
 from .daily_screening import run_daily_screening
+from .daily_screening_backtest import (
+    DEFAULT_BACKTEST_STRATEGIES,
+    backtest_daily_screening_components,
+    format_backtest_summary,
+)
 from .data_sources import create_data_provider
 from .full_market_crash import validate_mcd_crash_risk
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
@@ -45,6 +50,8 @@ from .full_market_trade_day import (
     validate_trade_day_gate,
 )
 from .indicators import add_indicators
+from .intraday_screening import DEFAULT_INTRADAY_REPORT_KEEP_DATES, run_intraday_screening
+from .intraday_update import INTRADAY_DATA_INTERFACES, run_intraday_update
 from .macd_divergence import summarize_recent_macd_divergence
 from .models import NetworkConfig
 from .paths import ProjectPaths
@@ -149,6 +156,60 @@ def main() -> None:
             provider.close()
         return
 
+    if args.command == "intraday-update":
+        symbols = _parse_str_list(args.symbol) if args.symbol else None
+        result = run_intraday_update(
+            storage=storage,
+            project_root=project_root,
+            source=args.data_interface,
+            symbols=symbols,
+            limit=args.limit,
+            watchlist_only=args.watchlist_only,
+            timeout_seconds=args.timeout,
+            chunk_size=args.chunk_size,
+        )
+        print("Intraday update complete.")
+        print(f"Source: {result.source}")
+        if result.source_watchlist_path is not None:
+            print(f"Source watchlist: {result.source_watchlist_path}")
+        print(f"Requested symbols: {len(result.requested_symbols)}")
+        print(f"Updated symbols: {len(result.updated_symbols)}")
+        print(f"Data directory: {paths.intraday_dir}")
+        if result.failed_symbols:
+            print(f"Missing symbols: {', '.join(result.failed_symbols[:20])}")
+        return
+
+    if args.command == "intraday-screening":
+        trade_date = _parse_required_date(args.date) if args.date else date.today()
+        result = run_intraday_screening(
+            storage=storage,
+            project_root=project_root,
+            trade_date=trade_date,
+            data_interface=args.data_interface,
+            limit=args.limit,
+            watchlist_only=args.watchlist_only,
+            skip_intraday_update=args.skip_intraday_update,
+            timeout_seconds=args.timeout,
+            chunk_size=args.chunk_size,
+            output=Path(args.output).resolve() if args.output else None,
+            report_keep_dates=args.keep_report_dates,
+        )
+        print("Intraday screening complete.")
+        print(f"Trade date: {result.trade_date.isoformat()}")
+        print(f"Source watchlist: {result.source_watchlist_path}")
+        print(f"Candidates: {result.candidate_count}")
+        print(f"Intraday updated: {result.intraday_updated_count}")
+        if result.focus_output_path is not None:
+            print(f"Previous Top20 output: {result.focus_output_path}")
+            print(f"Previous Top20 candidates: {result.focus_candidate_count}")
+        print(f"Output: {result.output_path}")
+        print(f"Top20 focus: {result.top20_path}")
+        if result.cleaned_report_files:
+            print(f"Cleaned report files: {result.cleaned_report_files}")
+        if result.missing_intraday_symbols:
+            print(f"Missing intraday symbols: {', '.join(result.missing_intraday_symbols[:20])}")
+        return
+
     if args.command == "pattern":
         _run_pattern(
             storage,
@@ -241,6 +302,10 @@ def main() -> None:
         _run_predict_trade_day_gate(storage, project_root, args)
         return
 
+    if args.command == "backtest-daily-screening-components":
+        _run_backtest_daily_screening_components(storage, project_root, config, args)
+        return
+
     if args.command == "daily-screening":
         trade_date = _parse_required_date(args.date) if args.date else date.today()
         result = run_daily_screening(project_root=project_root, trade_date=trade_date, start_date=args.start_date)
@@ -276,6 +341,40 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
     update.add_argument("--update-index", action="store_true", help="额外更新外部指数日线，默认不更新")
     update.add_argument("--index-interface", choices=["baostock", "sina", "eastmoney"], default="sina", help="指数日线接口")
     update.add_argument("--index-symbols", default=",".join(DEFAULT_INDEX_SYMBOLS), help="外部指数代码，逗号分隔")
+
+    intraday = subparsers.add_parser("intraday-update", help="盘中更新全市场或 watchlist 的临时日 K 数据")
+    intraday.add_argument("symbol", nargs="?", help="可选的 6 位股票代码或逗号分隔代码；默认读取全市场")
+    intraday.add_argument(
+        "--data-interface",
+        choices=INTRADAY_DATA_INTERFACES,
+        default="eastmoney_direct",
+        help="盘中数据接口",
+    )
+    intraday.add_argument("--limit", type=int, default=None, help="仅更新前 N 只股票")
+    intraday.add_argument("--watchlist-only", action="store_true", help="只更新最新主 watchlist 股票；默认更新全市场")
+    intraday.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
+    intraday.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")
+
+    intraday_screening = subparsers.add_parser("intraday-screening", help="用盘中临时日 K 做全市场或 watchlist 分析")
+    intraday_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
+    intraday_screening.add_argument(
+        "--data-interface",
+        choices=INTRADAY_DATA_INTERFACES,
+        default="eastmoney_direct",
+        help="盘中数据接口",
+    )
+    intraday_screening.add_argument("--limit", type=int, default=None, help="仅分析前 N 只股票")
+    intraday_screening.add_argument("--watchlist-only", action="store_true", help="只分析前一日主 watchlist；默认分析全市场")
+    intraday_screening.add_argument("--skip-intraday-update", action="store_true", help="不刷新盘中数据，直接使用 data/intraday")
+    intraday_screening.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
+    intraday_screening.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")
+    intraday_screening.add_argument("--output", default=None, help="可选 CSV 输出路径")
+    intraday_screening.add_argument(
+        "--keep-report-dates",
+        type=int,
+        default=DEFAULT_INTRADAY_REPORT_KEEP_DATES,
+        help="reports/intraday_screening 中保留最近多少个正式报告日期，默认 10；过程预测文件不写入 reports",
+    )
 
 
 def _add_pattern_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -323,6 +422,7 @@ def _add_model_maintenance_parsers(subparsers: argparse._SubParsersAction) -> No
     _add_phase4_parsers(subparsers)
     _add_phase5_parser(subparsers)
     _add_phase7_parsers(subparsers)
+    _add_backtest_parser(subparsers)
 
 
 def _add_phase1_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -522,6 +622,25 @@ def _add_daily_parsers(subparsers: argparse._SubParsersAction) -> None:
     track = subparsers.add_parser("track-stock", help="更新 track_stock.xlsx 的 Sheet2")
     track.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     track.add_argument("--workbook", default=DEFAULT_TRACK_STOCK_FILENAME, help="跟踪表路径")
+
+
+def _add_backtest_parser(subparsers: argparse._SubParsersAction) -> None:
+    backtest = subparsers.add_parser("backtest-daily-screening-components", help="小样本回测 daily-screening 组件消融")
+    backtest.add_argument("--start-date", required=True, help="信号开始日期，格式 YYYY-MM-DD")
+    backtest.add_argument("--end-date", required=True, help="信号结束日期，格式 YYYY-MM-DD")
+    backtest.add_argument("--strategies", default=",".join(DEFAULT_BACKTEST_STRATEGIES), help="策略组合，逗号分隔")
+    backtest.add_argument("--horizons", default="5,10,20,60", help="持有交易日窗口，逗号分隔")
+    backtest.add_argument("--top-n", type=int, default=20, help="每个策略每天最多买入数量")
+    backtest.add_argument("--phase4-top-n", type=int, default=20, help="当前 watchlist 逻辑中 Phase4 补入数量")
+    backtest.add_argument("--phase1-filter-rate", type=float, default=0.2, help="Phase1 排除最高风险比例")
+    backtest.add_argument("--phase2-filter-rate", type=float, default=0.2, help="Phase2 排除最高风险比例")
+    backtest.add_argument("--stop-loss-pct", type=float, default=0.08, help="止损比例，例如 0.08")
+    backtest.add_argument("--take-profit-pct", type=float, default=0.15, help="止盈比例，例如 0.15")
+    backtest.add_argument("--max-signal-days", type=int, default=30, help="最多回测多少个信号日，取区间内最近 N 个")
+    backtest.add_argument("--symbol-limit", type=int, default=500, help="小样本股票数量，默认取 universe 前 500 只")
+    backtest.add_argument("--output-dir", default="reports/daily_screening_smoke_backtest", help="输出目录")
+    backtest.add_argument("--no-cache", action="store_true", help="不复用 output-dir/cache 下的历史预测缓存")
+    backtest.add_argument("--progress", action="store_true", help="显示日期级进度")
 
 
 def _run_audit_full_market(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
@@ -856,6 +975,43 @@ def _run_predict_trade_day_gate(storage: Storage, project_root: Path, args: argp
     print("Trade-day gate prediction complete.")
     print(format_trade_day_gate_prediction_table(result.prediction))
     print(f"Saved prediction: {result.output_path}")
+
+
+def _run_backtest_daily_screening_components(
+    storage: Storage,
+    project_root: Path,
+    config,
+    args: argparse.Namespace,
+) -> None:
+    output_dir = Path(args.output_dir)
+    if not output_dir.is_absolute():
+        output_dir = project_root / output_dir
+    result = backtest_daily_screening_components(
+        storage=storage,
+        project_root=project_root,
+        config=config,
+        start_date=_parse_required_date(args.start_date),
+        end_date=_parse_required_date(args.end_date),
+        strategies=tuple(_parse_str_list(args.strategies)),
+        horizons=tuple(_parse_int_list(args.horizons)),
+        top_n=args.top_n,
+        phase1_filter_rate=args.phase1_filter_rate,
+        phase2_filter_rate=args.phase2_filter_rate,
+        phase4_top_n=args.phase4_top_n,
+        stop_loss_pct=args.stop_loss_pct,
+        take_profit_pct=args.take_profit_pct,
+        max_signal_days=args.max_signal_days,
+        symbol_limit=args.symbol_limit,
+        output_dir=output_dir,
+        progress=args.progress,
+        use_cache=not args.no_cache,
+    )
+    print("Daily-screening component backtest complete.")
+    print(format_backtest_summary(result.summary))
+    print(f"Saved trades: {result.trades_path}")
+    print(f"Saved daily portfolio: {result.daily_portfolio_path}")
+    print(f"Saved summary: {result.summary_path}")
+    print(f"Saved comparison: {result.comparison_path}")
 
 
 def _run_update(
@@ -1598,7 +1754,7 @@ def _load_local_env(path: Path) -> None:
 
 
 def _command_needs_network(command_name: str) -> bool:
-    return command_name == "update"
+    return command_name in {"update", "intraday-update", "intraday-screening"}
 
 
 def _create_update_data_provider(data_interface: str):
