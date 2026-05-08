@@ -17,11 +17,13 @@ build/
 
 *.parquet
 *.csv
+*.xlsx
 !reports/
 !reports/intraday_screening/
 !reports/intraday_screening/intraday_top20_*.csv
 !reports/intraday_screening/intraday_top20_previous_*.csv
 !reports/watchlists/
 !reports/watchlists/watchlist_*.csv
+reports/xueqiu/
 .env.local
 command.txt

@@ -1,5 +1,31 @@
 # A Share Analyzer
 
+## 项目简介
+
+本项目面向 A 股日线和盘中临时日 K，提供数据拉取、技术筛选、风险过滤、收益排序和选股名单整理流程。项目定位是“生成候选池和风险信息”，不是自动交易系统；它不会自动下单，也不会自动修改 `选股.md`，最终选股仍需要结合主线和人工判断。
+
+主要功能：
+
+1. 盘中数据更新及日中选股：盘中更新 `data/intraday` 临时日 K，生成 `intraday_top20` 和日中选股参考。
+2. 盘后拉取数据及选股：盘后更新正式日线数据，运行 `daily-screening` 并生成 watchlist。
+3. Phase1-7 及六个模式：支持尾部风险、交易型风险、收益排序、极端风险、交易日闸门，以及六类技术形态。
+4. 技术面指标：生成 MACD、顶底背离、量价背离、ATR 止损止盈等辅助信息。
+5. 手动股票名单评分：支持在 `track_stock.xlsx` 中手动维护股票名单，并输出对应 Phase 与技术评分。
+
+## 目录
+
+- [快速查看](#快速查看)
+- [每个交易日执行流程](#每个交易日执行流程)
+- [daily-screening 做什么](#daily-screening-做什么)
+- [六个 pattern 分别在找什么](#六个-pattern-分别在找什么)
+- [模型训练与验证](#模型训练与验证)
+- [目录和输出](#目录和输出)
+- [参考项目和论文](#参考项目和论文)
+- [注意事项](#注意事项)
+- [入口](#入口)
+
+## 快速查看
+
 盘中筛选名单：[reports/intraday_screening](reports/intraday_screening/)
 
 盘后筛选名单：[reports/watchlists](reports/watchlists/)
@@ -22,8 +48,6 @@ daily-screening
   -> phase watchlist
   -> track_stock.xlsx Sheet2
 ```
-
-项目定位是“生成候选池和风险信息”，不是自动交易系统。它不会自动下单，也不会自动修改 `选股.md`。
 
 ## 每个交易日执行流程
 
@@ -50,9 +74,10 @@ python -m stocks_analyzer --project-root . intraday-screening --date $DATE
 给 GPT 的固定指令：
 
 ```text
-1. 参照 [intraday-picks-writing-guide.md](docs/intraday-picks-writing-guide.md)，结合最新的 [主线.md](主线.md)，更新 [选股-盘中.md](选股-盘中.md)。如果 [选股-盘中.md](选股-盘中.md) 中已经有对应日期的选股列表，删除并完全忽略它，只根据最新筛选结果重新列出选股列表；
+1. 参照 [intraday-picks-writing-guide.md](docs/intraday-picks-writing-guide.md)，结合最新的 [主线.md](主线.md)，更新 [选股-日中.md](选股-日中.md)。如果 [选股-日中.md](选股-日中.md) 中已经有对应日期的选股列表，删除并完全忽略它，只根据最新筛选结果重新列出选股列表；
 2. 优先参考 [intraday_top20_YYYY-MM-DD.csv](reports/intraday_screening/intraday_top20_YYYY-MM-DD.csv)，并结合 [intraday_top20_previous_YYYY-MM-DD.csv](reports/intraday_screening/intraday_top20_previous_YYYY-MM-DD.csv) 判断上一轮重点股是否延续；必要时再查看 [intraday_screening_YYYY-MM-DD.csv](reports/intraday_screening/intraday_screening_YYYY-MM-DD.csv) 做补充解释；如果没有上一轮重点股，直接忽略；
-3. 日中名单必须优先服从主线，不要只按 Phase4 排序选股；盘中数据只作为临时参考，不写成收盘确认。
+3. `intraday_top20_YYYY-MM-DD.csv` 已包含 `track_stock.xlsx` 中的手动跟踪股票；更新 [选股-日中.md](选股-日中.md) 时必须单独写“手动跟踪股票总结”，即使没有适合入选的跟踪股也要说明观察或不选原因；
+4. 日中名单必须优先服从主线，不要只按 Phase4 排序选股；盘中数据只作为临时参考，不写成收盘确认。
 ```
 
 ### 18:00 盘后完整筛选

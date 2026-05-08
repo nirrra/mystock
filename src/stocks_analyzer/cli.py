@@ -204,6 +204,9 @@ def main() -> None:
             print(f"Previous Top20 candidates: {result.focus_candidate_count}")
         print(f"Output: {result.output_path}")
         print(f"Top20 focus: {result.top20_path}")
+        if result.track_stock_path is not None:
+            print(f"Intraday track stock: {result.track_stock_path}")
+            print(f"Tracked symbols: {result.track_stock_count}")
         if result.cleaned_report_files:
             print(f"Cleaned report files: {result.cleaned_report_files}")
         if result.missing_intraday_symbols:

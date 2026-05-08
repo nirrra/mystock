@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+from openpyxl import load_workbook
 
 from .atr import build_atr_snapshot_row
 from .full_market_return import predict_alpha158_qlib_return
@@ -17,6 +18,7 @@ from .intraday_update import INTRADAY_DATA_INTERFACES, run_intraday_update
 from .macd_divergence import summarize_recent_macd_divergence
 from .phase_display import normalize_symbol
 from .storage import DailyBarsReadError, Storage
+from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, TRACK_INPUT_SHEET
 from .watchlist import (
     _prepare_atr_frame,
     _prepare_macd_frame,
@@ -36,6 +38,7 @@ _DATED_REPORT_PATTERNS = (
     re.compile(r"^intraday_top10_(\d{4}-\d{2}-\d{2})\.csv$"),
     re.compile(r"^intraday_top20_(\d{4}-\d{2}-\d{2})\.csv$"),
     re.compile(r"^intraday_top20_previous_(\d{4}-\d{2}-\d{2})\.csv$"),
+    re.compile(r"^intraday_track_stock_(\d{4}-\d{2}-\d{2})\.csv$"),
 )
 
 
@@ -46,8 +49,10 @@ class IntradayScreeningResult:
     output_path: Path
     focus_output_path: Path | None
     top20_path: Path
+    track_stock_path: Path | None
     candidate_count: int
     focus_candidate_count: int
+    track_stock_count: int
     intraday_updated_count: int
     missing_intraday_symbols: list[str]
     cleaned_report_files: int
@@ -94,6 +99,8 @@ def run_intraday_screening(
     candidates = previous_candidates if watchlist_only else _full_market_candidates(storage, previous_candidates)
     if limit is not None:
         candidates = candidates[: max(int(limit), 0)]
+    tracked_symbols = _load_tracked_symbols(project_root)
+    candidates = _merge_tracked_candidates(storage=storage, candidates=candidates, tracked_symbols=tracked_symbols)
     symbols = [candidate["symbol"] for candidate in candidates]
     if not symbols:
         raise RuntimeError(f"No previous-watchlist symbols found in {source_watchlist_path}")
@@ -191,10 +198,11 @@ def run_intraday_screening(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     analysis.frame.to_csv(output_path, index=False, encoding="utf-8-sig")
     top20_path = _save_top20_focus(storage=storage, output_dir=output_dir, trade_date=trade_date, frame=analysis.frame)
+    track_stock_path = _save_intraday_track_stock(output_dir=output_dir, trade_date=trade_date, frame=analysis.frame)
     cleaned_report_files = _cleanup_intraday_screening_reports(
         output_dir,
         keep_dates=report_keep_dates,
-        preserve_paths=(output_path, focus_output_path, top20_path),
+        preserve_paths=(output_path, focus_output_path, top20_path, track_stock_path),
     )
 
     intraday = _load_intraday_snapshot_frame(storage, symbols=symbols)
@@ -205,8 +213,10 @@ def run_intraday_screening(
         output_path=output_path,
         focus_output_path=focus_output_path,
         top20_path=top20_path,
+        track_stock_path=track_stock_path,
         candidate_count=len(analysis.frame),
         focus_candidate_count=focus_candidate_count,
+        track_stock_count=len(tracked_symbols),
         intraday_updated_count=updated_count,
         missing_intraday_symbols=sorted(set(missing_update_symbols + missing_intraday)),
         cleaned_report_files=cleaned_report_files,
@@ -342,6 +352,101 @@ def _full_market_candidates(storage: Storage, previous_candidates: list[dict[str
     return rows
 
 
+def _load_tracked_symbols(project_root: Path) -> list[str]:
+    path = project_root / DEFAULT_TRACK_STOCK_FILENAME
+    if not path.exists():
+        return []
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    except OSError:
+        return []
+    try:
+        if TRACK_INPUT_SHEET not in workbook.sheetnames:
+            return []
+        sheet = workbook[TRACK_INPUT_SHEET]
+        header_values = [str(cell.value or "").strip().lower() for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+        symbol_column = 1
+        has_symbol_header = False
+        for index, value in enumerate(header_values, start=1):
+            if value in {"symbol", "code", "股票代码", "代码", "证券代码"}:
+                symbol_column = index
+                has_symbol_header = True
+                break
+        start_row = 2 if has_symbol_header else 1
+        symbols: list[str] = []
+        seen: set[str] = set()
+        for row in sheet.iter_rows(min_row=start_row, min_col=symbol_column, max_col=symbol_column, values_only=True):
+            symbol = normalize_symbol(row[0] if row else "")
+            if not symbol or symbol in seen:
+                continue
+            symbols.append(symbol)
+            seen.add(symbol)
+        return symbols
+    finally:
+        workbook.close()
+
+
+def _merge_tracked_candidates(
+    *,
+    storage: Storage,
+    candidates: list[dict[str, object]],
+    tracked_symbols: list[str],
+) -> list[dict[str, object]]:
+    tracked = {normalize_symbol(symbol) for symbol in tracked_symbols if normalize_symbol(symbol)}
+    if not tracked:
+        return candidates
+    result = [dict(candidate) for candidate in candidates]
+    by_symbol = {str(candidate.get("symbol", "")): candidate for candidate in result}
+    for candidate in result:
+        candidate["track_stock"] = str(candidate.get("symbol", "")) in tracked
+
+    missing = [symbol for symbol in tracked_symbols if normalize_symbol(symbol) not in by_symbol]
+    if not missing:
+        return result
+
+    universe_names = _universe_name_lookup(storage)
+    for symbol in missing:
+        normalized = normalize_symbol(symbol)
+        if not normalized:
+            continue
+        result.append(
+            {
+                "symbol": normalized,
+                "name": universe_names.get(normalized, ""),
+                "prev_rank": pd.NA,
+                "universe_rank": pd.NA,
+                "prev_source": "",
+                "prev_source_tags": "",
+                "prev_pattern_match": False,
+                "prev_pattern_id": "",
+                "prev_pattern_ids": "",
+                "prev_patterns": "",
+                "prev_reason": "",
+                "prev_phase1_score_100": pd.NA,
+                "prev_phase2_score_100": pd.NA,
+                "prev_phase4_score_100": pd.NA,
+                "prev_watchlist_streak": pd.NA,
+                "track_stock": True,
+            }
+        )
+    return result
+
+
+def _universe_name_lookup(storage: Storage) -> dict[str, str]:
+    try:
+        universe = storage.load_universe().copy()
+    except FileNotFoundError:
+        return {}
+    if "symbol" not in universe.columns:
+        return {}
+    universe["symbol"] = universe["symbol"].map(normalize_symbol)
+    return {
+        str(row.get("symbol", "")): str(row.get("name", "") or "")
+        for row in universe.to_dict("records")
+        if str(row.get("symbol", ""))
+    }
+
+
 def _run_candidate_analysis(
     *,
     storage: Storage,
@@ -443,6 +548,15 @@ def _save_top20_focus(*, storage: Storage, output_dir: Path, trade_date: date, f
     return target
 
 
+def _save_intraday_track_stock(*, output_dir: Path, trade_date: date, frame: pd.DataFrame) -> Path | None:
+    track = _select_intraday_track_stock(frame)
+    if track.empty:
+        return None
+    target = output_dir / f"intraday_track_stock_{trade_date.isoformat()}.csv"
+    track.to_csv(target, index=False, encoding="utf-8-sig")
+    return target
+
+
 def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame.head(0).copy()
@@ -460,9 +574,40 @@ def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
         & pct_change.le(INTRADAY_FOCUS_MAX_PCT_CHANGE)
     ].copy()
     if result.empty:
+        selected = result
+    else:
+        result["_phase4_focus_sort"] = phase4.loc[result.index]
+        selected = result.sort_values(["_phase4_focus_sort", "symbol"], ascending=[False, True], na_position="last").head(INTRADAY_FOCUS_SIZE)
+    selected = selected.copy()
+    selected["intraday_selection_source"] = "top20"
+    tracked = _select_intraday_track_stock(frame)
+    if not tracked.empty:
+        tracked = tracked.copy()
+        tracked["intraday_selection_source"] = "track_stock"
+        selected_symbols = set(selected["symbol"].astype(str)) if "symbol" in selected.columns else set()
+        tracked_only = tracked[~tracked["symbol"].astype(str).isin(selected_symbols)].copy()
+        selected.loc[selected["symbol"].astype(str).isin(set(tracked["symbol"].astype(str))), "intraday_selection_source"] = "top20+track_stock"
+        selected = _concat_frames(selected, tracked_only)
+    if selected.empty:
+        return selected.drop(columns=["_phase4_focus_sort"], errors="ignore").reset_index(drop=True)
+    selected["_phase4_focus_sort"] = pd.to_numeric(selected.get("phase4_score_100"), errors="coerce")
+    selected["_track_focus_sort"] = selected.get("intraday_selection_source", "").astype(str).eq("track_stock").astype(int)
+    selected = selected.sort_values(
+        ["_track_focus_sort", "_phase4_focus_sort", "symbol"],
+        ascending=[True, False, True],
+        na_position="last",
+    )
+    return selected.drop(columns=["_phase4_focus_sort", "_track_focus_sort"], errors="ignore").reset_index(drop=True)
+
+
+def _select_intraday_track_stock(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "track_stock" not in frame.columns:
+        return frame.head(0).copy()
+    result = frame[frame["track_stock"].fillna(False).astype(bool)].copy()
+    if result.empty:
         return result
-    result["_phase4_focus_sort"] = phase4.loc[result.index]
-    result = result.sort_values(["_phase4_focus_sort", "symbol"], ascending=[False, True], na_position="last").head(INTRADAY_FOCUS_SIZE)
+    result["_phase4_focus_sort"] = pd.to_numeric(result.get("phase4_score_100"), errors="coerce")
+    result = result.sort_values(["_phase4_focus_sort", "symbol"], ascending=[False, True], na_position="last")
     return result.drop(columns=["_phase4_focus_sort"], errors="ignore").reset_index(drop=True)
 
 
@@ -768,6 +913,8 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "phase2_score_100",
         "symbol",
         "name",
+        "intraday_selection_source",
+        "track_stock",
         "prev_rank",
         "universe_rank",
         "intraday_trade_date",

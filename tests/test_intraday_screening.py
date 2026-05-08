@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pandas as pd
+from openpyxl import Workbook
 
 from stocks_analyzer.config import load_config
 from stocks_analyzer.intraday_screening import _select_top20_focus, run_intraday_screening
@@ -380,3 +381,104 @@ def test_select_top20_focus_excludes_weak_scores_and_intraday_gain_above_8_perce
     top20 = _select_top20_focus(frame)
 
     assert top20["symbol"].tolist() == ["600003", "600001"]
+
+
+def test_intraday_screening_appends_track_stock_to_top20(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("intraday_track_stock")
+    storage = _make_storage(tmp_path)
+    _write_watchlist(tmp_path)
+    storage.save_universe(
+        pd.DataFrame(
+            [
+                {"symbol": "600001", "name": "强势股份"},
+                {"symbol": "600002", "name": "跟踪股份"},
+            ]
+        )
+    )
+    for symbol in ("600001", "600002"):
+        storage.save_daily_bars(symbol, _daily_bars(symbol))
+        storage.save_intraday_bars(
+            symbol,
+            pd.DataFrame(
+                [
+                    {
+                        "trade_date": "2026-05-08",
+                        "symbol": symbol,
+                        "name": f"测试{symbol}",
+                        "open": 12.0,
+                        "high": 12.6,
+                        "low": 11.8,
+                        "close": 12.4,
+                        "pre_close": 12.1,
+                        "volume": 200000,
+                        "amount": 2480000,
+                        "pct_change": 2.48,
+                        "quote_datetime": "2026-05-08 13:30:00",
+                        "quote_time": "13:30:00",
+                        "source": "sina_raw",
+                        "fetched_at": "2026-05-08T13:31:00",
+                        "provisional": True,
+                    }
+                ]
+            ),
+        )
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet["A1"] = "股票代码"
+    sheet["A2"] = "600002"
+    workbook.save(tmp_path / "track_stock.xlsx")
+
+    def fake_frame(symbols: list[str], score_column: str) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-05-08",
+                    "feature_trade_date": "2026-05-08",
+                    "symbol": symbol,
+                    "name": f"测试{symbol}",
+                    score_column: 0.1 if symbol == "600001" else 0.9,
+                    "is_cusum_event": 0,
+                    "model_name": score_column,
+                    "model_version": "v1",
+                }
+                for symbol in symbols
+            ]
+        )
+
+    def fake_tail(*, storage, project_root, trade_date, output, limit=None):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "risk_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    def fake_barrier(*, storage, project_root, trade_date, output, limit=None):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "barrier_risk_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    def fake_return(*, storage, project_root, trade_date, output, limit=None):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "return_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_tail_risk", fake_tail)
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_barrier_risk", fake_barrier)
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_alpha158_qlib_return", fake_return)
+
+    result = run_intraday_screening(
+        storage=storage,
+        project_root=tmp_path,
+        trade_date=pd.Timestamp("2026-05-08").date(),
+        skip_intraday_update=True,
+    )
+
+    top20 = pd.read_csv(result.top20_path, dtype={"symbol": str})
+    assert top20["symbol"].astype(str).str.zfill(6).tolist() == ["600001", "600002"]
+    assert top20.loc[top20["symbol"].eq("600002"), "intraday_selection_source"].iloc[0] == "track_stock"
+    assert bool(top20.loc[top20["symbol"].eq("600002"), "track_stock"].iloc[0]) is True
+    assert result.track_stock_path is not None
+    track = pd.read_csv(result.track_stock_path, dtype={"symbol": str})
+    assert track["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
