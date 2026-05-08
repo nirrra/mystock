@@ -1,5 +1,20 @@
 # Task Plan: A股技术面分析框架 V1
 
+## Active Initiative: 2026-05-07 Mainline and Picks Refresh
+
+### Goal
+
+根据本地 `reports/xueqiu` 最新博主观点、最新主 `watchlist_2026-05-07.json` 和 `track_stock.xlsx` 的 `Sheet2`，更新 `主线.md` 与 `选股.md`。同日旧选股段落必须整段替换，不沿用旧列表。
+
+### Implementation Phases
+
+- [x] 确认最新雪球观点文件和最新 watchlist 日期。
+- [x] 读取 `docs/picks-writing-guide.md` 与 `track_stock.xlsx` Sheet2。
+- [x] 更新 `主线.md` 的最新主线口径。
+- [x] 替换 `选股.md` 中 `2026.5.7` 段落。
+- [x] 校验日期排序、固定清单和 Phase/ATR 字段完整性。
+- **Status:** complete
+
 ## Goal
 
 构建一个面向 A 股主板的 Python 命令行技术面分析框架，先基于免费数据源跑通股票池、日线缓存、基础指标、三类参数化模板和可解释结果输出。

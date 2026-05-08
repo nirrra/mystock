@@ -2,11 +2,11 @@
   "symbols_total": 2998,
   "symbols_readable": 2998,
   "symbols_unreadable": 0,
-  "total_daily_rows": 6908059,
+  "total_daily_rows": 6909828,
   "global_first_trade_date": "2015-01-05",
   "global_last_trade_date": "2026-05-07",
   "trading_days_min": 9,
-  "trading_days_median": 2621,
+  "trading_days_median": 2622,
   "trading_days_max": 2753,
   "eligible_tail_risk_symbols": 2984,
   "eligible_barrier_symbols": 2980,
@@ -19,6 +19,6 @@
   "symbols_with_missing_ohlcv": 305,
   "duplicate_trade_dates_total": 0,
   "zero_volume_days_total": 1958,
-  "limit_up_detectable_total": 17120,
+  "limit_up_detectable_total": 17122,
   "limit_down_detectable_total": 4719
 }

@@ -262,6 +262,35 @@ def build_mlfin_barrier_risk_frame(
     return result
 
 
+def build_barrier_prediction_feature_frame(
+    bars: pd.DataFrame,
+    *,
+    symbol: str,
+    name: str = "",
+    volatility_lookback: int = 100,
+    cusum_threshold: float | None = None,
+    cusum_threshold_mult: float = 1.0,
+) -> pd.DataFrame:
+    if volatility_lookback <= 1:
+        raise ValueError("volatility_lookback must be greater than 1.")
+    frame = _prepare_price_frame(bars)
+    if frame.empty:
+        return pd.DataFrame()
+    close = frame["close"].where(frame["close"].gt(0))
+    log_return = np.log(close / close.shift(1)).replace([np.inf, -np.inf], np.nan)
+    daily_vol = log_return.ewm(span=volatility_lookback, min_periods=volatility_lookback).std()
+    threshold = float(cusum_threshold) if cusum_threshold is not None else float(daily_vol.dropna().mean() * cusum_threshold_mult)
+    features = _base_feature_frame(frame, symbol=symbol, name=name)
+    features["mlfin_daily_vol"] = daily_vol
+    features["mlfin_cusum_threshold"] = threshold if np.isfinite(threshold) and threshold > 0 else np.nan
+    features["is_cusum_event"] = 0
+    if np.isfinite(threshold) and threshold > 0:
+        event_indices = set(_symmetric_cusum_events(log_return, threshold=threshold))
+        if event_indices:
+            features.loc[features.index.isin(event_indices), "is_cusum_event"] = 1
+    return features
+
+
 def build_tail_risk_frame(
     bars: pd.DataFrame,
     *,

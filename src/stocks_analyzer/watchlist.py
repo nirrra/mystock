@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from .atr import ATR_WATCHLIST_FIELD_MAP
-from .models import PickTrendWatchlistConfig, WatchlistTrendFilterConfig
+from .atr import ATR_WATCHLIST_FIELD_MAP, normalize_atr_summary_frame
+from .phase_display import PHASE_TABLE_DROP_COLUMNS, add_phase5_score_100, phase7_score_100, score_series_100
 
 
 WATCHLIST_FILENAME_RE = re.compile(r"watchlist_(\d{4}-\d{2}-\d{2})\.json$")
@@ -23,56 +23,6 @@ PATTERN_PRIORITY = {
     "2": 2.0,
     "4": 1.0,
 }
-LABEL_BONUS = {
-    "strong_buy": 1.0,
-    "buy": 0.6,
-    "neutral": 0.0,
-    "sell": -0.6,
-    "strong_sell": -1.0,
-}
-V42_PREDICT_MODEL_REQUIRED_FIELDS = (
-    "symbol",
-    "trade_date",
-    "action",
-    "trade_permission",
-    "risk_tier",
-    "risk_gate_reason",
-    "risk_score",
-)
-PREDICT_MODEL_CANDIDATE_FIELDS = (
-    "model_version",
-    "action",
-    "risk_candidate_action",
-    "risk_action",
-    "final_action",
-    "trade_permission",
-    "opportunity_score",
-    "opportunity_threshold",
-    "opportunity_quality",
-    "risk_tier",
-    "risk_gate_reason",
-    "risk_score",
-    "long_upside_score",
-    "opportunity_rank_score",
-    "opportunity_rank_score_pct",
-    "final_score_v42",
-    "buy_score_v42",
-    "rank_source_v42",
-    "top_risk_horizon",
-    "top_upside_horizon",
-    "up_prob_5d",
-    "down_prob_5d",
-    "neutral_prob_5d",
-    "up_prob_10d",
-    "down_prob_10d",
-    "neutral_prob_10d",
-    "up_prob_20d",
-    "down_prob_20d",
-    "neutral_prob_20d",
-    "up_prob_60d",
-    "down_prob_60d",
-    "neutral_prob_60d",
-)
 INDEX_NAME_MARKERS = {
     "指数",
     "上证综指",
@@ -83,32 +33,19 @@ INDEX_NAME_MARKERS = {
     "中证1000",
     "科创50",
 }
-TREND_CANDIDATE_FIELDS = (
-    "signal_type",
-    "trend_score",
-    "entry_score",
-    "trend_base_score",
-    "price_action_score",
-    "macd_score",
-    "buy_score",
-    "positive_indicator_count",
+TECHNICAL_CANDIDATE_FIELDS = (
+    "macd",
+    "macd_signal_line",
+    "macd_hist",
     "macd_cross_state",
     "macd_divergence_state",
     "volume_price_divergence_state",
-    "macd_top_divergence_flag",
-    "macd_bottom_divergence_flag",
+    "macd_top_divergence_15d",
+    "macd_bottom_divergence_15d",
+    "macd_top_divergence_signal_date",
+    "macd_bottom_divergence_signal_date",
     "bullish_volume_price_divergence_flag",
     "bearish_volume_price_divergence_flag",
-    "trigger_reason",
-    "buy_reason",
-)
-TREND_UNIVERSE_CANDIDATE_FIELDS = (
-    "in_trend_universe",
-    "trend_universe_score",
-    "trend_direction_score",
-    "trend_strength_score",
-    "trend_quality_score",
-    "trend_liquidity_score",
 )
 PATTERN_CANDIDATE_FIELDS = (
     "old_high_date",
@@ -224,16 +161,11 @@ def watchlist_pattern_path(project_root: Path, trade_date: date) -> Path:
     return watchlists_dir(project_root) / f"watchlist_pattern_{trade_date.isoformat()}.json"
 
 
-def watchlist_trend_path(project_root: Path, trade_date: date) -> Path:
-    return watchlists_dir(project_root) / f"watchlist_trend_{trade_date.isoformat()}.json"
-
-
 def build_watchlist_candidates_from_patterns(
     pattern_frame: pd.DataFrame,
     *,
     source_file: str,
     limit: int | None = 30,
-    model_predictions: pd.DataFrame | None = None,
 ) -> dict[str, object]:
     frame = pattern_frame.copy()
     if frame.empty:
@@ -245,25 +177,18 @@ def build_watchlist_candidates_from_patterns(
 
     frame["symbol"] = frame["symbol"].map(_normalize_symbol)
     frame = frame[~frame["name"].map(_is_true_index_name)].copy()
-    if model_predictions is not None:
-        return _build_watchlist_candidates_from_patterns_with_model(
-            frame,
-            model_predictions=model_predictions,
-            source_file=source_file,
-            limit=limit,
-        )
 
-    daily_columns = _daily_rating_columns(frame)
-    required = {"symbol", "name", "pattern_id", "tradingview_avg_all_rating_5d", "tradingview_all_rating_label"}
+    required = {"symbol", "name", "pattern_id"}
     missing = sorted(required - set(frame.columns))
     if missing:
-        raise RuntimeError(f"Latest patterns frame is missing required TradingView columns: {missing}")
+        raise RuntimeError(f"Latest patterns frame is missing required columns: {missing}")
 
-    frame["stable_score"] = frame.apply(lambda row: _stable_score(row, daily_columns), axis=1)
-    frame["base_tier"] = frame.apply(_base_tier, axis=1)
+    frame["stable_score"] = frame.apply(_pattern_watchlist_sort_score, axis=1)
+    frame["base_tier"] = frame.apply(_model_base_tier, axis=1)
     frame = frame.dropna(subset=["base_tier"]).copy()
     frame = frame[~frame.apply(_is_row_risk_excluded, axis=1)].copy()
-    frame = frame.sort_values(["base_tier", "stable_score", "tradingview_avg_all_rating_5d"], ascending=[True, False, False])
+    frame["pattern_priority"] = frame["pattern_id"].astype(str).map(PATTERN_PRIORITY).fillna(0.0)
+    frame = frame.sort_values(["base_tier", "stable_score", "pattern_priority", "symbol"], ascending=[True, False, False, True])
 
     candidates: list[dict[str, object]] = []
     for _, row in frame.head(limit).iterrows():
@@ -274,9 +199,6 @@ def build_watchlist_candidates_from_patterns(
             "pattern_id": str(row["pattern_id"]),
             "macd_top_divergence_15d": bool(row.get("macd_top_divergence_15d", False)),
             "macd_bottom_divergence_15d": bool(row.get("macd_bottom_divergence_15d", False)),
-            "tradingview_label": str(row["tradingview_all_rating_label"]).strip().lower(),
-            "tradingview_avg_5d": round(float(row["tradingview_avg_all_rating_5d"]), 4),
-            "five_day_scores": [round(float(row[column]), 4) for column in daily_columns if pd.notna(row.get(column))],
             "stable_score": round(float(row["stable_score"]), 4),
             "reason": row.get("reason", ""),
         }
@@ -290,239 +212,466 @@ def build_watchlist_candidates_from_patterns(
     }
 
 
-def _build_watchlist_candidates_from_patterns_with_model(
+def build_phase_daily_watchlist_candidates(
+    *,
+    trade_date: date,
     pattern_frame: pd.DataFrame,
-    *,
-    model_predictions: pd.DataFrame,
-    source_file: str,
-    limit: int | None,
+    phase1_predictions: pd.DataFrame,
+    phase2_predictions: pd.DataFrame,
+    phase4_predictions: pd.DataFrame,
+    phase7_prediction: pd.DataFrame,
+    phase5_measures: pd.DataFrame | None = None,
+    macd_frame: pd.DataFrame | None = None,
+    atr_frame: pd.DataFrame | None = None,
+    source_files: dict[str, str] | None = None,
+    phase_filter_rate: float = 0.2,
+    phase4_top_n: int = 20,
 ) -> dict[str, object]:
-    prediction_frame = _prepare_model_predictions_for_join(model_predictions)
-    model_columns = [column for column in prediction_frame.columns if column != "symbol"]
-    frame = pattern_frame.drop(columns=[column for column in model_columns if column in pattern_frame.columns], errors="ignore")
-    frame = frame.merge(prediction_frame, on="symbol", how="left")
-    frame["risk_sort_score"] = pd.to_numeric(frame.get("risk_score", pd.Series(math.inf, index=frame.index)), errors="coerce")
-    frame = frame[frame.apply(_is_model_low_risk_row, axis=1)].copy()
-    if frame.empty:
-        return {
-            "source_file": source_file,
-            **_trade_permission_metadata(model_predictions),
-            "candidate_count": 0,
-            "candidates": [],
-        }
-
-    frame = frame[~frame.apply(_is_row_risk_excluded, axis=1)].copy()
-    if frame.empty:
-        return {
-            "source_file": source_file,
-            **_trade_permission_metadata(model_predictions),
-            "candidate_count": 0,
-            "candidates": [],
-        }
-
-    frame["pattern_priority"] = frame["pattern_id"].astype(str).map(PATTERN_PRIORITY).fillna(0.0)
-    frame["base_tier"] = frame.apply(_model_base_tier, axis=1)
-    frame["watchlist_sort_score"] = frame.apply(_pattern_watchlist_sort_score, axis=1)
-    frame = frame.sort_values(
-        ["risk_sort_score", "pattern_priority", "watchlist_sort_score", "symbol"],
-        ascending=[True, False, False, True],
+    phase1 = _prepare_phase_risk_predictions(
+        phase1_predictions,
+        score_column="risk_score",
+        output_score_column="phase1_risk_score",
+        prefix="phase1",
+        filter_rate=phase_filter_rate,
+        model_prefix="phase1",
     )
-
-    daily_columns = _daily_rating_columns(frame)
-    candidates: list[dict[str, object]] = []
-    selected = frame if limit is None else frame.head(limit)
-    for _, row in selected.iterrows():
-        candidate = {
-            "tier": row["base_tier"],
-            "symbol": row["symbol"],
-            "name": row["name"],
-            "source": "pattern",
-            "source_tags": ["pattern"],
-            "pattern_match": True,
-            "pattern_id": str(row["pattern_id"]),
-            "macd_top_divergence_15d": bool(row.get("macd_top_divergence_15d", False)),
-            "macd_bottom_divergence_15d": bool(row.get("macd_bottom_divergence_15d", False)),
-            "watchlist_sort_score": round(float(row["watchlist_sort_score"]), 4),
-            "reason": row.get("reason", ""),
-        }
-        if "tradingview_all_rating_label" in row.index and pd.notna(row.get("tradingview_all_rating_label")):
-            candidate["tradingview_label"] = str(row["tradingview_all_rating_label"]).strip().lower()
-        if "tradingview_avg_all_rating_5d" in row.index and pd.notna(row.get("tradingview_avg_all_rating_5d")):
-            candidate["tradingview_avg_5d"] = round(float(row["tradingview_avg_all_rating_5d"]), 4)
-        if daily_columns:
-            candidate["five_day_scores"] = [round(float(row[column]), 4) for column in daily_columns if pd.notna(row.get(column))]
-        _append_supported_fields(candidate, row)
-        candidates.append(candidate)
-
-    return {
-        "source_file": source_file,
-        **_trade_permission_metadata(model_predictions),
-        "candidate_count": len(candidates),
-        "candidates": candidates,
-    }
-
-
-def build_daily_watchlist_candidates(
-    pattern_frame: pd.DataFrame,
-    *,
-    model_predictions: pd.DataFrame,
-    pattern_source_file: str,
-    model_source_file: str,
-    model_top_n: int = 20,
-) -> dict[str, object]:
-    _ = model_top_n  # kept for backward-compatible callers; model TopN is no longer used for daily selection.
-    pattern_payload = build_watchlist_candidates_from_patterns(
-        pattern_frame,
-        source_file=pattern_source_file,
-        limit=None,
-        model_predictions=model_predictions,
+    phase2 = _prepare_phase_risk_predictions(
+        phase2_predictions,
+        score_column="barrier_risk_score",
+        output_score_column="phase2_barrier_risk_score",
+        prefix="phase2",
+        filter_rate=phase_filter_rate,
+        model_prefix="phase2",
+        extra_columns=("is_cusum_event", "mlfin_daily_vol", "mlfin_cusum_threshold"),
     )
-    candidates = pattern_payload.get("candidates", [])
-    if not isinstance(candidates, list):
-        candidates = []
-    return {
-        "source_file": pattern_source_file,
-        "model_source_file": model_source_file,
-        **_trade_permission_metadata(model_predictions),
-        "candidate_count": len(candidates),
-        "candidates": candidates,
-    }
+    phase4 = _prepare_phase4_predictions(phase4_predictions)
+    phase5 = _prepare_phase5_measures(phase5_measures, trade_date=trade_date)
+    macd = _prepare_macd_frame(macd_frame)
+    atr = _prepare_atr_frame(atr_frame)
+    pattern_groups = _prepare_pattern_groups(pattern_frame)
+    phase7 = _phase7_metadata(phase7_prediction)
 
+    if phase1.empty:
+        raise RuntimeError("Phase 1 predictions are empty; cannot build phase watchlist.")
+    if phase2.empty:
+        raise RuntimeError("Phase 2 predictions are empty; cannot build phase watchlist.")
+    if phase4.empty:
+        raise RuntimeError("Phase 4 predictions are empty; cannot build phase watchlist.")
 
-def build_watchlist_candidates_from_trend(
-    trend_frame: pd.DataFrame,
-    *,
-    source_file: str,
-    thresholds: PickTrendWatchlistConfig,
-    limit: int = 30,
-) -> dict[str, object]:
-    frame = trend_frame.copy()
-    if frame.empty:
-        return {
-            "source_file": source_file,
-            "candidate_count": 0,
-            "candidates": [],
-        }
+    pool = phase1.merge(phase2, on="symbol", how="inner")
+    pool = pool.merge(phase4, on="symbol", how="left")
+    if not phase5.empty:
+        pool = pool.merge(phase5, on="symbol", how="left")
+    if not macd.empty:
+        pool = pool.merge(macd, on="symbol", how="left")
+    if not atr.empty:
+        pool = pool.merge(atr, on="symbol", how="left")
 
-    required = {"symbol", "name", "buy_score", "price_action_score"}
-    missing = sorted(required - set(frame.columns))
-    if missing:
-        raise RuntimeError(f"Trend frame is missing required columns: {missing}")
+    if "name" not in pool.columns:
+        pool["name"] = ""
+    if "phase4_name" in pool.columns:
+        pool["name"] = pool["name"].where(pool["name"].astype(str).str.strip().ne(""), pool["phase4_name"])
+    if pattern_groups:
+        pattern_names = {symbol: str(group.iloc[0].get("name", "")) for symbol, group in pattern_groups.items()}
+        pool["name"] = pool.apply(
+            lambda row: row["name"] if str(row.get("name", "")).strip() else pattern_names.get(str(row["symbol"]), ""),
+            axis=1,
+        )
 
-    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
-    frame = frame[
-        pd.to_numeric(frame["buy_score"], errors="coerce").ge(thresholds.buy_score_min)
-        & pd.to_numeric(frame["price_action_score"], errors="coerce").ge(thresholds.price_action_score_min)
+    passed = pool[
+        ~pool["phase1_excluded_by_top20_risk"].fillna(True).astype(bool)
+        & ~pool["phase2_excluded_by_top20_risk"].fillna(True).astype(bool)
     ].copy()
-    if frame.empty:
-        return {
-            "source_file": source_file,
-            "candidate_count": 0,
-            "candidates": [],
-        }
+    if "phase4_return_score" in passed.columns:
+        passed["_phase4_sort"] = pd.to_numeric(passed["phase4_return_score"], errors="coerce")
+    else:
+        passed["_phase4_sort"] = pd.NA
+    passed = passed.sort_values(["_phase4_sort", "symbol"], ascending=[False, True], na_position="last")
 
-    frame = frame[~frame.apply(_is_row_risk_excluded, axis=1)].copy()
-    if frame.empty:
-        return {
-            "source_file": source_file,
-            "candidate_count": 0,
-            "candidates": [],
-        }
-
-    sort_columns = [
-        column
-        for column in ("buy_score", "price_action_score", "trend_score", "trend_base_score", "entry_score")
-        if column in frame.columns
-    ]
-    if sort_columns:
-        frame = frame.sort_values(sort_columns, ascending=[False] * len(sort_columns))
+    row_by_symbol = {str(row["symbol"]).zfill(6): row for row in passed.to_dict("records")}
+    pattern_symbols = [symbol for symbol in passed["symbol"].astype(str).str.zfill(6).tolist() if symbol in pattern_groups]
+    phase4_top_symbols = passed.dropna(subset=["_phase4_sort"]).head(max(int(phase4_top_n), 0))["symbol"].astype(str).str.zfill(6).tolist()
 
     candidates: list[dict[str, object]] = []
-    for _, row in frame.head(limit).iterrows():
-        candidate = {
-            "source": "trend",
-            "symbol": row["symbol"],
-            "name": row.get("name", ""),
-            "signal_type": row.get("signal_type", ""),
-            "buy_score": round(float(row["buy_score"]), 4),
-            "price_action_score": round(float(row["price_action_score"]), 4),
-        }
-        _append_supported_fields(candidate, row)
-        candidates.append(candidate)
+    seen: set[str] = set()
+    for symbol in pattern_symbols:
+        if symbol in seen:
+            continue
+        row = row_by_symbol.get(symbol)
+        if row is None:
+            continue
+        candidates.append(
+            _phase_watchlist_candidate(
+                row,
+                source="pattern",
+                source_tags=["pattern"],
+                pattern_group=pattern_groups.get(symbol),
+                phase7=phase7,
+            )
+        )
+        seen.add(symbol)
 
+    phase4_added = 0
+    for symbol in phase4_top_symbols:
+        if symbol in seen:
+            continue
+        row = row_by_symbol.get(symbol)
+        if row is None:
+            continue
+        candidates.append(
+            _phase_watchlist_candidate(
+                row,
+                source="phase4_top",
+                source_tags=["phase4_top"],
+                pattern_group=pattern_groups.get(symbol),
+                phase7=phase7,
+            )
+        )
+        seen.add(symbol)
+        phase4_added += 1
+
+    candidates = sorted(
+        candidates,
+        key=lambda item: (
+            0 if item.get("pattern_match") else 1,
+            -_float_or_default(item.get("phase4_return_score"), -math.inf),
+            str(item.get("symbol", "")),
+        ),
+    )
+
+    phase1_excluded = int(phase1["phase1_excluded_by_top20_risk"].fillna(False).astype(bool).sum())
+    phase2_excluded = int(phase2["phase2_excluded_by_top20_risk"].fillna(False).astype(bool).sum())
     return {
-        "source_file": source_file,
+        "source_file": (source_files or {}).get("pattern"),
+        "model_source_files": source_files or {},
+        "selection_policy": {
+            "phase1_filter": "exclude highest risk 20%",
+            "phase2_filter": "exclude highest risk 20%",
+            "phase_filter_rate": float(phase_filter_rate),
+            "phase4_top_n": int(phase4_top_n),
+            "phase7_no_trade_policy": "block highest-risk 20% trade days based on trained threshold",
+        },
+        "trade_permission": phase7.get("phase7_trade_permission", "unknown"),
+        "next_open_trade_permission": phase7.get("phase7_trade_permission", "unknown"),
+        "next_open_trade_warning": phase7.get("phase7_trade_permission") != "allow",
+        "trade_permission_note": _phase7_trade_permission_note(phase7),
+        **phase7,
+        "filter_summary": {
+            "phase1_rows": int(len(phase1)),
+            "phase1_excluded_top20": phase1_excluded,
+            "phase2_rows": int(len(phase2)),
+            "phase2_excluded_top20": phase2_excluded,
+            "phase1_phase2_intersection": int(len(pool)),
+            "hard_filter_pass_count": int(len(passed)),
+            "pattern_symbols_after_filter": int(len(set(pattern_symbols))),
+            "phase4_top_n_added_count": int(phase4_added),
+        },
         "candidate_count": len(candidates),
         "candidates": candidates,
     }
+
+
+def _prepare_phase_risk_predictions(
+    predictions: pd.DataFrame,
+    *,
+    score_column: str,
+    output_score_column: str,
+    prefix: str,
+    filter_rate: float,
+    model_prefix: str,
+    extra_columns: tuple[str, ...] = (),
+) -> pd.DataFrame:
+    if predictions is None or predictions.empty:
+        return pd.DataFrame()
+    frame = predictions.copy()
+    if "symbol" not in frame.columns or score_column not in frame.columns:
+        return pd.DataFrame()
+    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
+    frame[output_score_column] = pd.to_numeric(frame[score_column], errors="coerce")
+    frame = frame.dropna(subset=[output_score_column]).copy()
+    if frame.empty:
+        return pd.DataFrame()
+    frame = frame.sort_values([output_score_column, "symbol"], ascending=[False, True]).drop_duplicates("symbol")
+    removed_rows = max(1, int(math.ceil(len(frame) * float(filter_rate)))) if len(frame) else 0
+    frame[f"{prefix}_risk_rank"] = range(1, len(frame) + 1)
+    frame[f"{prefix}_risk_percentile"] = frame[output_score_column].rank(pct=True, method="max")
+    frame[f"{prefix}_score_100"] = score_series_100(frame[output_score_column], higher_is_better=False)
+    frame[f"{prefix}_excluded_by_top20_risk"] = False
+    if removed_rows:
+        frame.loc[frame.index[:removed_rows], f"{prefix}_excluded_by_top20_risk"] = True
+    keep = [
+        "symbol",
+        f"{prefix}_score_100",
+        output_score_column,
+        f"{prefix}_risk_rank",
+        f"{prefix}_risk_percentile",
+        f"{prefix}_excluded_by_top20_risk",
+    ]
+    if "name" in frame.columns and prefix == "phase1":
+        keep.insert(1, "name")
+    if "feature_trade_date" in frame.columns:
+        target = f"{prefix}_feature_trade_date"
+        frame[target] = frame["feature_trade_date"]
+        keep.append(target)
+    for column in extra_columns:
+        if column in frame.columns:
+            target = f"{prefix}_{column}"
+            frame[target] = frame[column]
+            keep.append(target)
+    for column in ("model_name", "model_version"):
+        if column in frame.columns:
+            target = f"{model_prefix}_{column}"
+            frame[target] = frame[column]
+            keep.append(target)
+    return frame.loc[:, keep].copy()
+
+
+def _prepare_phase4_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
+    if predictions is None or predictions.empty or "symbol" not in predictions.columns or "return_score" not in predictions.columns:
+        return pd.DataFrame()
+    frame = predictions.copy()
+    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
+    frame["phase4_return_score"] = pd.to_numeric(frame["return_score"], errors="coerce")
+    frame = frame.dropna(subset=["phase4_return_score"]).sort_values(["phase4_return_score", "symbol"], ascending=[False, True])
+    frame = frame.drop_duplicates("symbol").reset_index(drop=True)
+    frame["phase4_rank"] = frame.index + 1
+    frame["phase4_score_percentile"] = frame["phase4_return_score"].rank(pct=True, method="max")
+    frame["phase4_score_100"] = score_series_100(frame["phase4_return_score"], higher_is_better=True)
+    keep = ["symbol", "phase4_score_100", "phase4_return_score", "phase4_rank", "phase4_score_percentile"]
+    if "name" in frame.columns:
+        frame["phase4_name"] = frame["name"]
+        keep.append("phase4_name")
+    if "feature_trade_date" in frame.columns:
+        frame["phase4_feature_trade_date"] = frame["feature_trade_date"]
+        keep.append("phase4_feature_trade_date")
+    for column in ("model_name", "model_version"):
+        if column in frame.columns:
+            target = f"phase4_{column}"
+            frame[target] = frame[column]
+            keep.append(target)
+    return frame.loc[:, keep].copy()
+
+
+def _prepare_phase5_measures(measures: pd.DataFrame | None, *, trade_date: date) -> pd.DataFrame:
+    if measures is None or measures.empty or "symbol" not in measures.columns:
+        return pd.DataFrame()
+    frame = measures.copy()
+    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
+    frame["year"] = pd.to_numeric(frame.get("year"), errors="coerce")
+    frame = frame.dropna(subset=["year"]).copy()
+    if frame.empty:
+        return pd.DataFrame()
+    eligible = frame[frame["year"].astype(int).le(trade_date.year)].copy()
+    if eligible.empty:
+        eligible = frame.copy()
+    eligible = eligible.sort_values(["symbol", "year"]).drop_duplicates("symbol", keep="last")
+    keep = ["symbol"]
+    for column in ("year", "weeks", "NEGOUTLIER", "CRASH", "CRASH_count", "NCSKEW", "DUVOL", "RET", "SIGMA", "MINRET"):
+        if column in eligible.columns:
+            target = f"phase5_{column}"
+            eligible[target] = eligible[column]
+            keep.append(target)
+    eligible = add_phase5_score_100(eligible)
+    keep.insert(1, "phase5_score_100")
+    return eligible.loc[:, keep].copy()
+
+
+def _prepare_macd_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None or frame.empty or "symbol" not in frame.columns:
+        return pd.DataFrame()
+    result = frame.copy()
+    result["symbol"] = result["symbol"].map(_normalize_symbol)
+    keep = [
+        "symbol",
+        "macd",
+        "macd_signal_line",
+        "macd_hist",
+        "macd_cross_state",
+        "macd_divergence_state",
+        "volume_price_divergence_state",
+        "macd_top_divergence_15d",
+        "macd_bottom_divergence_15d",
+        "macd_top_divergence_signal_date",
+        "macd_bottom_divergence_signal_date",
+        "bullish_volume_price_divergence_flag",
+        "bearish_volume_price_divergence_flag",
+    ]
+    return result.loc[:, [column for column in keep if column in result.columns]].drop_duplicates("symbol", keep="first")
+
+
+def _prepare_atr_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    result = normalize_atr_summary_frame(frame)
+    if "symbol" not in result.columns:
+        return pd.DataFrame()
+    result["symbol"] = result["symbol"].map(_normalize_symbol)
+    keep = ["symbol", *(source for source, _ in ATR_WATCHLIST_FIELD_MAP)]
+    return result.loc[:, [column for column in keep if column in result.columns]].drop_duplicates("symbol", keep="first")
+
+
+def _prepare_pattern_groups(pattern_frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    if pattern_frame is None or pattern_frame.empty or "symbol" not in pattern_frame.columns:
+        return {}
+    frame = pattern_frame.copy()
+    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
+    frame["_pattern_priority"] = frame.get("pattern_id", pd.Series("", index=frame.index)).astype(str).map(PATTERN_PRIORITY).fillna(0.0)
+    frame = frame.sort_values(["symbol", "_pattern_priority"], ascending=[True, False])
+    return {symbol: group.drop(columns=["_pattern_priority"], errors="ignore").copy() for symbol, group in frame.groupby("symbol", sort=False)}
+
+
+def _phase7_metadata(prediction: pd.DataFrame) -> dict[str, object]:
+    if prediction is None or prediction.empty:
+        return {
+            "phase7_trade_permission": "unknown",
+            "phase7_reason": "missing_phase7_prediction",
+        }
+    row = prediction.iloc[-1]
+    mapping = {
+        "feature_trade_date": "phase7_feature_trade_date",
+        "buy_day_risk_score": "phase7_buy_day_risk_score",
+        "selected_threshold": "phase7_selected_threshold",
+        "trade_permission": "phase7_trade_permission",
+        "suggested_action": "phase7_suggested_action",
+        "reason": "phase7_reason",
+        "model_name": "phase7_model_name",
+        "model_version": "phase7_model_version",
+    }
+    result: dict[str, object] = {}
+    for source, target in mapping.items():
+        value = row.get(source, pd.NA)
+        if _is_missing_value(value):
+            continue
+        result[target] = _normalize_candidate_value(value)
+    result["phase7_score_100"] = phase7_score_100(result.get("phase7_trade_permission"))
+    return result
+
+
+def _phase7_trade_permission_note(phase7: dict[str, object]) -> str:
+    permission = str(phase7.get("phase7_trade_permission", "unknown")).strip().lower()
+    if permission == "allow":
+        return "Phase7 判断当日买点环境允许交易。"
+    if permission == "no_trade":
+        return "Phase7 判断当日属于最高风险 20% 交易日，仅观察不新开仓。"
+    return "Phase7 交易日闸门状态未知，仅供观察。"
+
+
+def _phase_watchlist_candidate(
+    row: dict[str, object],
+    *,
+    source: str,
+    source_tags: list[str],
+    pattern_group: pd.DataFrame | None,
+    phase7: dict[str, object],
+) -> dict[str, object]:
+    symbol = _normalize_symbol(row.get("symbol", ""))
+    candidate: dict[str, object] = {
+        "source": source,
+        "source_tags": source_tags,
+        "symbol": symbol,
+        "name": str(row.get("name", "") or ""),
+        "pattern_match": pattern_group is not None and not pattern_group.empty,
+    }
+    candidate.update(phase7)
+    for field in (
+        "phase1_score_100",
+        "phase1_risk_score",
+        "phase1_feature_trade_date",
+        "phase1_risk_rank",
+        "phase1_risk_percentile",
+        "phase1_excluded_by_top20_risk",
+        "phase1_model_name",
+        "phase1_model_version",
+        "phase2_score_100",
+        "phase2_barrier_risk_score",
+        "phase2_feature_trade_date",
+        "phase2_risk_rank",
+        "phase2_risk_percentile",
+        "phase2_excluded_by_top20_risk",
+        "phase2_is_cusum_event",
+        "phase2_mlfin_daily_vol",
+        "phase2_mlfin_cusum_threshold",
+        "phase2_model_name",
+        "phase2_model_version",
+        "phase4_score_100",
+        "phase4_return_score",
+        "phase4_feature_trade_date",
+        "phase4_rank",
+        "phase4_score_percentile",
+        "phase4_model_name",
+        "phase4_model_version",
+        "phase5_score_100",
+        "phase5_year",
+        "phase5_weeks",
+        "phase5_NEGOUTLIER",
+        "phase5_CRASH",
+        "phase5_CRASH_count",
+        "phase5_NCSKEW",
+        "phase5_DUVOL",
+        "phase5_RET",
+        "phase5_SIGMA",
+        "phase5_MINRET",
+        "macd",
+        "macd_signal_line",
+        "macd_hist",
+        "macd_cross_state",
+        "macd_divergence_state",
+        "volume_price_divergence_state",
+        "macd_top_divergence_15d",
+        "macd_bottom_divergence_15d",
+        "macd_top_divergence_signal_date",
+        "macd_bottom_divergence_signal_date",
+        "bullish_volume_price_divergence_flag",
+        "bearish_volume_price_divergence_flag",
+    ):
+        _copy_candidate_field(candidate, row, field)
+    _append_supported_fields(candidate, row)
+
+    if pattern_group is not None and not pattern_group.empty:
+        first_pattern = pattern_group.iloc[0]
+        candidate["pattern_ids"] = [str(value) for value in pattern_group["pattern_id"].dropna().astype(str).unique().tolist()]
+        candidate["pattern_id"] = str(first_pattern.get("pattern_id", ""))
+        candidate["patterns"] = [_compact_pattern_record(pattern_row) for _, pattern_row in pattern_group.iterrows()]
+        reasons = [str(value).strip() for value in pattern_group.get("reason", pd.Series(dtype=str)).dropna().tolist() if str(value).strip()]
+        if reasons:
+            candidate["reason"] = " | ".join(dict.fromkeys(reasons))
+        _append_supported_fields(candidate, first_pattern)
+    return candidate
+
+
+def _compact_pattern_record(row: pd.Series) -> dict[str, object]:
+    record: dict[str, object] = {}
+    for field in ("pattern_id", "reason", "close", *PATTERN_CANDIDATE_FIELDS):
+        value = row.get(field, pd.NA)
+        if _is_missing_value(value):
+            continue
+        record[field] = _normalize_candidate_value(value)
+    return record
+
+
+def _copy_candidate_field(candidate: dict[str, object], row: dict[str, object], field: str) -> None:
+    value = row.get(field, pd.NA)
+    if _is_missing_value(value):
+        return
+    candidate[field] = _normalize_candidate_value(value)
+
+
+def _is_missing_value(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        result = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    if isinstance(result, bool):
+        return result
+    return False
 
 
 def build_watchlist_candidates(project_root: Path, limit: int = 30) -> dict[str, object]:
     patterns_file = _latest_patterns_file(project_root)
     frame = pd.read_csv(patterns_file)
     return build_watchlist_candidates_from_patterns(frame, source_file=str(patterns_file), limit=limit)
-
-
-def apply_trend_filter_to_watchlist_payload(
-    payload: dict[str, object],
-    *,
-    trend_frame: pd.DataFrame,
-    trend_filter: WatchlistTrendFilterConfig,
-) -> dict[str, object]:
-    candidates = payload.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        return {
-            "source_file": payload.get("source_file"),
-            "candidate_count": 0,
-            "candidates": [],
-        }
-
-    frame = trend_frame.copy()
-    required = {"symbol"}
-    missing = sorted(required - set(frame.columns))
-    if missing:
-        raise RuntimeError(f"Trend report is missing required columns: {missing}")
-    if frame.empty:
-        return {
-            "source_file": payload.get("source_file"),
-            "candidate_count": 0,
-            "candidates": [],
-        }
-    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
-
-    if "in_trend_universe" in frame.columns:
-        frame = frame[frame["in_trend_universe"].fillna(False).astype(bool)].copy()
-    sort_columns = [
-        column
-        for column in ("trend_universe_score", "trend_score", "buy_score", "price_action_score")
-        if column in frame.columns
-    ]
-    if sort_columns:
-        frame = frame.sort_values(sort_columns, ascending=[False] * len(sort_columns))
-    frame = frame.drop_duplicates(subset=["symbol"], keep="first").reset_index(drop=True)
-    trend_by_symbol = {str(row["symbol"]).zfill(6): row for row in frame.to_dict("records")}
-
-    filtered: list[dict[str, object]] = []
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        symbol = _normalize_symbol(item.get("symbol", ""))
-        trend_row = trend_by_symbol.get(symbol)
-        if trend_row is None:
-            continue
-        if _is_row_risk_excluded(trend_row):
-            continue
-
-        enriched = deepcopy(item)
-        enriched["symbol"] = symbol
-        _append_supported_fields(enriched, trend_row)
-        filtered.append(enriched)
-
-    return {
-        "source_file": payload.get("source_file"),
-        "candidate_count": len(filtered),
-        "candidates": filtered,
-    }
 
 
 def write_watchlist(
@@ -538,7 +687,107 @@ def write_watchlist(
     if kind in {None, "pattern"}:
         payload = _attach_main_watchlist_streaks(project_root=project_root, trade_date=trade_date, payload=payload)
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    _write_watchlist_csv(target.with_suffix(".csv"), payload)
     return target
+
+
+def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        candidates = []
+    top_level_fields = [
+        "trade_date",
+        "trade_permission",
+        "next_open_trade_permission",
+        "next_open_trade_warning",
+        "trade_permission_note",
+        "phase7_score_100",
+        "phase7_buy_day_risk_score",
+        "phase7_selected_threshold",
+        "phase7_trade_permission",
+        "phase7_suggested_action",
+        "phase7_reason",
+    ]
+    rows: list[dict[str, object]] = []
+    for index, item in enumerate(candidates, start=1):
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "trade_date": payload.get("trade_date"),
+            "candidate_index": index,
+        }
+        for field in top_level_fields:
+            if field in payload and field not in row:
+                row[field] = payload.get(field)
+        row.update(item)
+        for field in PHASE_TABLE_DROP_COLUMNS:
+            row.pop(field, None)
+        rows.append({key: _csv_cell_value(value) for key, value in row.items()})
+    if rows:
+        frame = pd.DataFrame(rows)
+        if "symbol" in frame.columns:
+            frame["symbol"] = frame["symbol"].map(_format_symbol_for_excel)
+        preferred = [
+            "trade_date",
+            "candidate_index",
+            "symbol",
+            "name",
+            "source",
+            "pattern_match",
+            "pattern_ids",
+            "pattern_id",
+            "phase1_score_100",
+            "phase2_score_100",
+            "phase2_is_cusum_event",
+            "phase4_score_100",
+            "phase5_score_100",
+            "phase7_score_100",
+            "phase7_trade_permission",
+            "macd_cross_state",
+            "macd_divergence_state",
+            "volume_price_divergence_state",
+            "ATR14",
+            "ATR%",
+            "1ATR止损参考",
+            "2ATR止损参考",
+            "2ATR止盈参考",
+            "3ATR止盈参考",
+            "波动分层",
+            "reason",
+        ]
+        ordered = [column for column in preferred if column in frame.columns]
+        frame = frame.loc[:, ordered + [column for column in frame.columns if column not in ordered]]
+    else:
+        frame = pd.DataFrame(
+            columns=[
+                "trade_date",
+                "candidate_index",
+                "symbol",
+                "name",
+                "source",
+                "pattern_match",
+                "phase1_score_100",
+                "phase2_score_100",
+                "phase4_score_100",
+                "phase5_score_100",
+                "phase7_score_100",
+            ]
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(target, index=False, encoding="utf-8-sig")
+
+
+def _format_symbol_for_excel(value: object) -> object:
+    symbol = _normalize_symbol(value)
+    if not symbol:
+        return value
+    return f'="{symbol}"'
+
+
+def _csv_cell_value(value: object) -> object:
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, default=_json_default)
+    return value
 
 
 def build_watchlist_payload(*, trade_date: date, picker_payload: dict[str, object]) -> dict[str, object]:
@@ -549,10 +798,22 @@ def build_watchlist_payload(*, trade_date: date, picker_payload: dict[str, objec
 
     passthrough_fields = {
         "model_source_file",
+        "model_source_files",
+        "selection_policy",
+        "filter_summary",
         "trade_permission",
         "next_open_trade_permission",
         "next_open_trade_warning",
         "trade_permission_note",
+        "phase7_buy_day_risk_score",
+        "phase7_score_100",
+        "phase7_feature_trade_date",
+        "phase7_selected_threshold",
+        "phase7_trade_permission",
+        "phase7_suggested_action",
+        "phase7_reason",
+        "phase7_model_name",
+        "phase7_model_version",
     }
     passthrough = {key: payload[key] for key in passthrough_fields if key in payload}
     return {
@@ -628,124 +889,6 @@ def _normalize_symbol(value: object) -> str:
     return text.zfill(6)
 
 
-def _daily_rating_columns(frame: pd.DataFrame) -> list[str]:
-    return sorted(column for column in frame.columns if column.startswith("tradingview_all_rating_20"))
-
-
-def _stable_score(row: pd.Series, daily_columns: list[str]) -> float:
-    avg_score = float(row.get("tradingview_avg_all_rating_5d", 0.0))
-    latest_score = float(row.get(daily_columns[-1], avg_score)) if daily_columns else avg_score
-    pattern_id = str(row.get("pattern_id", ""))
-    label = str(row.get("tradingview_all_rating_label", "")).strip().lower()
-    return round(
-        avg_score * 4.0
-        + latest_score * 1.5
-        + PATTERN_PRIORITY.get(pattern_id, 0.0)
-        + LABEL_BONUS.get(label, -1.0),
-        4,
-    )
-
-
-def _base_tier(row: pd.Series) -> str | None:
-    avg_score = float(row.get("tradingview_avg_all_rating_5d", 0.0))
-    pattern_id = str(row.get("pattern_id", ""))
-    label = str(row.get("tradingview_all_rating_label", "")).strip().lower()
-
-    if label not in {"buy", "strong_buy"}:
-        return None
-    if avg_score < 0.22:
-        return None
-
-    if pattern_id in {"1", "2", "3"} and avg_score >= 0.35:
-        return "第一梯队"
-    if pattern_id in {"4", "5", "6"} and avg_score >= 0.36:
-        return "第一梯队"
-    if pattern_id in {"1", "2", "3"} and avg_score >= 0.28:
-        return "第二梯队"
-    if pattern_id in {"4", "5", "6"} and avg_score >= 0.32:
-        return "第二梯队"
-
-    return "第三梯队"
-
-
-def _prepare_model_predictions_for_join(model_predictions: pd.DataFrame) -> pd.DataFrame:
-    frame = model_predictions.copy()
-    required = V42_PREDICT_MODEL_REQUIRED_FIELDS
-    missing = sorted(set(required) - set(frame.columns))
-    if missing:
-        raise RuntimeError(f"Predict model frame is missing required columns: {missing}")
-    if frame.empty:
-        return frame
-
-    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
-    if "risk_score" in frame.columns:
-        frame["_risk_sort_score"] = pd.to_numeric(frame["risk_score"], errors="coerce")
-        frame = frame.sort_values("_risk_sort_score", ascending=True)
-    frame = frame.drop_duplicates(subset=["symbol"], keep="first")
-    frame = frame.drop(columns=["_risk_sort_score"], errors="ignore")
-    if "trade_date" in frame.columns:
-        frame = frame.rename(columns={"trade_date": "model_trade_date"})
-    columns = []
-    for column in ("symbol", "name", "model_trade_date", *PREDICT_MODEL_CANDIDATE_FIELDS):
-        if column in frame.columns and column not in columns:
-            columns.append(column)
-    return frame.loc[:, columns].copy()
-
-
-def _trade_permission_metadata(model_predictions: pd.DataFrame) -> dict[str, object]:
-    if model_predictions.empty or "trade_permission" not in model_predictions.columns:
-        return {
-            "trade_permission": "unknown",
-            "next_open_trade_permission": "unknown",
-            "next_open_trade_warning": True,
-            "trade_permission_note": "未找到模型交易许可字段，候选仅供观察。",
-        }
-    permission_values = (
-        model_predictions["trade_permission"]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .str.lower()
-    )
-    if permission_values.empty:
-        permission = "unknown"
-    elif permission_values.eq("allow").all():
-        permission = "allow"
-    elif permission_values.eq("no_trade").any():
-        permission = "no_trade"
-    else:
-        permission = permission_values.iloc[0]
-    warning = permission != "allow"
-    note = (
-        "模型判断次日开盘环境允许选股。"
-        if permission == "allow"
-        else "模型判断次日开盘环境不适合买入，仅保留低风险候选供观察。"
-    )
-    return {
-        "trade_permission": permission,
-        "next_open_trade_permission": permission,
-        "next_open_trade_warning": warning,
-        "trade_permission_note": note,
-    }
-
-
-def _is_model_low_risk_row(row: pd.Series | dict[str, object]) -> bool:
-    final_action = str(_row_value(row, "final_action", "")).strip().lower()
-    action = str(_row_value(row, "action", "")).strip().lower()
-    risk_candidate_action = str(_row_value(row, "risk_candidate_action", "")).strip().lower()
-    risk_action = str(_row_value(row, "risk_action", "")).strip().lower()
-    risk_tier = str(_row_value(row, "risk_tier", "")).strip().lower()
-    if final_action == "avoid" or action == "avoid" or risk_tier == "high":
-        return False
-    if risk_candidate_action in {"candidate", "pass", "low_risk"}:
-        return True
-    if risk_action in {"pass", "candidate", "low_risk"}:
-        return True
-    if risk_tier in {"low", "medium", "中", "低"}:
-        return True
-    return action == "candidate"
-
-
 def _pattern_watchlist_sort_score(row: pd.Series | dict[str, object]) -> float:
     score = PATTERN_PRIORITY.get(str(_row_value(row, "pattern_id", "")), 0.0)
     risk_score = _float_or_default(_row_value(row, "risk_score", math.inf), math.inf)
@@ -786,8 +929,6 @@ def _is_true_index_name(name: object) -> bool:
 def _resolve_watchlist_target(project_root: Path, trade_date: date, kind: str | None) -> Path:
     if kind == "pattern":
         return watchlist_pattern_path(project_root, trade_date)
-    if kind == "trend":
-        return watchlist_trend_path(project_root, trade_date)
     return watchlist_path(project_root, trade_date)
 
 
@@ -798,13 +939,7 @@ def _append_supported_fields(candidate: dict[str, object], row: pd.Series | dict
             continue
         candidate[field] = _normalize_candidate_value(value)
 
-    for field in PREDICT_MODEL_CANDIDATE_FIELDS:
-        value = _row_value(row, field, pd.NA)
-        if pd.isna(value):
-            continue
-        candidate[field] = _normalize_candidate_value(value)
-
-    for field in TREND_UNIVERSE_CANDIDATE_FIELDS + TREND_CANDIDATE_FIELDS:
+    for field in TECHNICAL_CANDIDATE_FIELDS:
         value = _row_value(row, field, pd.NA)
         if pd.isna(value):
             continue

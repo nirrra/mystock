@@ -1,5 +1,27 @@
 # Progress Log
 
+## Session: 2026-05-08 Mainline and Picks Refresh
+
+### Status
+
+- **Status:** complete
+
+### Actions Taken
+
+- Loaded `planning-with-files` and checked the local catchup helper; native Codex session parsing is not implemented, so no external context was imported.
+- Read current `主线.md`, `选股.md`, `docs/picks-writing-guide.md`, `reports/xueqiu/1155695148.md`, `reports/xueqiu/其他博主.md`, and latest `watchlist_2026-05-07.json`.
+- Read `track_stock.xlsx` Sheet2 with the bundled runtime; the only tracked row is `002245`.
+- Recorded that the existing `2026.5.7` section in `选股.md` must be replaced because the risk-score field uses the old raw-risk style and the user asked to ignore old same-date picks.
+- Updated `主线.md` to mark local Xueqiu data cutoff as `2026-05-07`, keep the first-tier `半导体 + AI硬件/算力` conclusion, and add a stricter stock-picking note that mainline names still need P1/P2, trend, and ATR checks.
+- Replaced the `2026.5.7` section in `选股.md` with a fresh list based only on latest `watchlist_2026-05-07.json`: `002491`, `002929`, `000889`, `000818`, `603938`, and `002995`.
+- Added the required tracking-stock summary for `002245`, marked as `不适合` because P1/P2 are `19.04 / 7.32`.
+
+### Verification
+
+- Confirmed `选股.md` contains exactly one `### 2026.5.7` heading.
+- Confirmed old same-date raw risk values and old low-P1/P2 main-table rows were removed from the new `2026.5.7` section.
+- Confirmed the final-picks, trading-aid, and tracking-stock tables have consistent column counts.
+
 ## Session: 2026-05-06 Daily Watchlist Semantics
 
 ### Status

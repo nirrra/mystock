@@ -1,5 +1,13 @@
 # Findings & Decisions
 
+## Session: 2026-05-08 Mainline and Picks Refresh
+
+- 最新本地雪球观点截止 `2026-05-07`：主博最新帖包含金属、汽车零部件/机器人、电池钠电与电解液分支；其他博主最新 `价值锚 2026.5.7` 明确主线为 `半导体 + AI硬件`，次选为 `电池、航天`，机会为 `AI应用、机器人`。
+- 最新主 watchlist 为 `reports/watchlists/watchlist_2026-05-07.json`，文件时间晚于同日 `daily_screening_2026-05-07.json`，应以后者指向但以前者最新内容为准；其中 `trade_permission=allow`，`phase7_buy_day_risk_score=0.0071`，阈值 `0.6763`。
+- 最新主 watchlist 共 `36` 只候选：`19` 只 pattern 候选，另有 Phase4 Top 补充；新版写作应使用 `phase1_score_100 / phase2_score_100` 作为风险分，而不是旧段落中的原始风险概率。
+- 按写作指南二次门槛，`603220`、`000977`、`002579`、`603688`、`603667` 等虽然贴合主线或旧段落曾入选，但 P1/P2 任一明显偏低，应降级为观察或值得注意，不进入常规最终主表。
+- `track_stock.xlsx` 的 `Sheet2` 当前只有 `002245`，交易日期 `2026-05-07`，Phase7 允许但 P1/P2 分别只有 `19.04 / 7.32`，即使属于电池线，也不适合作为当日买入。
+
 ## Requirements
 
 - 面向 A 股主板做技术面分析

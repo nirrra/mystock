@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 import json
 import logging
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,9 @@ try:  # LightGBM is the reference model for Qlib Alpha158 benchmark.
 except Exception:  # pragma: no cover - depends on optional local package.
     LGBMRegressor = None
 
-from .full_market_alpha158 import build_alpha158_return_panel
+from .full_market_alpha158 import build_alpha158_feature_frame, build_alpha158_return_panel
 from .full_market_panel import full_market_report_dir
-from .storage import Storage
+from .storage import DailyBarsReadError, Storage
 
 
 QLIB_ALPHA158_LGBM_PARAMS: dict[str, Any] = {
@@ -51,6 +52,224 @@ class Alpha158QlibReturnValidationResult:
     topk_daily_path: Path
     topk_summary_path: Path
     config_path: Path
+
+
+@dataclass(slots=True)
+class Alpha158QlibReturnTrainResult:
+    model_path: Path
+    metadata_path: Path
+    train_rows: int
+    train_start: str
+    train_end: str
+    feature_columns: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class Alpha158QlibReturnPredictionResult:
+    predictions: pd.DataFrame
+    skipped: pd.DataFrame
+    output_path: Path
+    artifact_path: Path
+
+
+def train_alpha158_qlib_return_model(
+    *,
+    storage: Storage,
+    project_root: Path,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int | None = None,
+    min_training_rows: int = 200,
+) -> Alpha158QlibReturnTrainResult:
+    if LGBMRegressor is None:
+        raise RuntimeError("lightgbm is required for Qlib Alpha158 return deployment training.")
+    logging.info("Alpha158 Qlib return deployment panel build started")
+    panel = build_alpha158_return_panel(storage=storage, start_date=start_date, end_date=end_date, limit=limit)
+    dataset = panel.dataset
+    if len(dataset) < min_training_rows:
+        raise RuntimeError(f"Insufficient Alpha158 Qlib return training rows: {len(dataset)}")
+    if not panel.feature_columns:
+        raise RuntimeError("Alpha158 Qlib return training has no feature columns.")
+
+    logging.info(
+        "Alpha158 Qlib return deployment model fit started: rows=%s features=%s",
+        len(dataset),
+        len(panel.feature_columns),
+    )
+    model = LGBMRegressor(**QLIB_ALPHA158_LGBM_PARAMS)
+    fitted = model.fit(dataset.loc[:, panel.feature_columns], dataset["LABEL0"])
+
+    trade_dates = pd.to_datetime(dataset["trade_date"], errors="coerce").dropna()
+    train_start = trade_dates.min().date().isoformat()
+    train_end = trade_dates.max().date().isoformat()
+    artifact = {
+        "model_version": "alpha158_qlib_return_phase4_v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "model_name": "lightgbm_regressor",
+        "model": fitted,
+        "feature_columns": tuple(panel.feature_columns),
+        "reference": "Qlib examples/benchmarks/LightGBM/workflow_config_lightgbm_Alpha158.yaml",
+        "handler": "Qlib Alpha158",
+        "label": "Ref($close, -2)/Ref($close, -1) - 1",
+        "learn_processors": ["DropnaLabel", "CSZScoreNorm(label)"],
+        "feature_processors": [],
+        "local_deviations": [
+            "local parquet daily bars are used instead of Qlib binary provider",
+            "local universe is current repository universe instead of csi300",
+        ],
+        "lightgbm_params": QLIB_ALPHA158_LGBM_PARAMS,
+        "train_config": {
+            "start_date": start_date.isoformat() if start_date else "",
+            "end_date": end_date.isoformat() if end_date else "",
+            "limit": limit,
+            "min_training_rows": int(min_training_rows),
+        },
+        "train_rows": int(len(dataset)),
+        "train_start": train_start,
+        "train_end": train_end,
+        "feature_count": int(len(panel.feature_columns)),
+        "skipped_symbols": int(len(panel.skipped)),
+    }
+    model_path, metadata_path = save_alpha158_qlib_return_model_artifact(project_root, artifact)
+    logging.info("Alpha158 Qlib return deployment model saved: %s", model_path)
+    return Alpha158QlibReturnTrainResult(
+        model_path=model_path,
+        metadata_path=metadata_path,
+        train_rows=int(len(dataset)),
+        train_start=train_start,
+        train_end=train_end,
+        feature_columns=tuple(panel.feature_columns),
+    )
+
+
+def alpha158_qlib_return_model_dir(project_root: Path) -> Path:
+    return project_root / "data" / "ml" / "full_market_alpha158_return"
+
+
+def alpha158_qlib_return_model_path(project_root: Path) -> Path:
+    return alpha158_qlib_return_model_dir(project_root) / "alpha158_qlib_return_model.pkl"
+
+
+def alpha158_qlib_return_metadata_path(project_root: Path) -> Path:
+    return alpha158_qlib_return_model_dir(project_root) / "alpha158_qlib_return_model_metadata.json"
+
+
+def save_alpha158_qlib_return_model_artifact(project_root: Path, artifact: dict[str, Any]) -> tuple[Path, Path]:
+    model_dir = alpha158_qlib_return_model_dir(project_root)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = alpha158_qlib_return_model_path(project_root)
+    metadata_path = alpha158_qlib_return_metadata_path(project_root)
+    with model_path.open("wb") as file:
+        pickle.dump(artifact, file)
+    metadata = {key: value for key, value in artifact.items() if key != "model"}
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return model_path, metadata_path
+
+
+def load_alpha158_qlib_return_model_artifact(project_root: Path) -> dict[str, Any]:
+    model_path = alpha158_qlib_return_model_path(project_root)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Alpha158 Qlib return model artifact not found: {model_path}")
+    with model_path.open("rb") as file:
+        artifact = pickle.load(file)
+    return artifact
+
+
+def predict_alpha158_qlib_return(
+    *,
+    storage: Storage,
+    project_root: Path,
+    trade_date: date,
+    output: Path | None = None,
+    limit: int | None = None,
+) -> Alpha158QlibReturnPredictionResult:
+    artifact = load_alpha158_qlib_return_model_artifact(project_root)
+    feature_columns = tuple(artifact["feature_columns"])
+    universe = storage.load_universe().copy()
+    if limit is not None:
+        universe = universe.head(max(int(limit), 0)).copy()
+
+    rows: list[dict[str, Any]] = []
+    skipped: list[dict[str, object]] = []
+    instruments = universe.to_dict("records")
+    total_symbols = len(instruments)
+    for index, instrument in enumerate(instruments, start=1):
+        _log_prediction_progress("Alpha158 Qlib return prediction", index, total_symbols)
+        symbol = str(instrument.get("symbol", "")).zfill(6)
+        name = str(instrument.get("name", ""))
+        try:
+            bars = storage.load_daily_bars(symbol)
+        except (FileNotFoundError, DailyBarsReadError) as exc:
+            skipped.append({"symbol": symbol, "name": name, "reason": type(exc).__name__})
+            continue
+        bars = bars.copy()
+        bars["trade_date"] = pd.to_datetime(bars["trade_date"], errors="coerce")
+        bars = bars.dropna(subset=["trade_date"])
+        bars = bars[bars["trade_date"].dt.date <= trade_date].copy()
+        frame = build_alpha158_feature_frame(bars, symbol=symbol, name=name)
+        if frame.empty:
+            skipped.append({"symbol": symbol, "name": name, "reason": "empty_alpha158_feature_frame"})
+            continue
+        row = _latest_prediction_row(frame, trade_date)
+        if row.empty:
+            skipped.append({"symbol": symbol, "name": name, "reason": "no_feature_date_on_or_before_trade_date"})
+            continue
+        row = row.dropna(subset=list(feature_columns))
+        if row.empty:
+            skipped.append({"symbol": symbol, "name": name, "reason": "no_feature_row"})
+            continue
+        feature_trade_date = pd.Timestamp(row.iloc[0]["trade_date"]).date().isoformat()
+        return_score = float(artifact["model"].predict(row.loc[:, feature_columns])[0])
+        record: dict[str, Any] = {
+            "trade_date": trade_date.isoformat(),
+            "feature_trade_date": feature_trade_date,
+            "symbol": symbol,
+            "name": name,
+            "return_score": return_score,
+            "prediction_scope": "full_market_daily",
+            "model_name": artifact["model_name"],
+            "model_version": artifact["model_version"],
+        }
+        for column in feature_columns:
+            record[column] = float(row.iloc[0][column])
+        rows.append(record)
+
+    predictions = pd.DataFrame(rows)
+    if not predictions.empty:
+        predictions = predictions.sort_values(["return_score", "symbol"], ascending=[False, True]).reset_index(drop=True)
+    skipped_frame = pd.DataFrame(skipped)
+    output_path = output if output is not None else alpha158_qlib_return_predictions_path(project_root, trade_date)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(output_path, index=False, encoding="utf-8-sig")
+    skipped_path = output_path.with_name(f"{output_path.stem}_skipped.csv")
+    skipped_frame.to_csv(skipped_path, index=False, encoding="utf-8-sig")
+    logging.info(
+        "Alpha158 Qlib return predictions saved: rows=%s skipped=%s output=%s",
+        len(predictions),
+        len(skipped_frame),
+        output_path,
+    )
+    return Alpha158QlibReturnPredictionResult(
+        predictions=predictions,
+        skipped=skipped_frame,
+        output_path=output_path,
+        artifact_path=alpha158_qlib_return_model_path(project_root),
+    )
+
+
+def alpha158_qlib_return_predictions_path(project_root: Path, trade_date: date) -> Path:
+    return full_market_report_dir(project_root) / f"alpha158_qlib_return_predictions_{trade_date.isoformat()}.csv"
+
+
+def format_alpha158_qlib_return_prediction_table(predictions: pd.DataFrame, *, top_n: int = 20) -> str:
+    if predictions.empty:
+        return "No Alpha158 Qlib return predictions."
+    columns = ["trade_date", "feature_trade_date", "symbol", "name", "return_score", "model_name"]
+    available = [column for column in columns if column in predictions.columns]
+    frame = predictions.loc[:, available].head(max(int(top_n), 0)).copy()
+    if "return_score" in frame.columns:
+        frame["return_score"] = frame["return_score"].map(lambda value: f"{float(value):.6f}")
+    return frame.to_string(index=False)
 
 
 def validate_alpha158_qlib_return(
@@ -347,6 +566,23 @@ def _safe_icir(values: pd.Series) -> float:
 def _positive_rate(values: pd.Series) -> float:
     numeric = pd.to_numeric(values, errors="coerce").dropna()
     return float(numeric.gt(0).mean()) if not numeric.empty else np.nan
+
+
+def _log_prediction_progress(stage_name: str, current: int, total: int) -> None:
+    if total <= 0:
+        return
+    if current == 1 or current % 500 == 0 or current == total:
+        logging.info("%s progress: %s/%s", stage_name, current, total)
+
+
+def _latest_prediction_row(frame: pd.DataFrame, trade_date: date) -> pd.DataFrame:
+    if frame.empty or "trade_date" not in frame.columns:
+        return pd.DataFrame()
+    dates = pd.to_datetime(frame["trade_date"], errors="coerce")
+    eligible = frame[dates.dt.date <= trade_date].copy()
+    if eligible.empty:
+        return pd.DataFrame()
+    return eligible.sort_values("trade_date").tail(1).copy()
 
 
 def _annualized_return(returns: pd.Series) -> float:

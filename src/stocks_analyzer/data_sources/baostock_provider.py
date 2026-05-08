@@ -6,7 +6,6 @@ import os
 import socket
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from contextlib import contextmanager
-from datetime import datetime
 from time import sleep
 from urllib.parse import unquote, urlparse
 
@@ -269,34 +268,6 @@ class BaoStockDataProvider(DataProvider):
             ],
         ].sort_values("trade_date").reset_index(drop=True)
 
-    def get_intraday_bars(
-        self,
-        symbol: str,
-        start_datetime: str,
-        end_datetime: str,
-        period: str,
-        adjust: str,
-    ) -> pd.DataFrame:
-        result = bs.query_history_k_data_plus(
-            _with_exchange_prefix(symbol),
-            "date,time,code,open,high,low,close,volume,amount",
-            start_date=_normalize_date(start_datetime),
-            end_date=_normalize_date(end_datetime),
-            frequency=period,
-            adjustflag=_map_adjustment(adjust),
-        )
-        dataframe = _result_to_dataframe(result)
-        renamed = dataframe.rename(columns={"code": "raw_symbol"})
-        renamed["symbol"] = renamed["raw_symbol"].map(_strip_exchange_prefix)
-        renamed["timestamp"] = renamed["time"].map(_parse_baostock_time)
-
-        for column in ["open", "high", "low", "close", "volume", "amount"]:
-            renamed[column] = pd.to_numeric(renamed[column], errors="coerce")
-
-        return renamed.loc[:, ["timestamp", "symbol", "open", "high", "low", "close", "volume", "amount"]].sort_values(
-            "timestamp"
-        ).reset_index(drop=True)
-
     def close(self) -> None:
         bs.logout()
 
@@ -345,6 +316,3 @@ def _normalize_date(value: str) -> str:
 def _map_adjustment(adjust: str | None) -> str:
     return ADJUSTMENT_MAP.get(adjust, "2")
 
-
-def _parse_baostock_time(value: str) -> pd.Timestamp:
-    return pd.Timestamp(datetime.strptime(value[:14], "%Y%m%d%H%M%S"))

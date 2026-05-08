@@ -1,1093 +1,486 @@
 # A Share Analyzer
 
-面向 A 股主板的命令行技术分析工具。
-
-当前项目聚焦四件事：
-
-- 更新主板股票池和本地日线缓存
-- 生成 pattern、TradingView 风格指标、MACD/量价状态、ATR 风险辅助等日常技术结果
-- 通过 `predict-model` 输出当前主模型预测，再生成经过风险过滤的 `watchlist`，并把机会日判断作为次日开盘警告
-- 在次日盘中只对 `watchlist` 做小范围复筛和排序
-
-项目不包含交易执行，也不会替你自动决定最终买入标的。
-
-## 当前定位
-
-当前流程里有三层结果：
-
-- 日常技术结果层：`pattern`、`tradingview`、`macd`、`atr`
-- 模型过滤层：`predict-model`
-- 候选池层：`watchlist`、`watchlist_pattern`
-
-其中：
-
-- `daily-screening` 负责跑每日技术链路，并生成当日 `predict_model`、`watchlist`、`watchlist_pattern`
-- 当前 `predict-model` 使用 `v42_gate_v4_rank` 输出风险字段和次日开盘环境提示；收益排序字段仅保留为兼容信息，不参与每日 watchlist 准入
-- 主 `watchlist` 只包含任一 pattern 命中且通过模型风险排除的股票
-- `watchlist_pattern` 是低风险 pattern 子集，语义与主 `watchlist` 基本一致，并保留为兼容输出
-- `trade_permission` 不再作为入池硬门槛；如果为 `no_trade`，watchlist 会保留候选并给出次日开盘不宜积极买入的警告
-- 主 `watchlist` 和 `watchlist_pattern` 会补入 ATR 辅助字段，并写入 `连续上榜天数`
-- `intraday-screening` 负责读取上一交易日或指定日期的 `watchlist`，直接抓取候选股当日 5 分钟线做盘中复筛，并生成一份盘中排序 CSV
-- `选股.md` 不在自动命令链里更新，留给你手动整理和最终决策
-
-另外，项目保留一条独立于 `pattern/watchlist` 的趋势交易研究链路：
-
-- `trend`：输出指定交易日的 `breakout/pullback` 趋势评分结果，主要用于研究和展示
-- `trend-universe`：定义并生成日 K 趋势股池，作为独立研究结果保留，不参与每日 `watchlist`
-- `trend-signals`：在趋势股池上识别 `breakout/pullback`
-- `trend-score`：对 setup 叠加 MACD、RSI、BOLL、KDJ、ATR、量价等指标做收盘评分
-- `trend-entries`：把收盘评分映射为“次日开盘”的买入候选
-- `backtest-signals`：做 setup 层的固定持有回测
-- `backtest-portfolio`：做 setup 层的组合回测
-- `backtest-entries`：做“收盘评分，次日开盘买入”的单信号回测
-- `backtest-entries-portfolio`：做“收盘评分，次日开盘买入”的组合回测
-- `research-thresholds`：比较强弱组指标分布，生成阈值候选和阈值回测对比
-
-这条链路的第一版用于研究统计优势，不做自动交易，也不预设止盈止损。
-
-## 安装
-
-环境要求：
-
-- Python `>= 3.11`
-
-推荐安装方式：
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
-pip install playwright
-```
-
-安装完成后可以使用以下入口：
-
-- `python -m stocks_analyzer`
-- `mystock`
-- `stocks-analyzer`
-
-推荐统一写法：
-
-```bash
-python -m stocks_analyzer --project-root . --help
-```
-
-## 目录约定
-
-常用目录和文件：
+面向 A 股日线数据的技术筛选、风险过滤和收益排序工具。当前主流程是：
 
 ```text
-config/                      配置文件
-data/                        本地缓存数据
-reports/patterns/            模式扫描结果
-reports/tradingview/         TradingView 技术评分结果
-reports/predict_model/       当前主模型每日预测结果
-reports/v42_opportunity_ranker/ V4.2 机会日模型训练、评估和预测报告
-reports/v5_volume_price_fusion/ V5 量价融合实验模型训练、评估和预测报告
-reports/v51_candidate_ranker/ V5.1 候选池排序实验模型训练、评估和预测报告
-reports/model_walkforward/  当前主线模型 walk-forward 泛化验证报告
-reports/macd/                MACD/量价统一状态表
-reports/atr/                 ATR 风险辅助表
-reports/watchlists/          日终 watchlist
-reports/daily_screening/     daily-screening 运行摘要
-reports/intraday_screening/  盘中复筛结果
-reports/trend_universe/      趋势股池明细与汇总
-reports/trend_signals/       breakout/pullback setup 结果
-reports/trend_scores/        收盘多指标评分结果
-reports/trend_entries/       次日开盘买入候选
-reports/backtests/signals/   setup 层固定持有回测
-reports/backtests/portfolio/ setup 层组合回测
-reports/backtests/entries/   次日开盘单信号回测
-reports/backtests/entries_portfolio/ 次日开盘组合回测
-reports/threshold_research/  阈值研究样本、分布、候选阈值和回测对比
-data/ml/v42_opportunity_ranker/ 当前主模型 artifact
-data/ml/v5_volume_price_fusion/ V5 量价融合实验模型 artifact
-data/ml/v51_candidate_ranker/ V5.1 候选池排序实验模型 artifact
-选股.md                      你手动维护的选股记录
-主线.md                      你手动维护的主线记录
+daily-screening
+  -> update
+  -> macd
+  -> atr
+  -> Phase1 tail risk
+  -> Phase2 triple-barrier risk
+  -> Phase4 Alpha158/Qlib return
+  -> Phase7 trade-day gate
+  -> Phase5 MCD crash-risk freshness check
+  -> pattern 1-6
+  -> phase watchlist
+  -> track_stock.xlsx Sheet2
 ```
 
-## 快速开始
+项目定位是“生成候选池和风险信息”，不是自动交易系统。它不会自动下单，也不会自动修改 `选股.md`。
 
-第一次初始化：
+## 最常用指令
 
-```bash
-python -m stocks_analyzer --project-root . update --start-date 20240101
+### 每日完整筛选
+
+盘后最常用就是这一条：
+
+```powershell
+python -m stocks_analyzer --project-root . daily-screening --date 2026-05-07
 ```
 
-查看核心技术结果：
+默认会从 `20240101` 开始做增量更新。如果首次补历史数据，建议显式给更早日期：
 
-```bash
-python -m stocks_analyzer --project-root . tradingview --date 2026-04-10
-python -m stocks_analyzer --project-root . predict-model --date 2026-04-10
-python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10
-python -m stocks_analyzer --project-root . macd --date 2026-04-10
-python -m stocks_analyzer --project-root . atr --date 2026-04-10
+```powershell
+python -m stocks_analyzer --project-root . daily-screening --date 2026-05-07 --start-date 20150101
 ```
 
-执行一轮完整日终筛选并生成 `watchlist`：
+`daily-screening` 会先判断目标日是否为交易日。不是交易日则跳过。
 
-```bash
-python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
+### 已经更新过日线后的模块指令
+
+如果当天已经跑过 `update`，只想手工补跑中间模块，可以按下面顺序执行：
+
+```powershell
+$env:PYTHONPATH = "src"
+$DATE = "2026-05-07"
+
+python -m stocks_analyzer --project-root . macd --date $DATE
+python -m stocks_analyzer --project-root . atr --date $DATE
+python -m stocks_analyzer --project-root . predict-tail-risk --date $DATE
+python -m stocks_analyzer --project-root . predict-barrier-risk --date $DATE
+python -m stocks_analyzer --project-root . predict-alpha158-qlib-return --date $DATE
+python -m stocks_analyzer --project-root . predict-trade-day-gate --date $DATE
+python -m stocks_analyzer --project-root . validate-mcd-crash-risk --start-date 2015-01-01 --end-date $DATE
+python -m stocks_analyzer --project-root . pattern --as-of $DATE
+python -m stocks_analyzer --project-root . track-stock --date $DATE
 ```
 
-次日盘中只对 `watchlist` 做复筛：
+注意：上面这组指令只生成中间 CSV、旧的 `watchlist_pattern` 和手动跟踪表 Sheet2，不会合成最终 Phase watchlist。最终 Phase watchlist 合成目前挂在 `daily-screening` 内部。日常仍建议直接跑 `daily-screening`，让流程一次性产出完整结果。
 
-```bash
-python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11
+### 手动跟踪股票表
+
+在项目根目录维护 `track_stock.xlsx`：
+
+- `Sheet1` 只填写要跟踪的股票代码，不需要股票名称。第一列标题可用 `symbol`、`code`、`股票代码`、`代码` 或 `证券代码`。
+- 股票代码列会被设置为文本格式，`000001` 这类代码不会丢失前导 0。
+- `Sheet2` 由程序覆盖更新，不要手动改。
+
+单独更新跟踪表：
+
+```powershell
+python -m stocks_analyzer --project-root . track-stock --date 2026-05-07
 ```
 
-运行趋势交易研究链路：
+`daily-screening` 最后一阶段会自动执行同样的更新。`Sheet2` 使用中文表头，字段顺序是 Phase1/2/4/5/7 的 0-100 买入友好分、pattern 是否命中、MACD/ATR 技术指标。表格里不展示模型原始分数；所有 `Phase*_score_100` 都是越高越值得看，越低代表风险越大或排序越弱。
 
-```bash
-python -m stocks_analyzer --project-root . trend-universe --date 2026-04-10
-python -m stocks_analyzer --project-root . trend-signals --date 2026-04-10
-python -m stocks_analyzer --project-root . trend-score --date 2026-04-10
-python -m stocks_analyzer --project-root . trend-entries --date 2026-04-10
-python -m stocks_analyzer --project-root . backtest-signals --date 2026-04-10 --start-date 2025-01-01
-python -m stocks_analyzer --project-root . backtest-portfolio --date 2026-04-10 --start-date 2025-01-01
-python -m stocks_analyzer --project-root . backtest-entries --date 2026-04-10 --start-date 2025-01-01
-python -m stocks_analyzer --project-root . backtest-entries-portfolio --date 2026-04-10 --start-date 2025-01-01
-python -m stocks_analyzer --project-root . research-thresholds --date 2026-04-10 --start-date 2025-01-01 --sample-mode monthly
-```
+## daily-screening 做什么
 
-## 命令说明
-
-### `update`
-
-作用：
-
-- 不传股票代码时，刷新主板股票池并批量更新日线数据
-- 传入股票代码时，只更新单只股票
-
-当前更新行为：
-
-- 首次初始化时，按 `--start-date -> --end-date` 拉取完整区间
-- 本地已存在 `data/daily/<symbol>.parquet` 时，会自动检测最后一个交易日
-- 本地已有缓存时，会从“本地最后日期的下一天”开始补齐后续缺口
-- 如果本地数据已经覆盖 `--end-date`，会直接跳过，不再发请求
-
-这意味着：
-
-- `--start-date` 主要用于首次初始化
-- 本地已有缓存时，`update` 会优先保证日期连续，但默认信任本地末尾数据，不允许通过更晚的 `--start-date` 制造缺口
-
-当前推荐的数据源顺序：
-
-- 日线更新优先建议走 `sina`
-- 如果 `sina` 链路不稳定，再考虑切换或临时回退到 `baostock`
-- 当前 `update` 命令内部会优先走 `akshare` 的日线实现，并默认把 `sina` 作为首选日线入口
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . update --start-date 20240101
-python -m stocks_analyzer --project-root . update 603588 --start-date 20240101
-python -m stocks_analyzer --project-root . update --start-date 20240101 --end-date 20260413 --limit 100
-```
-
-主要参数：
-
-- `symbol`：可选，6 位股票代码
-- `--start-date`：开始日期，格式 `YYYYMMDD`；首次初始化时生效
-- `--end-date`：结束日期，格式 `YYYYMMDD`
-- `--limit`：只更新前 N 只股票
-
-### `pattern`
-
-作用：
-
-- 扫描本地日线缓存，识别 1 到 6 号模式
-- 在日常主流程中合并同日 `predict-model` 结果后生成 `watchlist_pattern`
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . predict-model --date 2026-04-10
-python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10
-python -m stocks_analyzer --project-root . pattern --1 --as-of 2026-04-10
-python -m stocks_analyzer --project-root . pattern --2 --6 --as-of 2026-04-10
-python -m stocks_analyzer --project-root . pattern --as-of 2026-04-10 --output reports/my_patterns.csv
-```
-
-主要参数：
-
-- `--1 --2 --3 --4 --5 --6`：只识别指定模式
-- `--as-of`：分析截止日期，格式 `YYYY-MM-DD`
-- `--limit`：终端展示上限
-- `--output`：自定义 CSV 输出路径
-
-默认输出：
-
-- `reports/patterns/patterns_all_YYYY-MM-DD.csv`
-
-#### 六个模式分别识别什么
-
-##### 模式1：量顶天立地预突破型
-
-这类股票通常在过去一段时间里出现过一个明显前高，且这个前高必须是前后各 40 个交易日内的局部最高点。之后经历了较长时间的回撤修复，当前仍未突破，但已经重新逼近老前高。未突破前高时不能放大量，检查日成交量相对 20 日均量不得超过 `1.5` 倍，避免前高下方放量滞涨。
-
-它更适合拿来观察“第二天是否可能放量突破前高”。
-
-##### 模式2：量顶天立地突破确认型
-
-这类股票在完成底部修复后，已经出现过有效的量顶天立地突破：突破的老前高必须是前后各 40 个交易日内的局部最高点；突破日为阳线，最高价突破前高，成交量创近 90 个交易日新高，且突破日收盘位置、上影线和实体质量合格。当前检查日必须处在突破后 1 到 10 个交易日内，收盘价仍在前高上方；从突破日至今没有收盘有效跌破 `MA20 * 0.98`，且区间最高价相对突破日收盘价涨幅不超过 `10%`。
-
-它更适合拿来观察“突破后是否继续站稳前高”的跟踪机会，不再把突破当天本身作为模式2信号。
-
-##### 模式3：量顶天立地突破后延续/回踩型
-
-这类股票已经在前几天完成了量顶天立地式突破，突破的老前高必须是前后各 40 个交易日内的局部最高点。目前仍处在突破后 1 到 10 个交易日内，当前收盘价回到前高下方，但仍守在 `MA20 * 0.98` 上方；从突破日至今所有收盘价都不能有效跌破这条 MA20 容忍线，区间最高价相对突破日收盘价涨幅也不能超过 `10%`。检查日还必须缩量，成交量低于 5 日均量。
-
-它更适合拿来观察“突破后缩量回踩、二次上车”的候选机会。
-
-##### 模式4：老鸭头鸭鼻孔金叉型
-
-这类股票前面先走出一段“鸭颈”上涨，最近 `20-35` 个交易日前形成前后各 `20` 个交易日内的局部最高点作为“鸭头顶”。鸭头顶前 `30` 日内涨幅至少 `18%`，从鸭颈低点到鸭头顶涨幅至少 `20%`，鸭头顶本身要站在 `MA20/MA60` 上方。鸭头顶之后进入 `5-25` 日缩量回调，最低点相对鸭头顶至少回撤 `5%`，但回调低点不能有效跌破 `MA60` 的 `5%` 容忍线。
-
-回调阶段要求整体成交量不超过鸭头顶附近三日均量的 `0.75`，后半段成交量不超过前半段的 `0.85`，单日最大量不超过鸭头顶附近三日均量的 `1.2`；回调中不能出现实体跌幅不低于 `4%`、成交量不低于回调均量 `1.5` 倍的放量大阴线。触发点是回调后 `MA5` 曾连续至少 `2` 天低于 `MA10`，且在回调最低点之后、最近 `8` 日内 `MA5` 再次上穿 `MA10`。金叉日成交量不超过 `20` 日均量的 `0.90`，金叉后到检查日 `MA5` 不能重新跌回 `MA10` 下方，最新收盘不能低于 `MA10` 的 `0.99` 倍。当前允许仍低于鸭头顶，不对距离鸭头顶下方多远作硬性要求，但不能已经高出鸭头顶超过 `3%`，否则不再视为鸭鼻孔低吸位置。
-
-它更像是在找“老鸭头第一波上涨后的缩量洗盘末端，鸭嘴尚未完全张开前的试错低吸点”。
-
-##### 模式5：趋势回踩型
-
-这类股票近期刚打出过一个短期高点，随后在最近两天内缩量回踩到 `MA20` 附近甚至盘中短破，但收盘又重新站回 `MA20` 上方。趋势斜率必须同时成立：`MA20` 和 `MA60` 都要高于 1 日前，也要高于 10 日前；当前股价还必须在 `MA60` 上方。回踩缩量看的是触碰或收回 `MA20` 的那根 K 线，要求 `volume_ma_5 / volume_ma_20 <= 0.95`。
-
-它更适合观察“强趋势里的深洗盘后，是否会重新转强”。
-
-##### 模式6：拉升下降反抽型
-
-这类股票前面经历了由一个放量阳开启的主升，之后快速下降并回踩到倍量阳收盘支撑线附近，若支撑不破或跌破后快速重新站回，就进入反抽观察。回踩阶段要求整体缩量、后半段继续缩量，回踩期平均量不超过锚点量的 `0.9`，从回踩低点到检查日的收盘价需要维持在支撑线 `±5%` 内，`support_hold` 分支最近 `10` 日内要触碰过支撑附近。另要求从峰值后一天开始的回踩阶段里，最大单日成交量不超过“峰值日及前 2 日”平均成交量的 `1.2` 倍，即 `pullback_max_rise_tail_volume_ratio <= 1.2`。
-
-#### 纯模式回测结果（数据截止 2026-04-24）
-
-以下结果来自 `backtest-patterns` 纯模式回测，统计口径为：`T` 日收盘命中模式，`T+1` 日开盘买入，固定持有 `5/10/20/40` 个交易日后按收盘价卖出。同一只股票、同一个模式在 5 个交易日内只统计第一次命中。该结果不叠加 `watchlist`、主线、TradingView、趋势池、MACD/量价等后续过滤条件。
-
-注意：下表是 2026-04-24 当时规则下的历史快照。模式4已经由旧的平台突破改为 `duck_nostril_cross` 老鸭头鸭鼻孔金叉型，模式2/3/5/6 也有过规则调整，因此新版规则的统计表现需要重新运行 `backtest-patterns` 后再更新。
-
-胜率评价口径：
-
-- 单笔收益为正即计为胜出，公式为：`胜率 = 收益为正的样本数 / 总样本数`
-- 收益计算使用 `T+1` 日开盘买入价和到期日收盘卖出价
-- 胜率只回答“到期是否赚钱”，不回答“赚多少 / 亏多少”
-- 因此胜率必须和 `平均收益`、`平均最大浮盈`、`平均最大回撤`、样本数一起看
-- 当前所有模式裸信号胜率都低于 50%，说明模式本身更适合作为候选形态筛选器，不能单独当作最终买点
-
-回测明细文件：
-
-- `reports/backtests/patterns/pattern_backtest_details_2026-04-24.csv`
-- `reports/backtests/patterns/pattern_backtest_summary_2026-04-24.csv`
-- `reports/backtests/patterns/pattern_forward_prices_2026-04-24.csv`
-- `reports/backtests/patterns/pattern_stop_grid_2026-04-24.csv`
-- `reports/backtests/patterns/pattern_stop_grid_trades_2026-04-24.csv`
-
-止盈止损网格研究口径：
-
-- 数据来自 `pattern_forward_prices_2026-04-24.csv`，即抽样回测样本的 `T+1` 买入后 40 个交易日逐日价格
-- 抽样口径：`2024-01-01` 到 `2026-04-24` 之间随机抽样 `80` 个交易日，`sample_seed=42`
-- 固定止盈网格：`4% / 6% / 8% / 10% / 12% / 15% / 20% / 25% / 30%`
-- 固定止损网格：`3% / 5% / 7% / 10% / 12% / 15%`
-- 额外 MA20 止损：收盘价低于 `MA20 * 0.98` 时退出，即 `MA20` 下方 `2%` 容忍
-- 同一天同时触发止盈和固定止损时按保守口径 `stop-first`
-- 下表按“收益空间”排序，优先看 `avg_return_pct`，胜率只作为辅助指标
-
-各模式当前最优止盈止损选择：
-
-| 模式 | 策略名 | 持有周期 | 止盈 | 固定止损 | MA20止损 | 胜率 | 平均收益 | 止盈率 | 固定止损率 | MA20止损率 | 结论 |
-| ---: | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 1 | `volume_top_pre_breakout` | 40日 | 30% | 5% | 收盘跌破 `MA20 * 0.98` | 39.52% | **2.81%** | 10.85% | 36.21% | 43.57% | 当前最强右尾收益模式 |
-| 2 | `volume_top_breakout` | 40日 | 30% | 5% | 收盘跌破 `MA20 * 0.98` | 28.48% | **2.46%** | 17.58% | 58.79% | 22.42% | 弹性强，但失败率高，必须叠加强过滤 |
-| 3 | `volume_top_follow_through` | 20日 | 15% | 10% | 收盘跌破 `MA20 * 0.98` | 34.81% | **0.75%** | 20.44% | 6.08% | 60.77% | 只适合作为补充观察 |
-| 4 | `duck_nostril_cross` | 5日 | 4% | 3% | 收盘跌破 `MA20 * 0.98` | 44.81% | **0.17%** | 35.06% | 36.04% | 7.47% | 空间弱，更多是短线试错 |
-| 5 | `trend_pullback` | 40日 | 25% | 7% | 收盘跌破 `MA20 * 0.98` | 26.90% | **0.69%** | 12.79% | 16.94% | 67.90% | 有少量右尾，但效率低 |
-| 6 | `double_volume_support_rebound` | 5日 | 4% | 5% | 收盘跌破 `MA20 * 0.98` | 48.06% | **0.10%** | 24.50% | 10.85% | 61.09% | 不适合做收益空间策略 |
-
-按收益空间优先的模式排序：
-
-`模式1 > 模式2 > 模式3 > 模式5 > 模式4 > 模式6`
-
-这组结论和“胜率优先”不同：模式1、模式2更适合研究右尾收益；模式5、模式6虽然部分短周期胜率不低，但在放大止盈目标后收益空间有限。
-
-不同周期胜率汇总：
-
-| 模式 | 策略名 | 5日胜率 | 10日胜率 | 20日胜率 | 40日胜率 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 1 | `volume_top_pre_breakout` | 46.49% | 46.08% | 47.77% | **49.07%** |
-| 2 | `volume_top_breakout` | 42.57% | 43.43% | **43.69%** | 42.70% |
-| 3 | `volume_top_follow_through` | 45.98% | 44.71% | **46.02%** | 45.22% |
-| 4 | `platform_breakout`（旧模式4） | 38.24% | 37.62% | **41.01%** | 37.08% |
-| 5 | `trend_pullback` | **48.14%** | 48.07% | 46.35% | 45.01% |
-| 6 | `double_volume_support_rebound` | **47.80%** | 47.38% | 42.95% | 42.45% |
-
-综合排名：
-
-| 排名 | 模式 | 策略名 | 最佳周期胜率 | 综合判断 | 建议定位 |
-| ---: | --- | --- | ---: | --- | --- |
-| 1 | 模式5 | `trend_pullback` | **48.14%（5日）** | 样本数最大，5/10 日胜率都接近 48%，短周期稳定性最好 | 首选短线观察模式，重点看 5-10 日 |
-| 2 | 模式1 | `volume_top_pre_breakout` | **49.07%（40日）** | 纯模式里 40 日胜率最高，平均收益随持有期拉长改善 | 更适合 20-40 日前高预突破潜伏 |
-| 3 | 模式6 | `double_volume_support_rebound` | **47.80%（5日）** | 5/10 日表现接近模式5，但 20/40 日明显走弱 | 适合短周期反弹观察，不宜拉长持有 |
-| 4 | 模式3 | `volume_top_follow_through` | **46.02%（20日）** | 收益右尾存在，但胜率中等，稳定性不如模式1/5/6 | 作为突破后延续或回踩的补充观察 |
-| 5 | 模式2 | `volume_top_breakout` | **43.69%（20日）** | 刚突破后短线胜率偏低，5/10 日平均收益为负 | 不宜单独作为买点，需叠加过滤条件 |
-| 6 | 模式4 | `platform_breakout`（旧模式4） | **41.01%（20日）** | 旧平台突破口径在当时六类中最弱；新 `duck_nostril_cross` 需重新回测 | 暂按试错低吸观察，等待新回测 |
-
-| 模式 | 策略名 | 持有天数 | 样本数 | 胜率 | 平均收益 | 平均最大浮盈 | 平均最大回撤 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | `volume_top_pre_breakout` | 5 | 3650 | 46.49% | 0.44% | 6.25% | 4.56% |
-| 1 | `volume_top_pre_breakout` | 10 | 3618 | 46.08% | 0.76% | 9.09% | 6.15% |
-| 1 | `volume_top_pre_breakout` | 20 | 3582 | 47.77% | 1.40% | 12.95% | 8.15% |
-| 1 | `volume_top_pre_breakout` | 40 | 3436 | 49.07% | 2.83% | 18.44% | 10.36% |
-| 2 | `volume_top_breakout` | 5 | 1548 | 42.57% | -0.11% | 8.34% | 6.32% |
-| 2 | `volume_top_breakout` | 10 | 1529 | 43.43% | -0.11% | 11.41% | 8.11% |
-| 2 | `volume_top_breakout` | 20 | 1513 | 43.69% | 0.27% | 15.35% | 10.24% |
-| 2 | `volume_top_breakout` | 40 | 1438 | 42.70% | 1.58% | 21.60% | 12.86% |
-| 3 | `volume_top_follow_through` | 5 | 3521 | 45.98% | 0.37% | 6.96% | 4.98% |
-| 3 | `volume_top_follow_through` | 10 | 3489 | 44.71% | 0.48% | 9.84% | 6.69% |
-| 3 | `volume_top_follow_through` | 20 | 3446 | 46.02% | 1.34% | 13.92% | 8.83% |
-| 3 | `volume_top_follow_through` | 40 | 3273 | 45.22% | 2.87% | 20.49% | 11.49% |
-| 4 | `platform_breakout`（旧模式4） | 5 | 2785 | 38.24% | -0.56% | 5.92% | 5.09% |
-| 4 | `platform_breakout`（旧模式4） | 10 | 2783 | 37.62% | -0.89% | 8.31% | 7.15% |
-| 4 | `platform_breakout`（旧模式4） | 20 | 2780 | 41.01% | 0.30% | 12.38% | 9.54% |
-| 4 | `platform_breakout`（旧模式4） | 40 | 2686 | 37.08% | 0.46% | 18.42% | 12.14% |
-| 5 | `trend_pullback` | 5 | 10387 | 48.14% | 0.44% | 5.81% | 4.44% |
-| 5 | `trend_pullback` | 10 | 10357 | 48.07% | 0.83% | 8.77% | 6.34% |
-| 5 | `trend_pullback` | 20 | 10276 | 46.35% | 1.41% | 13.23% | 8.63% |
-| 5 | `trend_pullback` | 40 | 9729 | 45.01% | 2.52% | 19.16% | 11.73% |
-| 6 | `double_volume_support_rebound` | 5 | 2866 | 47.80% | 0.37% | 6.71% | 5.06% |
-| 6 | `double_volume_support_rebound` | 10 | 2845 | 47.38% | 0.55% | 9.78% | 7.07% |
-| 6 | `double_volume_support_rebound` | 20 | 2803 | 42.95% | 0.09% | 14.00% | 10.14% |
-| 6 | `double_volume_support_rebound` | 40 | 2709 | 42.45% | 1.78% | 20.51% | 13.57% |
-
-按平均最大浮盈排名，数值越高代表持有期内曾经给出的上冲空间越大：
-
-| 持有周期 | 排名 |
-| --- | --- |
-| 5日 | **模式2（8.34%）** > 模式3（6.96%） > 模式6（6.71%） > 模式1（6.25%） > 模式4（5.92%） > 模式5（5.81%） |
-| 10日 | **模式2（11.41%）** > 模式3（9.84%） > 模式6（9.78%） > 模式1（9.09%） > 模式5（8.77%） > 模式4（8.31%） |
-| 20日 | **模式2（15.35%）** > 模式6（14.00%） > 模式3（13.92%） > 模式5（13.23%） > 模式1（12.95%） > 模式4（12.38%） |
-| 40日 | **模式2（21.60%）** > 模式6（20.51%） > 模式3（20.49%） > 模式5（19.16%） > 模式1（18.44%） > 模式4（18.42%） |
-
-按平均最大回撤排名，数值越低代表持有期内承受的平均下行压力越小：
-
-| 持有周期 | 排名 |
-| --- | --- |
-| 5日 | **模式5（4.44%）** > 模式1（4.56%） > 模式3（4.98%） > 模式6（5.06%） > 模式4（5.09%） > 模式2（6.32%） |
-| 10日 | **模式1（6.15%）** > 模式5（6.34%） > 模式3（6.69%） > 模式6（7.07%） > 模式4（7.15%） > 模式2（8.11%） |
-| 20日 | **模式1（8.15%）** > 模式5（8.63%） > 模式3（8.83%） > 模式4（9.54%） > 模式6（10.14%） > 模式2（10.24%） |
-| 40日 | **模式1（10.36%）** > 模式3（11.49%） > 模式5（11.73%） > 模式4（12.14%） > 模式2（12.86%） > 模式6（13.57%） |
-
-模式6在本次补充回测中已生成完整持有样本，短周期表现优于 20/40 日，内部最佳结果为 5 日胜率 `47.80%`。
-
-### `report`
-
-作用：
-
-- 读取已保存的 pattern 结果
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . report --date 2026-04-10
-python -m stocks_analyzer --project-root . report --date 2026-04-10 --limit 30
-```
-
-### `tradingview`
-
-作用：
-
-- 计算指定日期最近 5 个交易日的 TradingView 风格技术评分
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . tradingview --date 2026-04-10
-python -m stocks_analyzer --project-root . tradingview --date 2026-04-10 --top-n 30
-python -m stocks_analyzer --project-root . tradingview --date 2026-04-10 --output reports/tradingview/custom.csv
-```
-
-默认输出：
-
-- `reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
-- 最近 5 个交易日的逐日评分文件
-
-### `macd`
-
-作用：
-
-- 生成指定日期的统一技术状态表
-- 输出 MACD 金叉/死叉、MACD 顶背离/底背离、量价背离
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . macd --date 2026-04-10
-python -m stocks_analyzer --project-root . macd --date 2026-04-10 --top-n 30
-python -m stocks_analyzer --project-root . macd --date 2026-04-10 --output reports/macd/custom.csv
-```
-
-默认输出：
-
-- `reports/macd/macd_YYYY-MM-DD.csv`
-- `reports/macd/macd_YYYY-MM-DD.json`
-
-### `atr`
-
-作用：
-
-- 生成指定日期的 ATR 风险辅助表
-- 输出 `ATR14`、`ATR%`、止损止盈参考价和波动分层
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . atr --date 2026-04-10
-python -m stocks_analyzer --project-root . atr --date 2026-04-10 --top-n 30
-python -m stocks_analyzer --project-root . atr --date 2026-04-10 --output reports/atr/custom.csv
-```
-
-默认输出：
-
-- `reports/atr/atr_YYYY-MM-DD.csv`
-- `reports/atr/atr_YYYY-MM-DD.json`
-
-### `train-opportunity-ranker`
-
-作用：
-
-- 训练当前主模型的底层 artifact
-- 模型结构是 V4.2 机会日模型 + V4 `long_upside_score` 排序
-- 训练报告会同时输出机会门、条件排序器和 hybrid 对照结果
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . train-opportunity-ranker --max-iter 80 --top-n 20,50
-python -m stocks_analyzer --project-root . train-opportunity-ranker --max-iter 80 --top-n 20,50 --predict-date 2026-04-30
-```
-
-默认输出：
-
-- `data/ml/v42_opportunity_ranker/v42_opportunity_ranker.pkl`
-- `data/ml/v42_opportunity_ranker/v42_opportunity_ranker_metadata.json`
-- `reports/v42_opportunity_ranker/v42_topn_metrics.csv`
-- `reports/v42_opportunity_ranker/v42_opportunity_metrics.csv`
-- `reports/v42_opportunity_ranker/v42_ranker_metrics.csv`
-- `reports/v42_opportunity_ranker/v42_comparison.csv`
-
-### `predict-opportunity-ranker`
-
-作用：
-
-- 读取已训练的 V4.2 artifact
-- 对指定日期先判断是否允许交易，再生成候选排序
-- `--rank-source v4` 会使用当前主版本的 hybrid 排序，即机会日模型 + V4 `long_upside_score`
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . predict-opportunity-ranker --date 2026-04-30 --rank-source v4
-```
-
-默认输出：
-
-- `reports/v42_opportunity_ranker/predictions_v4_rank_YYYY-MM-DD.csv`
-
-### `train-volume-price-fusion`
-
-作用：
-
-- 训练 V5 量价融合实验模型
-- 在 V4.2 hybrid 基座上新增 1 日、5 日、20 日量价特征
-- 单独训练量价风险模型、量价质量模型，再训练 V5 融合排序层
-- 该模型当前仅用于研究评估，尚未替换 `predict-model`
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . train-volume-price-fusion --reuse-base-artifact --max-iter 40 --top-n 20,50 --predict-date 2026-04-30
-python -m stocks_analyzer --project-root . train-volume-price-fusion --max-iter 80 --top-n 20,50
-```
-
-说明：
-
-- 默认会尝试重训 V4.2 hybrid 基座，口径更严谨但耗时较长
-- `--reuse-base-artifact` 会复用现有 V4.2 artifact，只训练 V5 量价层，适合快速评估
-
-默认输出：
-
-- `data/ml/v5_volume_price_fusion/v5_volume_price_fusion.pkl`
-- `data/ml/v5_volume_price_fusion/v5_volume_price_fusion_metadata.json`
-- `reports/v5_volume_price_fusion/v5_topn_metrics.csv`
-- `reports/v5_volume_price_fusion/v5_comparison.csv`
-- `reports/v5_volume_price_fusion/v5_volume_price_risk_metrics.csv`
-- `reports/v5_volume_price_fusion/v5_volume_price_quality_metrics.csv`
-
-### `predict-volume-price-fusion`
-
-作用：
-
-- 读取已训练的 V5 量价融合实验模型
-- 输出 `final_score_v5`、`buy_score_v5`、量价风险分、量价质量分和关键量价解释字段
-- 当前不参与 `daily-screening` 主流程
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . predict-volume-price-fusion --date 2026-04-30
-```
-
-默认输出：
-
-- `reports/v5_volume_price_fusion/predictions_YYYY-MM-DD.csv`
-
-### `train-candidate-ranker`
-
-作用：
-
-- 训练 V5.1 候选池排序实验模型
-- 只在当前主模型已经放行的候选池里学习“剩下股票里谁更值得买”
-- 训练目标偏 20 日收益质量，并用 60 日收益质量作为辅助，不重新做风险硬过滤
-- 该模型当前仅用于研究评估，尚未替换 `predict-model`
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . train-candidate-ranker --max-iter 40 --top-n 20,50 --predict-date 2026-04-30
-```
-
-说明：
-
-- 该命令依赖已训练的 V5 artifact，并在 V5/V4.2 输出基础上训练候选池内部 ranker
-- 训练完成后会在验证集选择 V5.1 ranker 与 V4.2 排序分的融合权重
-- `train-v51-candidate-ranker` 是等价别名
-
-默认输出：
-
-- `data/ml/v51_candidate_ranker/v51_candidate_ranker.pkl`
-- `data/ml/v51_candidate_ranker/v51_candidate_ranker_metadata.json`
-- `reports/v51_candidate_ranker/v51_topn_metrics.csv`
-- `reports/v51_candidate_ranker/v51_ranker_metrics.csv`
-- `reports/v51_candidate_ranker/v51_comparison.csv`
-
-### `predict-candidate-ranker`
-
-作用：
-
-- 读取已训练的 V5.1 候选池排序实验模型
-- 输出 `candidate_rank_score_v51`、`final_score_v51`、`buy_score_v51` 和候选池排序解释字段
-- 当前不参与 `daily-screening` 主流程
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . predict-candidate-ranker --date 2026-04-30
-```
-
-默认输出：
-
-- `reports/v51_candidate_ranker/predictions_YYYY-MM-DD.csv`
-
-### `predict-model`
-
-作用：
-
-- 当前每日筛选的通用模型入口
-- 默认使用 `v42_gate_v4_rank`
-- 生成供 `pattern` / `watchlist` 合并的标准预测文件
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . predict-model --date 2026-04-10
-```
-
-默认输出：
-
-- `reports/predict_model/predictions_YYYY-MM-DD.csv`
-
-### `validate-model-walkforward`
-
-作用：
-
-- 对当前主线模型做轻量 walk-forward 泛化验证
-- 按时间顺序生成多个 `train -> valid -> test` 窗口
-- 每个窗口重新训练 V4.2 hybrid，并只统计未来测试段表现
-- 不改变 `predict-model`，只用于判断当前 80% 胜率是否跨市场阶段稳定
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . validate-model-walkforward --model v42 --windows 8 --max-iter 40 --top-n 20,50
-```
-
-轻量烟雾测试示例：
-
-```bash
-python -m stocks_analyzer --project-root . validate-model-walkforward --model v42 --windows 1 --train-days 80 --valid-days 20 --test-days 20 --min-train-days 60 --max-iter 2 --top-n 20
-```
-
-默认输出：
-
-- `reports/model_walkforward/v42_walkforward_windows.csv`
-- `reports/model_walkforward/v42_walkforward_topn_metrics.csv`
-- `reports/model_walkforward/v42_walkforward_summary.csv`
-- `reports/model_walkforward/v42_walkforward_config.json`
-
-重要字段：
-
-- `trade_permission`：次日开盘环境许可；`no_trade` 会触发 watchlist 顶层警告，但不再阻止低风险股入池
-- `action`：个股最终动作；风险通过但机会日否决时可能是 `no_trade`
-- `risk_candidate_action` / `risk_action`：风险过滤结果，进入 watchlist 的硬门槛优先看这里
-- `risk_score`：风险模型分数
-- `long_upside_score`：V4 长周期收益排序分，仅保留为兼容字段，当前每日 watchlist 不使用
-- `final_score_v42`、`buy_score_v42`：收益排序兼容字段，当前每日 watchlist 不使用
-
-### `daily-screening`
-
-作用：
-
-- 判断指定日期是否为交易日
-- 串行执行 `update -> tradingview -> predict-model -> macd -> atr -> pattern`
-- `pattern` 生成低风险 pattern 子集 `watchlist_pattern`
-- 主 `watchlist` 只由低风险 pattern 命中股生成，不再加入模型 Top20
-- 写入运行摘要
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
-python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10 --start-date 20240101
-```
-
-主要参数：
-
-- `--date`：目标日期，格式 `YYYY-MM-DD`
-- `--start-date`：更新数据起始日期，格式 `YYYYMMDD`
-
-当前执行顺序：
-
-1. 判断交易日
-2. `update`
-3. `tradingview`
-4. `predict-model`
-5. `macd`
-6. `atr`
-7. `pattern`
-8. 生成主 `watchlist` 和 `watchlist_pattern`
-9. 写入 `daily_screening_YYYY-MM-DD.json`
-
-默认输出：
-
-- `reports/watchlists/watchlist_YYYY-MM-DD.json`
-- `reports/watchlists/watchlist_pattern_YYYY-MM-DD.json`
-- `reports/daily_screening/daily_screening_YYYY-MM-DD.json`
-- `reports/predict_model/predictions_YYYY-MM-DD.csv`
-- `reports/patterns/patterns_all_YYYY-MM-DD.csv`
-- `reports/tradingview/tradingview_avg5_YYYY-MM-DD.csv`
-- `reports/macd/macd_YYYY-MM-DD.csv`
-- `reports/atr/atr_YYYY-MM-DD.csv`
-
-重要说明：
-
-- `daily-screening` **不会修改** `选股.md`
-- 同一日期重复执行时，会覆盖同日期的 `watchlist` 和运行摘要
-- `pattern` 阶段会读取同日 `predict-model` 结果；如果模型判断 `trade_permission = no_trade`，watchlist 仍保留低风险候选，但顶层写入次日开盘警告
-- `watchlist_pattern` 不再接入 `trend-universe` 或 `trend` 结果
-- `watchlist_pattern` 会先剔除 `MACD顶背离 / 量价看空 / dead_cross`
-- 主 `watchlist` 和 `watchlist_pattern` 会补入 `ATR14`、`ATR%`、止损止盈参考、`波动分层`
-- 主 `watchlist` 和 `watchlist_pattern` 会补入 `连续上榜天数`，按主 `watchlist_YYYY-MM-DD.json` 连续出现天数累计
-- `patterns_all_YYYY-MM-DD.csv` 不再自动补入趋势股池或趋势评分字段
-
-### `trend`
-
-作用：
-
-- 扫描全市场并输出指定日期的趋势复核结果
-- 输出 `buy_score`、`price_action_score`
-- 同时保留 `MACD` 金叉死叉、MACD 背离、量价背离等展示字段
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . trend --date 2026-04-10
-python -m stocks_analyzer --project-root . trend --date 2026-04-10 --top-n 50
-```
-
-默认输出：
-
-- `reports/trend/trend_YYYY-MM-DD.csv`
-- `reports/trend/trend_YYYY-MM-DD.json`
-
-### `intraday-screening`
-
-作用：
-
-- 读取上一交易日或指定日期的 `watchlist`
-- 运行时抓取这些股票“当日 5 分钟线”
-- 基于 `watchlist` 中已有的日线辅助字段和当日 5 分钟线事件生成盘中排序结果
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11
-python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 --watchlist-date 2026-04-10
-python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 --start-date 20240101 --top-n 30
-```
-
-主要参数：
-
-- `--date`：目标日期，格式 `YYYY-MM-DD`
-- `--watchlist-date`：指定使用哪一天的 `watchlist`
-- `--start-date`：更新数据起始日期，格式 `YYYYMMDD`
-- `--top-n`：终端展示前 N 行
-
-### `trend-universe`
-
-作用：
-
-- 基于本地日线数据定义趋势股池
-- 使用“先硬过滤，再趋势评分”的方式输出 `trend universe`
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . trend-universe --date 2026-04-10
-python -m stocks_analyzer --project-root . trend-universe --date 2026-04-10 --top-n 50
-```
-
-### `trend-signals`
-
-作用：
-
-- 在 `trend universe` 上识别 `breakout` 和 `pullback` 两类入场信号
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . trend-signals --date 2026-04-10
-python -m stocks_analyzer --project-root . trend-signals --date 2026-04-10 --top-n 50
-```
-
-### `trend-score`
-
-作用：
-
-- 在 `breakout/pullback` setup 上叠加 `均线/ADX + MACD + RSI + BOLL + 成交量 + KDJ + ATR`
-- 输出收盘后的多指标评分，包括 `buy_score`
-- `MACD` 除了金叉死叉，还会纳入顶背离减分、底背离加分
-- `量价背离` 单独计分，不和普通量能项混在一起
-- `price_action_score` 是触发分里权重最高的分项
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . trend-score --date 2026-04-10
-```
-
-### `trend-entries`
-
-作用：
-
-- 基于收盘评分输出“次日开盘买入”的候选
-- 默认会按配置里的门槛过滤，当前默认规则是：
-  - `buy_score >= 80`
-  - `trend_base_score >= 65`
-  - `price_action_score >= 60`
-  - `macd_score >= 35`
-  - `positive_indicator_count >= 3`
-- 默认门槛来自一轮真实数据抽样回测，不是固定真理，只是第一版研究默认值
-- `trend-entries` 只输出已经过上述过滤的可交易候选；如果你想看全部评分分布，用 `trend-score`
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . trend-entries --date 2026-04-10
-```
-
-### `backtest-signals`
-
-作用：
-
-- 对趋势信号执行固定持有 `5/10/20/40` 日的单信号回测
-- 第一版按“当日收盘确认并按当日收盘入场”的研究口径统计
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . backtest-signals --date 2026-04-10 --start-date 2025-01-01
-```
-
-### `backtest-portfolio`
-
-作用：
-
-- 每天按评分选择前 `N` 只趋势信号
-- 做组合层前 N 等权、固定持有的基线回测
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . backtest-portfolio --date 2026-04-10 --start-date 2025-01-01
-```
-
-### `backtest-entries`
-
-作用：
-
-- 对收盘评分后的候选执行 `next_open` 回测
-- 即 `t` 日收盘生成评分，`t+1` 日开盘买入
-- 回测对象与 `trend-entries` 一样，会先经过默认门槛过滤
-- 这是当前更接近真实执行的研究口径，和 `backtest-signals` 的 `same_close` 口径不同
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . backtest-entries --date 2026-04-10 --start-date 2025-01-01
-```
-
-### `backtest-entries-portfolio`
-
-作用：
-
-- 基于 `buy_score` 执行次日开盘入场的组合回测
-- 每天按 `buy_score` 排序后取前 `N` 只等权持有
-- 同样先经过默认门槛过滤
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . backtest-entries-portfolio --date 2026-04-10 --start-date 2025-01-01
-```
-
-### `research-thresholds`
-
-作用：
-
-- 在不给 `buy_score` 预设最终交易阈值的前提下，先研究历史样本分布
-- 样本只保留基础初筛条件：进入 `trend universe`、识别出 `breakout/pullback` setup、且次日存在可交易开盘价
-- 对每条样本按 `next_open` 口径回测 `5/10/20/40` 日表现
-- 比较强势组、弱势组和底部组在各个评分项上的分布差异
-- 生成单指标候选阈值和组合阈值对比表
-
-主要参数：
-
-- `--date`：研究截止日期，格式 `YYYY-MM-DD`
-- `--start-date`：研究开始日期，格式 `YYYY-MM-DD`
-- `--sample-mode`：历史截面抽样方式，可选 `daily`、`weekly`、`monthly`
-- `--train-end-date`：可选，样本内结束日期；传入后会同时输出 `all_period`、`in_sample`、`out_of_sample`
-- `--output`：可选，自定义样本明细 CSV 输出路径
-
-常用示例：
-
-```bash
-python -m stocks_analyzer --project-root . research-thresholds --date 2026-04-10 --start-date 2025-01-01 --sample-mode monthly
-python -m stocks_analyzer --project-root . research-thresholds --date 2026-04-10 --start-date 2024-01-01 --sample-mode weekly --train-end-date 2025-06-30
-```
-
-## 趋势评分说明
-
-当前多指标买入评分按两层结构计算：
-
-- `trend_base_score`：回答“这只票本身是不是适合做日 K 趋势交易”
-- `trigger_score`：回答“这一天是不是一个足够强的买点”
-
-总分结构：
+### 1. 更新数据
 
 ```text
-buy_score = trend_base_score * 0.35 + trigger_score * 0.65
+update --start-date <start> --end-date <target>
 ```
 
-其中 `trigger_score` 由以下分项加权得到：
+更新本地 `data/daily/*.parquet`。本地已有数据时按最后日期增量补齐。
 
-- `price_action_score`：权重最高，承载 `breakout/pullback` 结构质量
-- `macd_score`：包含金叉死叉，也包含顶背离减分、底背离加分
-- `volume_score`
-- `volume_price_divergence_score`
-- `boll_score`
-- `rsi_score`
-- `kdj_score`
-- `atr_score`
+### 2. 技术辅助
 
-当前默认阈值：
+`macd` 生成日线 MACD、金叉死叉、顶底背离、量价背离：
 
-- `buy_score >= 80`
-- `trend_base_score >= 65`
-- `price_action_score >= 60`
-- `macd_score >= 35`
-- `positive_indicator_count >= 3`
-
-当前代码里还额外启用了分信号覆盖规则：
-
-- `breakout` 默认使用更严格的研究阈值：
-  - `buy_score >= 81.3308`
-  - `price_action_score >= 75.0373`
-- `pullback` 暂时继续沿用上面的全局默认阈值
-
-这组默认值用于第一版研究回测，目的是在信号质量和样本数量之间先取一个中间点。后面更合理的做法，是继续按你的数据区间回测，再迭代这些阈值和权重。
-
-## 趋势链路输出
-
-趋势链路会输出独立于 `pattern/watchlist` 的结果，不会覆盖旧文件。
-
-- `trend-universe`：输出趋势股池明细、汇总和 JSON 摘要
-- `trend-signals`：输出 `breakout/pullback` setup 明细、汇总和 JSON 摘要
-- `trend-score`：输出收盘评分明细、汇总和 JSON 摘要
-- `trend-entries`：输出次日开盘买入候选明细、汇总和 JSON 摘要
-- `backtest-signals`：输出 setup 层回测明细和汇总
-- `backtest-portfolio`：输出 setup 层组合持仓、净值和汇总
-- `backtest-entries`：输出次日开盘单信号回测明细和汇总
-- `backtest-entries-portfolio`：输出次日开盘组合持仓、净值和汇总
-- `research-thresholds`：输出阈值研究样本、分布对比、候选阈值、单指标阈值回测和组合阈值回测
-
-## `intraday-screening` 输出
-
-默认输出目录：
-
-- `reports/intraday_screening/YYYY-MM-DD/`
-
-典型输出文件：
-
-- `intraday_screening_YYYY-MM-DD.json`
-- `intraday_rank_YYYY-MM-DD.csv`
-
-`intraday_rank_YYYY-MM-DD.csv` 的特点：
-
-- 按 `5分钟分数` 降序排序
-- 表头为中文，便于直接打开查看
-- 同时列出 `形态`、TradingView 分数、日线背离、`5分钟分数`
-- 会把量价背离、5 分钟 MACD 背离、金叉死叉、均线事件的命中情况和类型一起写出
-
-重要说明：
-
-- `intraday-screening` **不会修改** `选股.md`
-- `intraday-screening` **不会生成新的 `watchlist`**
-- `intraday-screening` 当前**不会更新日线 parquet**
-- `intraday-screening` 当前**不会把 5 分钟 K 线长期缓存到本地 parquet**；5 分钟数据是在运行时抓取并用于计算盘中分数
-- 当前建议的日线源顺序是：先 `sina`，如果 `sina` 不稳定，再尝试 `baostock`
-- 分钟线数据源 `intraday_provider` 目前建议使用 `itick`
-- 仓库里保留了 `tushare` 分钟线 provider 代码，后续如果你要切换，只需要把 `intraday_provider` 改成 `tushare` 并配置环境变量 `TUSHARE_TOKEN`
-- 现在也支持把 `intraday_provider` 改成 `itick`；使用前需要配置环境变量 `ITICK_TOKEN`
-- 在 `itick` 模式下，盘中复筛会优先走批量 `/stock/klines` 请求，尽量降低 `5 次/分钟` 配额下的限流风险
-- 如果个别股票的 5 分钟线抓取失败，盘中复筛会在 JSON 摘要里记录失败股票并跳过，不会中断整轮
-- 同一日期重复执行时，会覆盖同日期的盘中结果文件
-
-## watchlist 的生成规则
-
-当前每日主流程有两份候选池：
-
-- `watchlist`：任一 pattern 命中且通过模型风险排除的股票
-- `watchlist_pattern`：同样是低风险 pattern 子集，保留为兼容输出
-
-候选池会先做一层风险剔除：
-
-- `MACD顶背离`
-- `量价看空`
-- `dead_cross`
-
-核心规则包括：
-
-- 日常主流程优先使用 `predict-model` 的风险过滤：只保留风险通过的标的
-- `trade_permission` 表示次日开盘环境许可；`no_trade` 只触发警告，不再挡掉低风险候选
-- 主 `watchlist` 不再引入模型 Top20
-- `watchlist` / `watchlist_pattern` 按风险分、模式优先级和技术辅助信号排序
-- `TradingView` 仍作为技术解释字段保留，但不再作为主排序逻辑
-- 日常 CLI 下，`pattern` 应先有同日 `predict-model` 文件；旧的 TradingView 阈值逻辑只作为底层兼容口径，不是当前推荐流程
-- 过滤指数类名称
-- 计算 `watchlist_sort_score`，用于低风险 pattern 候选之间的辅助排序
-- 输出 `第一梯队 / 第二梯队 / 第三梯队`
-- 最终按风险分、模式优先级和技术辅助信号排序
-
-主 `watchlist` 适合做：
-
-- 次日盘中复筛的输入
-- 你自己手工选股时的技术候选池
-
-`watchlist_pattern` 适合只查看满足模式识别的低风险子集。
-
-`watchlist` 不等于：
-
-- 最终买入名单
-- `选股.md`
-
-## 推荐的完整选股流程
-
-推荐把项目当作“技术筛选引擎”，而不是自动选股器。
-
-### 1. 初始化本地数据
-
-```bash
-python -m stocks_analyzer --project-root . update --start-date 20240101
+```text
+reports/macd/macd_YYYY-MM-DD.csv
 ```
 
-### 2. 日终生成技术候选池
+`atr` 生成 ATR14、ATR%、1ATR/2ATR 止损和 2ATR/3ATR 止盈参考：
 
-```bash
-python -m stocks_analyzer --project-root . daily-screening --date 2026-04-10
+```text
+reports/atr/atr_YYYY-MM-DD.csv
 ```
 
-这一步会得到：
+这两个模块直接读取本地日线和股票池，不再调用外部技术评分服务。
 
-- 当日全市场技术结果
-- 当日 `reports/predict_model/predictions_YYYY-MM-DD.csv`
-- 当日 `watchlist`、`watchlist_pattern`
+### 3. Phase1 风险模型
 
-其中主 `watchlist` 已经过 `predict-model` 风险过滤；如果 `trade_permission = no_trade`，应把候选视为观察池，而不是积极买入名单。
+命令：
 
-### 3. 次日盘中做小范围复筛
-
-```bash
-python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11
+```text
+predict-tail-risk
 ```
 
-如果需要指定来源：
+用途：全市场个股级尾部下跌风险打分。分数越高，模型认为未来短期发生尾部下跌的概率越高。
 
-```bash
-python -m stocks_analyzer --project-root . intraday-screening --date 2026-04-11 --watchlist-date 2026-04-10
+输出：
+
+```text
+reports/full_market_model/tail_risk_predictions_YYYY-MM-DD.csv
 ```
 
-### 4. 你自己做最终决策
+当前 daily-screening 会按 `phase1_risk_score` 排除最高风险 20%。
 
-推荐结合以下材料：
+### 4. Phase2 交易型风险模型
 
-- 前一日 `watchlist`
-- 当日 `intraday-screening` 结果
-- `reports/intraday_screening/<date>/intraday_rank_<date>.csv`
-- 你自己的 `主线.md`
-- 你自己的 `选股.md`
+命令：
 
-## 配置
+```text
+predict-barrier-risk
+```
 
-默认配置文件：
+用途：基于 triple-barrier / CUSUM 事件思想，评估个股是否更容易先触发下行风险。分数越高，风险越高。
 
-- [`config/default.yaml`](/C:/Users/wdyab/Desktop/wdy/stocks/config/default.yaml)
+输出：
 
-主要可调项：
+```text
+reports/full_market_model/barrier_risk_predictions_YYYY-MM-DD.csv
+```
 
-- 数据源 `provider`
-- 分钟线数据源 `intraday_provider`
-- 复权方式 `adjustment`
-- 流动性门槛
-- pattern 阈值
-- 网络代理配置
+当前 daily-screening 会按 `phase2_barrier_risk_score` 再排除最高风险 20%。Phase2 还会标记 `is_cusum_event`，这个字段表示是否触发 CUSUM 事件，不决定分数大小。
+
+### 5. Phase4 收益排序模型
+
+命令：
+
+```text
+predict-alpha158-qlib-return
+```
+
+用途：复现 Qlib Alpha158 + LightGBM 回归框架，给全市场股票输出横截面收益排序分。
+
+输出：
+
+```text
+reports/full_market_model/alpha158_qlib_return_predictions_YYYY-MM-DD.csv
+```
+
+当前 daily-screening 在 Phase1/Phase2 硬过滤后，按 `phase4_return_score` 取 Top20 补入 watchlist。Phase4 也用于 pattern 命中股票之间的排序参考。
+
+### 6. Phase5 极端风险画像
+
+命令：
+
+```text
+validate-mcd-crash-risk
+```
+
+用途：按周频收益生成 MCD crash-risk 标签和传统 crash-risk 指标，作为长周期极端风险提示。
+
+输出：
+
+```text
+reports/full_market_model/mcd_crash_annual_measures.csv
+reports/full_market_model/mcd_crash_config.json
+```
+
+当前 daily-screening 不每天强制重算 Phase5。如果结果缺失，或者距离目标日超过 6 个本地交易日，会自动刷新。Phase5 只做风险提示，不做硬过滤。
+
+### 7. Phase7 交易日闸门
+
+命令：
+
+```text
+predict-trade-day-gate
+```
+
+用途：判断目标日收盘后，下一交易日是否适合做技术买点。它是日期级模型，不给个股排序。
+
+输出：
+
+```text
+reports/full_market_model/trade_day_gate_prediction_YYYY-MM-DD.csv
+```
+
+字段：
+
+- `trade_permission = allow`：允许正常观察候选。
+- `trade_permission = no_trade`：当天属于最高风险 20% 的交易日，候选只作为观察池。
+
+注意：Phase7 不会清空 watchlist。它只告诉你当天是否应该积极开新仓。
+
+### 8. pattern 1-6
+
+命令：
+
+```text
+pattern --as-of YYYY-MM-DD
+```
+
+用途：扫描本地日线，识别六类技术形态。pattern 是形态筛选器，不是独立买入信号。
+
+输出：
+
+```text
+reports/patterns/patterns_all_YYYY-MM-DD.csv
+reports/watchlists/watchlist_pattern_YYYY-MM-DD.json
+```
+
+pattern 阶段会补入 MACD 和 ATR 信息，不再补入旧技术评分。
+
+### 9. Phase watchlist
+
+daily-screening 最后会生成：
+
+```text
+reports/watchlists/watchlist_YYYY-MM-DD.json
+reports/watchlists/watchlist_YYYY-MM-DD.csv
+reports/daily_screening/daily_screening_YYYY-MM-DD.json
+track_stock.xlsx
+```
+
+当前 watchlist 生成规则：
+
+1. 读取 Phase1、Phase2、Phase4、Phase5、Phase7、MACD、ATR 和 patterns。
+2. Phase1 排除最高风险 20%。
+3. Phase2 排除最高风险 20%。
+4. 在两个风险模型都通过的股票里，保留所有命中 pattern 的股票。
+5. 再加入 Phase4 收益排序 Top20，去重。
+6. 排序时 pattern 命中优先，其次按 Phase4 分数从高到低。
+7. 每个候选记录都会带上 Phase1/2/4/5/7、pattern、MACD、ATR 信息，并同时写入 JSON 和 CSV。
+8. `reports/patterns/patterns_all_YYYY-MM-DD.csv` 也会附带 Phase1/2/4/5/7 结果和 `Phase*_score_100`，方便直接查看命中 pattern 的股票。
+9. 最后读取 `track_stock.xlsx` 的 `Sheet1`，覆盖更新中文表头的 `Sheet2`，方便每天查看手动跟踪股票的同一套指标。
+
+## 六个 pattern 分别在找什么
+
+### 模式1：量顶天立地预突破
+
+找“长期整理后重新接近老前高，但还没有突破”的股票。
+
+核心条件：
+
+- 老前高必须是前后各 40 个交易日内的局部高点。
+- 当前接近老前高，但仍未有效突破。
+- 未突破前不能明显放量，避免前高下方放量滞涨。
+
+定位：前高预突破潜伏，重点看次日是否放量过关键位。
+
+### 模式2：量顶天立地突破确认
+
+找“已经放量突破老前高，并且突破后仍站稳”的股票。
+
+核心条件：
+
+- 突破的是充分消化过的老前高。
+- 突破日成交量创近 90 个交易日新高。
+- 突破后 1 到 10 个交易日内仍在前高上方。
+- 突破后没有明显跌破 MA20 容忍线，也没有短期涨得过远。
+
+定位：突破后确认，不把突破当天本身当作唯一买点。
+
+### 模式3：突破后缩量回踩
+
+找“突破老前高后，短期回踩到前高或 MA20 附近，但结构尚未破坏”的股票。
+
+核心条件：
+
+- 近期已经完成模式2式突破。
+- 当前处在突破后 1 到 10 个交易日内。
+- 收盘可以回到前高下方，但仍要守住 `MA20 * 0.98`。
+- 检查日要求缩量。
+
+定位：突破后的二次上车观察位。
+
+### 模式4：老鸭头鸭鼻孔金叉
+
+找“第一波上涨后缩量洗盘，MA5 再次上穿 MA10”的老鸭头低吸结构。
+
+核心条件：
+
+- 前面有鸭颈上涨和鸭头顶。
+- 鸭头顶之后缩量回调。
+- 回调不有效跌破 MA60 容忍线。
+- 回调低点之后，最近 8 日内 MA5 再次上穿 MA10。
+- 金叉后不能重新死叉，且当前位置不能明显高出鸭头顶。
+
+定位：鸭嘴尚未完全张开前的试错低吸点。
+
+### 模式5：趋势回踩
+
+找“强趋势中回踩 MA20 后重新收回”的股票。
+
+核心条件：
+
+- 近期有短期高点。
+- MA20 和 MA60 斜率同时向上。
+- 当前股价仍在 MA60 上方。
+- 最近两天缩量回踩 MA20 附近，并重新站回 MA20。
+
+定位：强趋势里的深洗盘修复。
+
+### 模式6：倍量阳支撑线反抽
+
+找“前面倍量阳拉升，随后缩量回踩到倍量阳收盘支撑线附近”的股票。
+
+核心条件：
+
+- 有一个倍量阳锚点，锚点收盘价作为支撑线。
+- 锚点后出现明显拉升。
+- 从峰值回落时整体缩量。
+- 回踩到支撑线附近后企稳，或者跌破后快速重新站回。
+- 回踩阶段最大单日量不能超过上涨末端三日均量的 1.2 倍。
+
+定位：支撑线附近的反抽观察，分为 `support_hold` 和 `break_reclaim` 两类。
+
+## 模型训练与验证
+
+### 训练 daily-screening 需要的部署模型
+
+```powershell
+python -m stocks_analyzer --project-root . train-tail-risk-model --start-date 2015-01-01 --end-date 2026-05-07
+python -m stocks_analyzer --project-root . train-barrier-risk-model --start-date 2015-01-01 --end-date 2026-05-07
+python -m stocks_analyzer --project-root . train-alpha158-qlib-return-model --start-date 2015-01-01 --end-date 2026-05-07
+python -m stocks_analyzer --project-root . train-trade-day-gate-model --start-date 2015-01-01 --end-date 2026-05-07
+```
+
+模型 artifact：
+
+```text
+data/ml/full_market_risk/tail_risk_model.pkl
+data/ml/full_market_barrier_risk/barrier_risk_model.pkl
+data/ml/full_market_alpha158_return/alpha158_qlib_return_model.pkl
+data/ml/full_market_trade_day_gate/trade_day_gate_model.pkl
+```
+
+### 验证各阶段
+
+```powershell
+python -m stocks_analyzer --project-root . audit-full-market-data --min-exact-history-days 900 --tail-lookback-days 100 --max-horizon-days 20
+python -m stocks_analyzer --project-root . validate-tail-risk-walkforward --start-date 2016-01-01 --end-date 2026-04-30 --windows 6
+python -m stocks_analyzer --project-root . validate-barrier-risk-grid --start-date 2016-01-01 --end-date 2026-04-30
+python -m stocks_analyzer --project-root . validate-alpha158-qlib-return --start-date 2016-01-01 --end-date 2026-04-30
+python -m stocks_analyzer --project-root . validate-mcd-crash-risk --start-date 2016-01-01 --end-date 2026-04-30
+python -m stocks_analyzer --project-root . validate-trade-day-gate --start-date 2016-01-01 --end-date 2026-04-30
+```
+
+### 当前 Phase 验证结论
+
+截至 2026-05-08 已完成 Phase1/2/4/5/7 的独立验证和部署预测。结论只说明各 Phase 自身有无信息量，还不能替代最终组合消融回测。
+
+| Phase | 当前结论 | 关键结果 | 当前用途 |
+| --- | --- | --- | --- |
+| Phase1 尾部风险 | 有效 | walk-forward `PR-AUC 0.151` vs 基准 `0.057`，`ROC-AUC 0.702`；高风险 decile 在所有窗口里都对应更高风险、更差回撤。过滤最高风险 20% 后，5 日未来收益略改善，最大回撤改善。 | 个股级硬风险过滤，排除最高风险 20%。 |
+| Phase2 triple-barrier 风险 | 有效，交易影响强于 Phase1 | 最优网格里过滤最高风险 20% 后，5 日未来收益改善约 `0.258%`，未来最大回撤改善约 `0.40pct`；多个网格均通过风险过滤检验。 | 个股级硬风险过滤，排除最高风险 20%；保留 CUSUM event 作为事件标记。 |
+| Phase4 Alpha158/Qlib 收益 | 有明显排序信号 | 测试集 `IC 0.0587`、`RankIC 0.0414`，正 IC 日比例约 `78%`；TopK 组合测试期 hit rate 约 `60%`。 | 通过 Phase1/2 后的收益排序核心，补入 Phase4 Top20。 |
+| Phase5 MCD crash-risk | 风险画像合理，但不适合直接当日线硬过滤 | `NEGOUTLIER` 总体比例约 `14.8%`；与 `MINRET` 相关性约 `-0.605`，与 `SIGMA` 相关性约 `0.509`。 | 长周期极端风险提示，暂不做硬过滤。 |
+| Phase7 交易日闸门 | 有效 | 最佳摘要 `PR-AUC 0.574` vs 基准 `0.446`；allow 日未来收益和最大回撤均优于整体。 | 日期级交易许可，`no_trade` 日只观察不积极开新仓。 |
+
+当前还缺的结果：
+
+- 新版 `pattern 1-6` 在 2016-2026 全量区间的独立回测。
+- `patterns_only` 是否打赢随机。
+- `patterns + Phase1/2` 是否明显优于 pure patterns。
+- `patterns + Phase1/2 + Phase4` 是否优于 `Phase4 only`。
+- 当前完整 `daily-screening watchlist` 是否优于各单组件基准。
+
+因此当前判断是：模型侧 Phase1/2/4/7 已有独立价值；Phase5 暂作风险提示；pattern 和最终组合仍需要进一步消融回测确认。
+
+### 回测 pattern
+
+```powershell
+python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --save-forward-prices --forward-days 40
+python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --1 --save-forward-prices --forward-days 40
+python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --2 --save-forward-prices --forward-days 40
+python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --3 --save-forward-prices --forward-days 40
+python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --4 --save-forward-prices --forward-days 40
+python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --5 --save-forward-prices --forward-days 40
+python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --6 --save-forward-prices --forward-days 40
+```
+
+组合消融回测命令清单见：
+
+```text
+docs/superpowers/specs/2026-05-07-daily-screening-component-backtest-commands.md
+```
+
+其中统一组合回测命令 `backtest-daily-screening-components` 仍待实现。
+
+## 目录和输出
+
+常用输出：
+
+```text
+data/daily/                              个股日线 parquet
+data/ml/full_market_risk/                Phase1 模型
+data/ml/full_market_barrier_risk/        Phase2 模型
+data/ml/full_market_alpha158_return/     Phase4 模型
+data/ml/full_market_trade_day_gate/      Phase7 模型
+reports/macd/                            MACD 和量价状态
+reports/atr/                             ATR 风险辅助
+reports/full_market_model/               Phase1/2/4/5/7 验证和预测
+reports/patterns/                        pattern 扫描结果
+reports/watchlists/                      watchlist 和 watchlist_pattern
+reports/daily_screening/                 daily-screening 运行摘要
+```
+
+手工维护文件：
+
+```text
+主线.md
+选股.md
+docs/picks-writing-guide.md
+```
+
+## 参考项目和论文
+
+### Phase1：尾部风险分类
+
+- Noh, S.-H. (2026). "Predicting Stock Market Risk Using Machine Learning Classification Models." `Risks`, 14(4), 92. https://www.mdpi.com/2227-9091/14/4/92
+
+本项目复现其“滚动 100 日 5% 分位尾部风险标签 + 多分类器比较”的思路，并扩展到 A 股全市场个股日线面板。
+
+### Phase2：Triple-Barrier 风险标签
+
+- Lopez de Prado, M. (2018). `Advances in Financial Machine Learning`. Wiley.
+- `nkonts/barrier-method`: https://github.com/nkonts/barrier-method
+- Mlfin.py labeling documentation: https://mlfinpy.readthedocs.io/en/stable/Labelling.html
+
+本项目使用日线 open/high/low/close 构建交易型风险标签，并保留 CUSUM event 标记。
+
+### Phase3/Phase4：Qlib Alpha158 + LightGBM
+
+- Microsoft Qlib paper: https://www.microsoft.com/en-us/research/publication/qlib-an-ai-oriented-quantitative-investment-platform/
+- Qlib benchmark README: https://github.com/microsoft/qlib/blob/main/examples/benchmarks/README.md
+- Qlib LightGBM Alpha158 config: https://github.com/microsoft/qlib/blob/main/examples/benchmarks/LightGBM/workflow_config_lightgbm_Alpha158.yaml
+- Qlib Alpha158 handler source: https://github.com/microsoft/qlib/blob/main/qlib/contrib/data/handler.py
+
+Phase3 是 Alpha158 风险模型研究。Phase4 是当前 daily-screening 使用的 Alpha158/Qlib 风格收益回归模型。
+
+### Phase5：MCD Crash-Risk
+
+- Karasan, A., Alp, O. S., and Weber, G.-W. (2025). "Machine learning approach to stock price crash risk." `Annals of Operations Research`, 350, 1053-1074. https://link.springer.com/article/10.1007/s10479-025-06596-7
+
+本项目只复现 crash-risk 标签和极端风险画像，不复现论文中的公司财务变量和投资者情绪回归。
+
+### Phase7：交易日买点闸门
+
+Phase7 是本项目基于本地 A 股全市场日线构建的市场状态模型。它使用合成指数、市场广度和技术状态判断“下一交易日是否适合技术买点”，不参考个股 pattern、Phase2 或 Phase4 作为输入。
+
+### 后续候选：MASTER
+
+- Li et al. (2024). "MASTER: Market-Guided Stock Transformer for Stock Price Forecasting." AAAI 2024. https://huggingface.co/papers/2312.15235
+- Official code: https://github.com/SJTU-DMTai/MASTER
+
+MASTER 暂未进入 daily-screening。只有当 Phase4 LightGBM 回归模型在本地回测中显示稳定价值后，才考虑继续复现。
 
 ## 注意事项
 
-- `daily-screening` 更适合盘后或定时任务，不适合盘中全市场快速执行
-- `daily-screening` 需要已有的 V4.2 模型 artifact；如果缺失，先运行 `train-opportunity-ranker`
-- `intraday-screening` 依赖已有 `watchlist`
-- 如果没有可用 `watchlist`，盘中复筛会报错
-- 当前推荐的数据源选择是：先 `sina`，如果 `sina` 不稳定，再尝试 `baostock`
-- 交易日判断当前优先走 `akshare` 的交易日历接口，失败后退化到工作日判断
-- 旧的概率模型、V3.1 买点模型、雪球归档和 `runcmd` 代码已经下线；当前文档以 `predict-model` 主流程为准
+- `daily-screening` 适合盘后运行，不适合盘中全市场频繁执行。
+- `watchlist` 是候选池，不是最终买入名单。
+- `Phase7 = no_trade` 时，watchlist 仍会生成，但应作为观察池。
+- `Phase5` 是长周期极端风险画像，不是日内买点信号。
+- pattern 命中只说明形态存在，不代表胜率足够高。
+- `选股.md` 需要按 `docs/picks-writing-guide.md` 手工整理。
+- 同一日期重复运行会覆盖同日期输出。
 
-## 兼容入口
+## 入口
 
-当前主入口建议统一使用：
+推荐统一使用：
 
-```bash
+```powershell
 python -m stocks_analyzer --project-root . <subcommand>
 ```
 
-也兼容：
+兼容入口：
 
-- `mystock`
-- `stocks-analyzer`
+```text
+mystock
+stocks-analyzer
+```
