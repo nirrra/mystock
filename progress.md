@@ -15,12 +15,18 @@
 - Updated `主线.md` to mark local Xueqiu data cutoff as `2026-05-07`, keep the first-tier `半导体 + AI硬件/算力` conclusion, and add a stricter stock-picking note that mainline names still need P1/P2, trend, and ATR checks.
 - Replaced the `2026.5.7` section in `选股.md` with a fresh list based only on latest `watchlist_2026-05-07.json`: `002491`, `002929`, `000889`, `000818`, `603938`, and `002995`.
 - Added the required tracking-stock summary for `002245`, marked as `不适合` because P1/P2 are `19.04 / 7.32`.
+- Re-ran the update after newer local inputs appeared: `1155695148.md` now has `2026-05-08` and the latest watchlist is `watchlist_2026-05-08.json`.
+- Updated `主线.md` again for the 2026-05-08 view: battery remains active but tilts to small-cap sodium battery names, and robotics/auto parts are upgraded to a short-term strengthening line.
+- Added a new `2026.5.8` section ahead of `2026.5.7` in `选股.md`, based only on `watchlist_2026-05-08.json`. Final picks: `002491`, `002929`, `002624`, and `600271`.
+- Updated the tracking-stock summary for `002245` on `2026-05-08`, marked `不适合` because P1/P2 are `7.18 / 9.87`.
 
 ### Verification
 
 - Confirmed `选股.md` contains exactly one `### 2026.5.7` heading.
 - Confirmed old same-date raw risk values and old low-P1/P2 main-table rows were removed from the new `2026.5.7` section.
 - Confirmed the final-picks, trading-aid, and tracking-stock tables have consistent column counts.
+- Confirmed `选股.md` contains exactly one `### 2026.5.8` heading and that it is placed before `### 2026.5.7`.
+- Confirmed the `2026.5.8` final-picks, trading-aid, and tracking-stock tables have consistent column counts.
 
 ## Session: 2026-05-06 Daily Watchlist Semantics
 
