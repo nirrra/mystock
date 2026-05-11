@@ -11,10 +11,20 @@ import pandas as pd
 
 from .atr import ATR_WATCHLIST_FIELD_MAP, normalize_atr_summary_frame
 from .phase_display import PHASE_TABLE_DROP_COLUMNS, add_phase5_score_100, phase7_score_100, score_series_100
+from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, recommended_position_percent_from_mapping
 
 
 WATCHLIST_FILENAME_RE = re.compile(r"watchlist_(\d{4}-\d{2}-\d{2})\.json$")
 WATCHLIST_STREAK_FIELD = "连续上榜天数"
+LIMIT_UP_DAILY_RETURN_THRESHOLD = 0.099
+CENTERED_RISK_PHASE_TARGET = 80.0
+CENTERED_RISK_PHASE_WIDTH_MULT = 2.0
+CENTERED_RISK_PHASE1_WEIGHT = 0.08
+CENTERED_RISK_PHASE2_WEIGHT = 0.12
+CENTERED_RISK_TOP_MIN_PHASE1_SCORE = 40.0
+CENTERED_RISK_TOP_MIN_PHASE2_SCORE = 50.0
+CENTERED_RISK_TOP_MIN_PHASE4_SCORE = 70.0
+PATTERN_MIN_PHASE4_SCORE = 70.0
 PATTERN_PRIORITY = {
     "5": 6.0,
     "1": 5.0,
@@ -234,6 +244,7 @@ def build_phase_daily_watchlist_candidates(
         prefix="phase1",
         filter_rate=phase_filter_rate,
         model_prefix="phase1",
+        extra_columns=("log_return_1d",),
     )
     phase2 = _prepare_phase_risk_predictions(
         phase2_predictions,
@@ -278,19 +289,60 @@ def build_phase_daily_watchlist_candidates(
             axis=1,
         )
 
-    passed = pool[
-        ~pool["phase1_excluded_by_top20_risk"].fillna(True).astype(bool)
-        & ~pool["phase2_excluded_by_top20_risk"].fillna(True).astype(bool)
-    ].copy()
-    if "phase4_return_score" in passed.columns:
-        passed["_phase4_sort"] = pd.to_numeric(passed["phase4_return_score"], errors="coerce")
-    else:
-        passed["_phase4_sort"] = pd.NA
-    passed = passed.sort_values(["_phase4_sort", "symbol"], ascending=[False, True], na_position="last")
+    evaluated = pool.copy()
+    evaluated["daily_return_1d"] = _derive_daily_return_1d(evaluated)
+    daily_return_values = pd.to_numeric(evaluated["daily_return_1d"], errors="coerce")
+    evaluated["涨幅%"] = (daily_return_values * 100.0).round(4)
+    evaluated["limit_up_excluded_by_daily_return"] = evaluated["daily_return_1d"].gt(LIMIT_UP_DAILY_RETURN_THRESHOLD).fillna(False)
+    for score_column in ("phase1_score_100", "phase2_score_100", "phase4_score_100"):
+        if score_column in evaluated.columns:
+            evaluated[score_column] = pd.to_numeric(evaluated[score_column], errors="coerce")
+        else:
+            evaluated[score_column] = pd.NA
+    evaluated = add_centered_risk_scores(evaluated)
+    evaluated["phase4_composite_score"] = evaluated["centered_risk_score"]
+    evaluated["phase4_top_score_filter_pass"] = False
+    pattern_symbol_set = set(pattern_groups)
+    evaluated["pattern_score_filter_pass"] = (
+        evaluated["symbol"].astype(str).str.zfill(6).isin(pattern_symbol_set)
+        & evaluated["phase4_score_100"].gt(PATTERN_MIN_PHASE4_SCORE)
+        & ~evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)
+    )
 
-    row_by_symbol = {str(row["symbol"]).zfill(6): row for row in passed.to_dict("records")}
-    pattern_symbols = [symbol for symbol in passed["symbol"].astype(str).str.zfill(6).tolist() if symbol in pattern_groups]
-    phase4_top_symbols = passed.dropna(subset=["_phase4_sort"]).head(max(int(phase4_top_n), 0))["symbol"].astype(str).str.zfill(6).tolist()
+    hard_filter_mask = (
+        ~evaluated["phase1_excluded_by_top20_risk"].fillna(True).astype(bool)
+        & ~evaluated["phase2_excluded_by_top20_risk"].fillna(True).astype(bool)
+    )
+    hard_filter_pass_count_before_limit_up = int(hard_filter_mask.sum())
+    limit_up_excluded = int((hard_filter_mask & evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)).sum())
+    passed = evaluated[hard_filter_mask & ~evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)].copy()
+    for score_column in ("phase1_score_100", "phase2_score_100", "phase4_score_100"):
+        if score_column in passed.columns:
+            passed[score_column] = pd.to_numeric(passed[score_column], errors="coerce")
+        else:
+            passed[score_column] = pd.NA
+    passed["phase4_top_score_filter_pass"] = (
+        passed["phase1_score_100"].ge(CENTERED_RISK_TOP_MIN_PHASE1_SCORE)
+        & passed["phase2_score_100"].ge(CENTERED_RISK_TOP_MIN_PHASE2_SCORE)
+        & passed["phase4_score_100"].ge(CENTERED_RISK_TOP_MIN_PHASE4_SCORE)
+        & passed["centered_risk_score"].notna()
+    )
+    phase4_top_pool = passed[passed["phase4_top_score_filter_pass"].fillna(False)].copy()
+    phase4_top_pool = phase4_top_pool.sort_values(
+        ["centered_risk_score", "phase4_score_100", "phase1_center_score", "phase2_center_score", "symbol"],
+        ascending=[False, False, False, False, True],
+        na_position="last",
+    )
+    phase4_top_pool["phase4_composite_rank"] = range(1, len(phase4_top_pool) + 1)
+    phase4_composite_rank_by_symbol = phase4_top_pool.set_index("symbol")["phase4_composite_rank"].to_dict()
+    passed["phase4_composite_rank"] = passed["symbol"].map(phase4_composite_rank_by_symbol)
+    evaluated["phase4_composite_rank"] = evaluated["symbol"].map(phase4_composite_rank_by_symbol)
+
+    pattern_pool = evaluated[evaluated["pattern_score_filter_pass"].fillna(False)].copy()
+    row_pool = pd.concat([pattern_pool, passed], ignore_index=True).drop_duplicates("symbol", keep="first")
+    row_by_symbol = {str(row["symbol"]).zfill(6): row for row in row_pool.to_dict("records")}
+    pattern_symbols = pattern_pool["symbol"].astype(str).str.zfill(6).tolist()
+    phase4_top_symbols = phase4_top_pool.head(max(int(phase4_top_n), 0))["symbol"].astype(str).str.zfill(6).tolist()
 
     candidates: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -334,7 +386,10 @@ def build_phase_daily_watchlist_candidates(
         candidates,
         key=lambda item: (
             0 if item.get("pattern_match") else 1,
-            -_float_or_default(item.get("phase4_return_score"), -math.inf),
+            -_float_or_default(
+                item.get("phase4_composite_score"),
+                _float_or_default(item.get("phase4_score_100"), -math.inf),
+            ),
             str(item.get("symbol", "")),
         ),
     )
@@ -349,7 +404,17 @@ def build_phase_daily_watchlist_candidates(
             "phase2_filter": "exclude highest risk 20%",
             "phase_filter_rate": float(phase_filter_rate),
             "phase4_top_n": int(phase4_top_n),
+            "centered_risk_min_phase1_score": float(CENTERED_RISK_TOP_MIN_PHASE1_SCORE),
+            "centered_risk_min_phase2_score": float(CENTERED_RISK_TOP_MIN_PHASE2_SCORE),
+            "centered_risk_min_phase4_score": float(CENTERED_RISK_TOP_MIN_PHASE4_SCORE),
+            "pattern_min_phase4_score": float(PATTERN_MIN_PHASE4_SCORE),
+            "pattern_filter": "pattern hits ignore phase1/phase2 floors; require phase4_score_100 > 70 and same-day return <= 9.9%",
+            "centered_risk_sort_formula": "phase4_score_100 + 0.08 * max(0, 100 - 2 * abs(phase1_score_100 - 80)) + 0.12 * max(0, 100 - 2 * abs(phase2_score_100 - 80))",
+            "phase4_top_sort_formula": "centered_risk_score",
             "phase7_no_trade_policy": "block highest-risk 20% trade days based on trained threshold",
+            "limit_up_filter": "exclude candidates with same-day return > 9.9% before watchlist selection",
+            "limit_up_filter_threshold": float(LIMIT_UP_DAILY_RETURN_THRESHOLD),
+            "position_size_formula": "D = 2 * ATR14; effective average stop distance before third add = 0.85D; total planned position = min(40%, 2% / (0.85 * 2 * ATR14 / close))",
         },
         "trade_permission": phase7.get("phase7_trade_permission", "unknown"),
         "next_open_trade_permission": phase7.get("phase7_trade_permission", "unknown"),
@@ -362,8 +427,12 @@ def build_phase_daily_watchlist_candidates(
             "phase2_rows": int(len(phase2)),
             "phase2_excluded_top20": phase2_excluded,
             "phase1_phase2_intersection": int(len(pool)),
+            "hard_filter_pass_count_before_limit_up_filter": hard_filter_pass_count_before_limit_up,
+            "limit_up_excluded_gt_9_9pct": limit_up_excluded,
             "hard_filter_pass_count": int(len(passed)),
             "pattern_symbols_after_filter": int(len(set(pattern_symbols))),
+            "pattern_symbols_phase4_gt_70": int(len(set(pattern_symbols))),
+            "phase4_top_candidates_after_score_floor": int(len(phase4_top_pool)),
             "phase4_top_n_added_count": int(phase4_added),
         },
         "candidate_count": len(candidates),
@@ -424,6 +493,43 @@ def _prepare_phase_risk_predictions(
             frame[target] = frame[column]
             keep.append(target)
     return frame.loc[:, keep].copy()
+
+
+def _derive_daily_return_1d(frame: pd.DataFrame) -> pd.Series:
+    if "phase1_log_return_1d" in frame.columns:
+        values = pd.to_numeric(frame["phase1_log_return_1d"], errors="coerce")
+        return values.map(lambda value: math.expm1(float(value)) if pd.notna(value) and math.isfinite(float(value)) else pd.NA)
+    for column in ("phase1_return_1d", "return_1d", "daily_return_1d", "pct_change"):
+        if column not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce")
+        if column == "pct_change" and values.abs().dropna().gt(1.5).any():
+            return values / 100.0
+        return values
+    return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+
+
+def add_centered_risk_scores(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    for score_column in ("phase1_score_100", "phase2_score_100", "phase4_score_100"):
+        if score_column in result.columns:
+            result[score_column] = pd.to_numeric(result[score_column], errors="coerce")
+        else:
+            result[score_column] = pd.NA
+    result["phase1_center_score"] = _centered_phase_score(result["phase1_score_100"])
+    result["phase2_center_score"] = _centered_phase_score(result["phase2_score_100"])
+    result["centered_risk_score"] = (
+        result["phase4_score_100"]
+        + CENTERED_RISK_PHASE1_WEIGHT * result["phase1_center_score"]
+        + CENTERED_RISK_PHASE2_WEIGHT * result["phase2_center_score"]
+    ).round(4)
+    return result
+
+
+def _centered_phase_score(values: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    centered = 100.0 - CENTERED_RISK_PHASE_WIDTH_MULT * (numeric - CENTERED_RISK_PHASE_TARGET).abs()
+    return centered.clip(lower=0.0, upper=100.0)
 
 
 def _prepare_phase4_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
@@ -576,6 +682,10 @@ def _phase_watchlist_candidate(
     for field in (
         "phase1_score_100",
         "phase1_risk_score",
+        "phase1_log_return_1d",
+        "daily_return_1d",
+        "涨幅%",
+        "limit_up_excluded_by_daily_return",
         "phase1_feature_trade_date",
         "phase1_risk_rank",
         "phase1_risk_percentile",
@@ -593,7 +703,13 @@ def _phase_watchlist_candidate(
         "phase2_mlfin_cusum_threshold",
         "phase2_model_name",
         "phase2_model_version",
+        "phase1_center_score",
+        "phase2_center_score",
+        "centered_risk_score",
         "phase4_score_100",
+        "phase4_composite_score",
+        "phase4_composite_rank",
+        "phase4_top_score_filter_pass",
         "phase4_return_score",
         "phase4_feature_trade_date",
         "phase4_rank",
@@ -732,6 +848,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "candidate_index",
             "symbol",
             "name",
+            "涨幅%",
             "source",
             "pattern_match",
             "pattern_ids",
@@ -739,7 +856,12 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "phase1_score_100",
             "phase2_score_100",
             "phase2_is_cusum_event",
+            "phase1_center_score",
+            "phase2_center_score",
+            "centered_risk_score",
             "phase4_score_100",
+            "phase4_composite_score",
+            "phase4_composite_rank",
             "phase5_score_100",
             "phase7_score_100",
             "phase7_trade_permission",
@@ -752,6 +874,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "2ATR止损参考",
             "2ATR止盈参考",
             "3ATR止盈参考",
+            RECOMMENDED_POSITION_PERCENT_FIELD,
             "波动分层",
             "reason",
         ]
@@ -764,6 +887,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
                 "candidate_index",
                 "symbol",
                 "name",
+                "涨幅%",
                 "source",
                 "pattern_match",
                 "phase1_score_100",
@@ -953,6 +1077,9 @@ def _append_supported_fields(candidate: dict[str, object], row: pd.Series | dict
             candidate[target_field] = round(float(value) * 100.0, 4)
         else:
             candidate[target_field] = _normalize_candidate_value(value)
+    position_pct = recommended_position_percent_from_mapping(row)
+    if position_pct is not None:
+        candidate[RECOMMENDED_POSITION_PERCENT_FIELD] = position_pct
 
 
 def _attach_main_watchlist_streaks(

@@ -7,6 +7,9 @@ __pycache__/
 tmp_pytest_run/
 .mypy_cache/
 .tmp_*
+task_plan.md
+findings.md
+progress.md
 
 data/
 !data/.gitkeep
@@ -25,5 +28,10 @@ build/
 !reports/watchlists/
 !reports/watchlists/watchlist_*.csv
 reports/xueqiu/
+reports/strict_mixed_score_validation*/
+reports/*backtest*/
+reports/mixed_score_backtest*/
+reports/staged_position_backtest*/
+reports/intraday_channel_smoke_*.json
 .env.local
 command.txt

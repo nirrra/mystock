@@ -19,6 +19,9 @@ PHASE_DISPLAY_COLUMNS = [
 
 PHASE_TABLE_DROP_COLUMNS = [
     "phase1_risk_score",
+    "phase1_log_return_1d",
+    "daily_return_1d",
+    "limit_up_excluded_by_daily_return",
     "phase1_risk_rank",
     "phase1_risk_percentile",
     "phase1_excluded_top20",
@@ -31,6 +34,7 @@ PHASE_TABLE_DROP_COLUMNS = [
     "phase2_mlfin_daily_vol",
     "phase2_mlfin_cusum_threshold",
     "phase4_return_score",
+    "phase4_top_score_filter_pass",
     "phase4_rank",
     "phase4_score_percentile",
     "phase5_NEGOUTLIER",

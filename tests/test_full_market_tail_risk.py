@@ -89,7 +89,8 @@ def test_build_alpha158_feature_frame_adds_window_features() -> None:
 
     assert {"KMID", "ROC5", "MA20", "CORR60", "VSUMD30"}.issubset(frame.columns)
     assert len([column for column in frame.columns if column not in {"trade_date", "symbol", "name", "future_return_5d", "future_max_drawdown_5d"}]) >= 150
-    assert abs(frame.loc[5, "ROC5"] - closes[0] / closes[5]) < 1e-12
+    assert abs(frame.loc[5, "ROC5"] - closes[0] / closes[5]) < 1e-6
+    assert str(frame["ROC5"].dtype) == "float32"
 
 
 def test_build_alpha158_return_frame_uses_qlib_label() -> None:
@@ -97,7 +98,8 @@ def test_build_alpha158_return_frame_uses_qlib_label() -> None:
 
     frame = build_alpha158_return_frame(bars, symbol="600000")
 
-    assert abs(frame.loc[0, "LABEL0_raw"] - (12.1 / 11.0 - 1.0)) < 1e-12
+    assert abs(frame.loc[0, "LABEL0_raw"] - (12.1 / 11.0 - 1.0)) < 1e-6
+    assert str(frame["LABEL0_raw"].dtype) == "float32"
 
 
 def test_build_symbol_weekly_return_frame_uses_friday_close() -> None:

@@ -17,20 +17,25 @@ from .indicators import add_indicators
 from .intraday_update import INTRADAY_DATA_INTERFACES, run_intraday_update
 from .macd_divergence import summarize_recent_macd_divergence
 from .phase_display import normalize_symbol
+from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, add_recommended_position_percent
 from .storage import DailyBarsReadError, Storage
 from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, TRACK_INPUT_SHEET
 from .watchlist import (
+    CENTERED_RISK_TOP_MIN_PHASE1_SCORE,
+    CENTERED_RISK_TOP_MIN_PHASE2_SCORE,
+    CENTERED_RISK_TOP_MIN_PHASE4_SCORE,
+    PATTERN_MIN_PHASE4_SCORE,
     _prepare_atr_frame,
     _prepare_macd_frame,
     _prepare_phase4_predictions,
     _prepare_phase_risk_predictions,
+    add_centered_risk_scores,
     extract_watchlist_symbols,
     find_latest_watchlist_before,
 )
 
 DEFAULT_INTRADAY_REPORT_KEEP_DATES = 10
 INTRADAY_FOCUS_SIZE = 20
-INTRADAY_FOCUS_MIN_PHASE_SCORE = 40.0
 INTRADAY_FOCUS_MAX_PCT_CHANGE = 8.0
 _DATED_REPORT_PATTERNS = (
     re.compile(r"^intraday_screening_(\d{4}-\d{2}-\d{2})\.csv$"),
@@ -563,21 +568,39 @@ def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
     required = {"phase1_score_100", "phase2_score_100", "phase4_score_100", "intraday_pct_change"}
     if not required.issubset(frame.columns):
         return frame.head(0).copy()
-    result = frame.copy()
+    result = _add_intraday_focus_score(frame.copy())
     phase1 = pd.to_numeric(result["phase1_score_100"], errors="coerce")
     phase2 = pd.to_numeric(result["phase2_score_100"], errors="coerce")
     phase4 = pd.to_numeric(result["phase4_score_100"], errors="coerce")
     pct_change = pd.to_numeric(result["intraday_pct_change"], errors="coerce")
-    result = result[
-        phase1.gt(INTRADAY_FOCUS_MIN_PHASE_SCORE)
-        & phase2.gt(INTRADAY_FOCUS_MIN_PHASE_SCORE)
-        & pct_change.le(INTRADAY_FOCUS_MAX_PCT_CHANGE)
-    ].copy()
+    if "prev_pattern_match" in result.columns:
+        prev_pattern_match = result["prev_pattern_match"].map(_truthy_flag).fillna(False)
+    else:
+        prev_pattern_match = pd.Series(False, index=result.index)
+    standard_pass = (
+        phase1.ge(CENTERED_RISK_TOP_MIN_PHASE1_SCORE)
+        & phase2.ge(CENTERED_RISK_TOP_MIN_PHASE2_SCORE)
+        & phase4.ge(CENTERED_RISK_TOP_MIN_PHASE4_SCORE)
+    )
+    pattern_pass = prev_pattern_match & phase4.gt(PATTERN_MIN_PHASE4_SCORE)
+    eligible_mask = (standard_pass | pattern_pass) & pct_change.le(INTRADAY_FOCUS_MAX_PCT_CHANGE)
+    result = result[eligible_mask].copy()
+    pattern_symbols = (
+        set(result.loc[pattern_pass.reindex(result.index, fill_value=False), "symbol"].astype(str))
+        if "symbol" in result.columns
+        else set()
+    )
     if result.empty:
         selected = result
     else:
-        result["_phase4_focus_sort"] = phase4.loc[result.index]
-        selected = result.sort_values(["_phase4_focus_sort", "symbol"], ascending=[False, True], na_position="last").head(INTRADAY_FOCUS_SIZE)
+        pattern_selected = _sort_intraday_focus(result[result["symbol"].astype(str).isin(pattern_symbols)]).head(INTRADAY_FOCUS_SIZE)
+        remaining_size = max(INTRADAY_FOCUS_SIZE - len(pattern_selected), 0)
+        if remaining_size > 0:
+            selected_symbols = set(pattern_selected["symbol"].astype(str)) if "symbol" in pattern_selected.columns else set()
+            standard_selected = _sort_intraday_focus(result[~result["symbol"].astype(str).isin(selected_symbols)]).head(remaining_size)
+            selected = _concat_frames(pattern_selected, standard_selected)
+        else:
+            selected = pattern_selected
     selected = selected.copy()
     selected["intraday_selection_source"] = "top20"
     tracked = _select_intraday_track_stock(frame)
@@ -589,15 +612,11 @@ def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
         selected.loc[selected["symbol"].astype(str).isin(set(tracked["symbol"].astype(str))), "intraday_selection_source"] = "top20+track_stock"
         selected = _concat_frames(selected, tracked_only)
     if selected.empty:
-        return selected.drop(columns=["_phase4_focus_sort"], errors="ignore").reset_index(drop=True)
-    selected["_phase4_focus_sort"] = pd.to_numeric(selected.get("phase4_score_100"), errors="coerce")
+        return selected.drop(columns=["_track_focus_sort"], errors="ignore").reset_index(drop=True)
+    selected = _add_intraday_focus_score(selected)
     selected["_track_focus_sort"] = selected.get("intraday_selection_source", "").astype(str).eq("track_stock").astype(int)
-    selected = selected.sort_values(
-        ["_track_focus_sort", "_phase4_focus_sort", "symbol"],
-        ascending=[True, False, True],
-        na_position="last",
-    )
-    return selected.drop(columns=["_phase4_focus_sort", "_track_focus_sort"], errors="ignore").reset_index(drop=True)
+    selected = _sort_intraday_focus(selected, leading_columns=["_track_focus_sort"], leading_ascending=[True])
+    return selected.drop(columns=["_track_focus_sort"], errors="ignore").reset_index(drop=True)
 
 
 def _select_intraday_track_stock(frame: pd.DataFrame) -> pd.DataFrame:
@@ -606,9 +625,68 @@ def _select_intraday_track_stock(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame[frame["track_stock"].fillna(False).astype(bool)].copy()
     if result.empty:
         return result
-    result["_phase4_focus_sort"] = pd.to_numeric(result.get("phase4_score_100"), errors="coerce")
-    result = result.sort_values(["_phase4_focus_sort", "symbol"], ascending=[False, True], na_position="last")
-    return result.drop(columns=["_phase4_focus_sort"], errors="ignore").reset_index(drop=True)
+    result = _add_intraday_focus_score(result)
+    result = _sort_intraday_focus(result)
+    return result.reset_index(drop=True)
+
+
+def _add_intraday_focus_score(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    required = {"phase1_score_100", "phase2_score_100", "phase4_score_100"}
+    if not required.issubset(result.columns):
+        result["intraday_focus_score"] = pd.NA
+        return result
+    result = add_centered_risk_scores(result)
+    result["intraday_focus_score"] = result["centered_risk_score"]
+    return result
+
+
+def _truthy_flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None or value is pd.NA:
+        return False
+    if isinstance(value, float) and math.isnan(value):
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "是"}
+
+
+def _sort_intraday_focus(
+    frame: pd.DataFrame,
+    *,
+    leading_columns: list[str] | None = None,
+    leading_ascending: list[bool] | None = None,
+) -> pd.DataFrame:
+    result = _add_intraday_focus_score(frame)
+    leading = leading_columns or []
+    leading_directions = leading_ascending if leading_ascending is not None else [True] * len(leading)
+    sort_columns = [
+        *leading,
+        "intraday_focus_score",
+        "phase4_score_100",
+        "phase1_center_score",
+        "phase2_center_score",
+        "symbol",
+    ]
+    ascending = [
+        *leading_directions,
+        False,
+        False,
+        False,
+        False,
+        True,
+    ]
+    available_columns: list[str] = []
+    available_ascending: list[bool] = []
+    for column, direction in zip(sort_columns, ascending):
+        if column in result.columns:
+            available_columns.append(column)
+            available_ascending.append(direction)
+    if not available_columns:
+        return result
+    return result.sort_values(available_columns, ascending=available_ascending, na_position="last")
 
 
 def _focus_symbols_path(storage: Storage) -> Path:
@@ -848,6 +926,8 @@ def _build_output_frame(
         frame = frame.drop(columns=["name"], errors="ignore")
         result = result.merge(frame, on="symbol", how="left")
     result = _add_phase_display_ranks(result)
+    result = _add_intraday_focus_score(result)
+    result = add_recommended_position_percent(result)
     result = _drop_internal_score_columns(result)
     return _order_output_columns(result)
 
@@ -907,6 +987,10 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
     preferred = [
         "phase4_rank",
         "phase4_score_100",
+        "intraday_focus_score",
+        "centered_risk_score",
+        "phase1_center_score",
+        "phase2_center_score",
         "phase1_rank",
         "phase1_score_100",
         "phase2_rank",
@@ -921,6 +1005,7 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "intraday_quote_datetime",
         "intraday_source",
         "intraday_pct_change",
+        RECOMMENDED_POSITION_PERCENT_FIELD,
         "phase1_excluded_by_top20_risk",
         "phase1_feature_trade_date",
         "phase2_excluded_by_top20_risk",

@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 
 from .phase_display import add_phase5_score_100, phase7_score_100, score_series_100
+from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, recommended_position_percent_from_mapping
 
 
 DEFAULT_TRACK_STOCK_FILENAME = "track_stock.xlsx"
@@ -62,6 +63,7 @@ TRACK_STOCK_COLUMNS = [
     "atr_stop_loss_2x",
     "atr_take_profit_2x",
     "atr_take_profit_3x",
+    "recommended_position_pct",
     "atr_volatility_regime",
 ]
 
@@ -99,6 +101,7 @@ TRACK_STOCK_HEADERS_ZH = {
     "atr_stop_loss_2x": "2ATR止损",
     "atr_take_profit_2x": "2ATR止盈",
     "atr_take_profit_3x": "3ATR止盈",
+    "recommended_position_pct": RECOMMENDED_POSITION_PERCENT_FIELD,
     "atr_volatility_regime": "ATR波动分层",
 }
 
@@ -493,6 +496,9 @@ def _build_output_row(
     for source in (phase1, phase2, phase4, phase5, patterns, macd, atr):
         row.update(source.get(symbol, {}))
     row.update(phase7)
+    position_pct = recommended_position_percent_from_mapping(row)
+    if position_pct is not None:
+        row["recommended_position_pct"] = position_pct
     return {column: row.get(column, "") for column in TRACK_STOCK_COLUMNS}
 
 

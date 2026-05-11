@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -32,7 +33,7 @@ def test_write_and_load_watchlist_round_trip() -> None:
     payload = {
         "source_file": str(tmp_path / "reports" / "patterns" / "patterns_all_2026-04-10.csv"),
         "candidates": [
-            {"symbol": "2579", "name": "中京电子", "tier": "第一梯队"},
+            {"symbol": "2579", "name": "中京电子", "涨幅%": 2.34, "tier": "第一梯队"},
             {"symbol": "603803", "name": "瑞斯康达", "tier": "第二梯队"},
         ],
         "analysis": {"summary": "should not be persisted"},
@@ -49,6 +50,8 @@ def test_write_and_load_watchlist_round_trip() -> None:
     assert extract_watchlist_symbols(loaded) == ["002579", "603803"]
     assert loaded["candidates"][0]["连续上榜天数"] == 1
     assert loaded["candidates"][1]["连续上榜天数"] == 1
+    csv_frame = pd.read_csv(target.with_suffix(".csv"))
+    assert list(csv_frame.columns[:5]) == ["trade_date", "candidate_index", "symbol", "name", "涨幅%"]
 
 
 def test_write_and_load_pattern_watchlist_round_trip() -> None:
@@ -194,6 +197,7 @@ def test_build_watchlist_candidates_preserves_pattern_and_technical_fields() -> 
     assert payload["candidates"][1]["recent_high_date"] == "2026-04-01"
     assert payload["candidates"][1]["ATR14"] == 0.8
     assert payload["candidates"][1]["ATR%"] == 8.0
+    assert payload["candidates"][1]["建议总仓位%"] == 14.71
 
 
 def test_build_phase_daily_watchlist_filters_phase1_phase2_and_adds_phase4_top() -> None:
@@ -224,10 +228,10 @@ def test_build_phase_daily_watchlist_filters_phase1_phase2_and_adds_phase4_top()
     phase4 = pd.DataFrame(
         [
             {"symbol": "600000", "return_score": 0.01, "model_name": "lightgbm"},
-            {"symbol": "600001", "return_score": 0.09, "model_name": "lightgbm"},
-            {"symbol": "600002", "return_score": 0.08, "model_name": "lightgbm"},
-            {"symbol": "600003", "return_score": 0.07, "model_name": "lightgbm"},
-            {"symbol": "600004", "return_score": 0.10, "model_name": "lightgbm"},
+            {"symbol": "600001", "return_score": 0.03, "model_name": "lightgbm"},
+            {"symbol": "600002", "return_score": 0.10, "model_name": "lightgbm"},
+            {"symbol": "600003", "return_score": 0.09, "model_name": "lightgbm"},
+            {"symbol": "600004", "return_score": 0.02, "model_name": "lightgbm"},
         ]
     )
     phase7 = pd.DataFrame(
@@ -248,6 +252,19 @@ def test_build_phase_daily_watchlist_filters_phase1_phase2_and_adds_phase4_top()
             {"symbol": "600004", "year": 2026, "NEGOUTLIER": 0, "CRASH": 0, "NCSKEW": 0.2, "DUVOL": 0.2},
         ]
     )
+    atr = pd.DataFrame(
+        [
+            {
+                "symbol": "600003",
+                "trade_date": "2026-05-07",
+                "close": 10.0,
+                "atr_14": 0.5,
+                "atr_pct_14": 0.05,
+                "atr_stop_loss_2x": 9.0,
+                "atr_take_profit_2x": 11.0,
+            }
+        ]
+    )
 
     payload = build_phase_daily_watchlist_candidates(
         trade_date=date(2026, 5, 7),
@@ -257,6 +274,7 @@ def test_build_phase_daily_watchlist_filters_phase1_phase2_and_adds_phase4_top()
         phase4_predictions=phase4,
         phase7_prediction=phase7,
         phase5_measures=phase5,
+        atr_frame=atr,
         phase_filter_rate=0.2,
         phase4_top_n=2,
     )
@@ -264,8 +282,90 @@ def test_build_phase_daily_watchlist_filters_phase1_phase2_and_adds_phase4_top()
     assert payload["trade_permission"] == "allow"
     assert payload["filter_summary"]["phase1_excluded_top20"] == 1
     assert payload["filter_summary"]["phase2_excluded_top20"] == 1
-    assert [item["symbol"] for item in payload["candidates"]] == ["600000", "600004", "600003"]
+    assert [item["symbol"] for item in payload["candidates"]] == ["600002", "600003"]
     assert payload["candidates"][0]["source"] == "pattern"
-    assert payload["candidates"][0]["pattern_ids"] == ["1"]
+    assert payload["candidates"][0]["pattern_ids"] == ["5"]
+    assert payload["candidates"][0]["phase2_excluded_by_top20_risk"] is True
+    assert payload["candidates"][0]["phase4_score_100"] == 100.0
     assert payload["candidates"][1]["source"] == "phase4_top"
-    assert payload["candidates"][1]["phase4_score_100"] == 100.0
+    assert payload["candidates"][1]["phase4_score_100"] == 75.0
+    assert payload["candidates"][1]["phase1_center_score"] == 40.0
+    assert payload["candidates"][1]["phase2_center_score"] == 40.0
+    assert payload["candidates"][1]["centered_risk_score"] == 83.0
+    assert payload["candidates"][1]["phase4_composite_score"] == 83.0
+    assert payload["candidates"][1]["phase4_composite_rank"] == 1
+    assert payload["candidates"][1]["建议总仓位%"] == 23.53
+    assert payload["candidates"][1]["phase4_top_score_filter_pass"] is True
+    assert "600004" not in [item["symbol"] for item in payload["candidates"]]
+    assert payload["selection_policy"]["centered_risk_min_phase1_score"] == 40.0
+    assert payload["selection_policy"]["centered_risk_min_phase2_score"] == 50.0
+    assert payload["selection_policy"]["centered_risk_min_phase4_score"] == 70.0
+    assert payload["selection_policy"]["pattern_min_phase4_score"] == 70.0
+    assert payload["filter_summary"]["pattern_symbols_after_filter"] == 1
+    assert payload["filter_summary"]["phase4_top_candidates_after_score_floor"] == 1
+
+
+def test_build_phase_daily_watchlist_excludes_same_day_limit_up_candidates() -> None:
+    pattern_frame = pd.DataFrame(
+        [
+            {"symbol": "600000", "name": "涨停模式", "pattern_id": "1", "reason": "limit up pattern"},
+            {"symbol": "600003", "name": "普通模式", "pattern_id": "5", "reason": "normal pattern"},
+        ]
+    )
+    phase1 = pd.DataFrame(
+        [
+            {"symbol": "600000", "name": "涨停模式", "risk_score": 0.10, "log_return_1d": math.log(1.10), "model_name": "logistic"},
+            {"symbol": "600001", "name": "一阶段高风险", "risk_score": 0.90, "log_return_1d": 0.00, "model_name": "logistic"},
+            {"symbol": "600002", "name": "普通候选甲", "risk_score": 0.20, "log_return_1d": 0.01, "model_name": "logistic"},
+            {"symbol": "600003", "name": "普通模式", "risk_score": 0.30, "log_return_1d": 0.02, "model_name": "logistic"},
+            {"symbol": "600004", "name": "普通候选乙", "risk_score": 0.40, "log_return_1d": 0.03, "model_name": "logistic"},
+        ]
+    )
+    phase2 = pd.DataFrame(
+        [
+            {"symbol": "600000", "barrier_risk_score": 0.10, "model_name": "barrier"},
+            {"symbol": "600001", "barrier_risk_score": 0.95, "model_name": "barrier"},
+            {"symbol": "600002", "barrier_risk_score": 0.20, "model_name": "barrier"},
+            {"symbol": "600003", "barrier_risk_score": 0.30, "model_name": "barrier"},
+            {"symbol": "600004", "barrier_risk_score": 0.40, "model_name": "barrier"},
+        ]
+    )
+    phase4 = pd.DataFrame(
+        [
+            {"symbol": "600000", "return_score": 0.20, "model_name": "lightgbm"},
+            {"symbol": "600001", "return_score": 0.09, "model_name": "lightgbm"},
+            {"symbol": "600002", "return_score": 0.18, "model_name": "lightgbm"},
+            {"symbol": "600003", "return_score": 0.19, "model_name": "lightgbm"},
+            {"symbol": "600004", "return_score": 0.07, "model_name": "lightgbm"},
+        ]
+    )
+    phase7 = pd.DataFrame(
+        [
+            {
+                "feature_trade_date": "2026-05-07",
+                "buy_day_risk_score": 0.12,
+                "selected_threshold": 0.20,
+                "trade_permission": "allow",
+            }
+        ]
+    )
+
+    payload = build_phase_daily_watchlist_candidates(
+        trade_date=date(2026, 5, 7),
+        pattern_frame=pattern_frame,
+        phase1_predictions=phase1,
+        phase2_predictions=phase2,
+        phase4_predictions=phase4,
+        phase7_prediction=phase7,
+        phase_filter_rate=0.2,
+        phase4_top_n=2,
+    )
+
+    assert payload["selection_policy"]["limit_up_filter_threshold"] == 0.099
+    assert payload["filter_summary"]["limit_up_excluded_gt_9_9pct"] == 1
+    assert payload["filter_summary"]["hard_filter_pass_count_before_limit_up_filter"] == 4
+    assert payload["filter_summary"]["hard_filter_pass_count"] == 3
+    assert [item["symbol"] for item in payload["candidates"]] == ["600003"]
+    assert all(item["symbol"] != "600000" for item in payload["candidates"])
+    assert payload["candidates"][0]["source"] == "pattern"
+    assert payload["candidates"][0]["涨幅%"] == 2.0201

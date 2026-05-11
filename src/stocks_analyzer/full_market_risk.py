@@ -65,6 +65,17 @@ ALL_TAIL_RISK_MODEL_NAMES = (
     "adaboost",
     "gradient_boosting",
 )
+
+TAIL_RISK_LGBM_CLASSIFIER_PARAMS: dict[str, Any] = {
+    "n_estimators": 120,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42,
+    "n_jobs": 1,
+    "verbosity": -1,
+}
 DEFAULT_PANEL_MODEL_NAMES = (
     "dummy_prior",
     "logistic_regression",
@@ -2020,13 +2031,19 @@ def _fit_score_risk_models(
     }
 
 
-def _tail_risk_models(model_names: tuple[str, ...] = ALL_TAIL_RISK_MODEL_NAMES) -> dict[str, Any]:
+def _tail_risk_models(
+    model_names: tuple[str, ...] = ALL_TAIL_RISK_MODEL_NAMES,
+    *,
+    lgbm_params: dict[str, Any] | None = None,
+    n_jobs: int | None = None,
+) -> dict[str, Any]:
+    tree_jobs = int(n_jobs) if n_jobs is not None else 1
     available = {
         "dummy_prior": DummyClassifier(strategy="prior"),
         "logistic_regression": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)),
         "knn": make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=5)),
         "decision_tree": DecisionTreeClassifier(random_state=42),
-        "random_forest": RandomForestClassifier(n_estimators=80, random_state=42, n_jobs=1),
+        "random_forest": RandomForestClassifier(n_estimators=80, random_state=42, n_jobs=tree_jobs),
         "linear_discriminant_analysis": make_pipeline(StandardScaler(), LinearDiscriminantAnalysis()),
         "naive_bayes": GaussianNB(),
         "quadratic_discriminant_analysis": make_pipeline(StandardScaler(), QuadraticDiscriminantAnalysis(reg_param=0.01)),
@@ -2034,16 +2051,12 @@ def _tail_risk_models(model_names: tuple[str, ...] = ALL_TAIL_RISK_MODEL_NAMES) 
         "gradient_boosting": GradientBoostingClassifier(random_state=42),
     }
     if LGBMClassifier is not None:
-        available["lightgbm_classifier"] = LGBMClassifier(
-            n_estimators=120,
-            learning_rate=0.05,
-            num_leaves=31,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=42,
-            n_jobs=1,
-            verbosity=-1,
-        )
+        params = dict(TAIL_RISK_LGBM_CLASSIFIER_PARAMS)
+        if n_jobs is not None:
+            params["n_jobs"] = int(n_jobs)
+        if lgbm_params:
+            params.update(lgbm_params)
+        available["lightgbm_classifier"] = LGBMClassifier(**params)
     unknown = [model_name for model_name in model_names if model_name not in available]
     if unknown:
         raise ValueError(f"Unknown tail-risk model names: {', '.join(unknown)}")

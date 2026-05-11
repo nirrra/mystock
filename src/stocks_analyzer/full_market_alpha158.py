@@ -138,7 +138,8 @@ def build_alpha158_feature_frame(
 
     columns["future_return_5d"] = close.shift(-5).div(close).sub(1.0)
     columns["future_max_drawdown_5d"] = _future_min_return(close, horizon=5)
-    return pd.DataFrame(columns).replace([np.inf, -np.inf], np.nan)
+    result = pd.DataFrame(columns).replace([np.inf, -np.inf], np.nan)
+    return _downcast_alpha158_numeric(result)
 
 
 def build_alpha158_return_frame(
@@ -152,8 +153,9 @@ def build_alpha158_return_frame(
     if frame.empty:
         return frame
     close = _prepare_price_frame(bars)["close"].where(lambda values: values.gt(0))
-    frame["LABEL0_raw"] = close.shift(-2).div(close.shift(-1)).sub(1.0)
-    return frame.replace([np.inf, -np.inf], np.nan)
+    label = close.shift(-2).div(close.shift(-1)).sub(1.0).astype("float32").rename("LABEL0_raw")
+    frame = pd.concat([frame, label], axis=1)
+    return _downcast_alpha158_numeric(frame.replace([np.inf, -np.inf], np.nan))
 
 
 def alpha158_feature_columns(frame: pd.DataFrame) -> tuple[str, ...]:
@@ -248,14 +250,15 @@ def build_alpha158_risk_panel(
             merged = merged[merged["trade_date"].dt.date >= start_date]
         if end_date is not None:
             merged = merged[merged["trade_date"].dt.date <= end_date]
-        merged = merged.dropna(subset=["risk_label", "future_return_5d", "future_max_drawdown_5d"]).copy()
+        merged = merged.loc[merged[["risk_label", "future_return_5d", "future_max_drawdown_5d"]].notna().all(axis=1)].reset_index(drop=True)
         if merged.empty:
             skipped.append({"symbol": symbol, "name": name, "reason": "no_labeled_feature_rows"})
             continue
+        merged = _downcast_alpha158_numeric(merged)
         rows.append(merged)
     dataset = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     if not dataset.empty:
-        dataset = dataset.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
+        dataset = _sort_alpha158_dataset(dataset)
     feature_columns = alpha158_feature_columns(dataset) if not dataset.empty else tuple()
     all_missing_features = [column for column in feature_columns if dataset[column].isna().all()] if feature_columns else []
     if all_missing_features:
@@ -303,16 +306,17 @@ def build_alpha158_return_panel(
             frame = frame[frame["trade_date"].dt.date >= start_date]
         if end_date is not None:
             frame = frame[frame["trade_date"].dt.date <= end_date]
-        frame = frame.dropna(subset=["LABEL0_raw"]).copy()
+        frame = frame.loc[frame["LABEL0_raw"].notna()].reset_index(drop=True)
         if frame.empty:
             skipped.append({"symbol": symbol, "name": name, "reason": "no_return_label_rows"})
             continue
+        frame = _downcast_alpha158_numeric(frame)
         rows.append(frame)
     dataset = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     if not dataset.empty:
-        dataset = dataset.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
-        dataset["LABEL0"] = _cross_sectional_zscore(dataset, value_column="LABEL0_raw")
-        dataset = dataset.dropna(subset=["LABEL0"]).copy()
+        dataset = _sort_alpha158_dataset(dataset)
+        dataset["LABEL0"] = _cross_sectional_zscore(dataset, value_column="LABEL0_raw").astype("float32")
+        dataset = dataset.loc[dataset["LABEL0"].notna()].reset_index(drop=True)
     feature_columns = alpha158_feature_columns(dataset) if not dataset.empty else tuple()
     all_missing_features = [column for column in feature_columns if dataset[column].isna().all()] if feature_columns else []
     if all_missing_features:
@@ -349,6 +353,30 @@ def build_alpha158_feature_audit(dataset: pd.DataFrame, *, feature_columns: tupl
             }
         )
     return pd.DataFrame(rows)
+
+
+def _downcast_alpha158_numeric(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    result = frame.copy()
+    excluded = {"trade_date", "symbol", "name", "barrier_outcome", "barrier_bin", "entry_date", "exit_date", "atr_volatility_regime"}
+    for column in result.columns:
+        if column in excluded:
+            continue
+        if pd.api.types.is_numeric_dtype(result[column]):
+            result[column] = pd.to_numeric(result[column], errors="coerce").astype("float32")
+    return result
+
+
+def _sort_alpha158_dataset(dataset: pd.DataFrame) -> pd.DataFrame:
+    if dataset.empty:
+        return dataset
+    # Full-market Alpha158 can exceed six million rows. Sorting that frame forces
+    # a large full-column copy, so keep append order for large panels; downstream
+    # code already slices by date and does not require physical sort order.
+    if len(dataset) > 1_000_000:
+        return dataset.reset_index(drop=True)
+    return dataset.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
 
 
 def _prepare_price_frame(bars: pd.DataFrame) -> pd.DataFrame:

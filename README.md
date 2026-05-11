@@ -17,6 +17,7 @@
 - [快速查看](#快速查看)
 - [每个交易日执行流程](#每个交易日执行流程)
 - [daily-screening 做什么](#daily-screening-做什么)
+- [交易执行纪律](#交易执行纪律)
 - [六个 pattern 分别在找什么](#六个-pattern-分别在找什么)
 - [模型训练与验证](#模型训练与验证)
 - [目录和输出](#目录和输出)
@@ -173,7 +174,7 @@ predict-alpha158-qlib-return
 reports/full_market_model/alpha158_qlib_return_predictions_YYYY-MM-DD.csv
 ```
 
-当前 daily-screening 在 Phase1/Phase2 硬过滤后，按 `phase4_return_score` 取 Top20 补入 watchlist。Phase4 也用于 pattern 命中股票之间的排序参考。
+当前 daily-screening 在 Phase1/Phase2 硬过滤后，按 centered risk 口径取 Top20 补入 watchlist。公式为 `Phase4 + 0.08 * P1_center + 0.12 * P2_center`，其中 `P1_center/P2_center = max(0, 100 - 2 * abs(P - 80))`。Phase4 仍是收益排序主轴，P1/P2 负责偏好接近 80 分的风险状态。
 
 ### 6. Phase5 极端风险画像
 
@@ -252,12 +253,88 @@ track_stock.xlsx
 1. 读取 Phase1、Phase2、Phase4、Phase5、Phase7、MACD、ATR 和 patterns。
 2. Phase1 排除最高风险 20%。
 3. Phase2 排除最高风险 20%。
-4. 在两个风险模型都通过的股票里，保留所有命中 pattern 的股票。
-5. 再加入 Phase4 收益排序 Top20，去重。
-6. 排序时 pattern 命中优先，其次按 Phase4 分数从高到低。
+4. pattern 命中票不再按 Phase1/Phase2 分数过滤，只要求 P4 `> 70`，并排除当日涨幅 `> 9.9%` 的股票。
+5. 再在两个风险模型都通过的股票里，按当前代码口径 `Phase4 + 0.08 * P1_center + 0.12 * P2_center` 加入 centered risk Top20，去重。Top20 补充票要求 P1 `>= 40`、P2 `>= 50`、P4 `>= 70`。
+6. 排序时 pattern 命中优先，其次按 centered risk 分、Phase4 分数从高到低；pattern 低 P1/P2 只作为仓位和止损风险提示。
 7. 每个候选记录都会带上 Phase1/2/4/5/7、pattern、MACD、ATR 信息，并同时写入 JSON 和 CSV。
 8. `reports/patterns/patterns_all_YYYY-MM-DD.csv` 也会附带 Phase1/2/4/5/7 结果和 `Phase*_score_100`，方便直接查看命中 pattern 的股票。
 9. 最后读取 `track_stock.xlsx` 的 `Sheet1`，覆盖更新中文表头的 `Sheet2`，方便每天查看手动跟踪股票的同一套指标。
+
+最新全市场 OOS 验证显示，Phase1/Phase2 的百分制分数不是“越高越好”的简单线性关系。后续更推荐把 `Phase1_score_100` 和 `Phase2_score_100` 作为风险过滤和区间偏好使用：先过滤低分，再奖励接近 80 分的风险状态。详细结论见“严格 OOS 验证 Phase1/2/4 混合分”。
+
+## 交易执行纪律
+
+本项目只负责生成候选池和风险信息，不自动下单。真正买入前必须先写入 [纪律.md](纪律.md)，明确入场逻辑、买入价、R 值、总仓位、止损和第一次止盈位置。
+
+### ATR 仓位公式
+
+设：
+
+- `E`：账户总资金。
+- `P`：计划买入价。
+- `ATR14`：买入日的 ATR14。
+- `D = R = 2 * ATR14`。
+- 单笔交易总最大亏损为 `2% * E`。
+- 单一标的最高总仓位为 `40% * E`。
+
+由于采用分批买入，在第三次加仓前，第一批和第二批仍以 `P - D` 作为最大止损。若第二批计划在回撤 `D/2` 处买入，则按计划仓位估算的有效平均止损距离为：
+
+```text
+有效平均止损距离 = (1 - 0.3) * D + 0.3 * 0.5D
+                 = 0.85D
+```
+
+因此：
+
+```text
+初始止损价 = P - D
+理论可买股数 = 0.02 * E / (0.85D)
+理论总仓位比例 = 理论可买股数 * P / E
+              = 0.02 * P / (0.85 * 2 * ATR14)
+              = 0.01 / 0.85 * P / ATR14
+
+最终总仓位比例 = min(40%, 0.0117647 / (ATR14 / P))
+```
+
+如果 watchlist 已经给出 `ATR%`，按百分数数值计算，例如 `ATR% = 4` 表示 `4%`：
+
+```text
+最终总仓位% = min(40, 117.65 / ATR%)
+```
+
+例如 `ATR% = 4`，则 `117.65 / 4 = 29.4`，计划满仓比例约为 `29.4%`。`watchlist`、盘中 `focus` 和 `track_stock.xlsx` 中的 `建议总仓位%` 使用的就是这个口径。
+
+### 分批建仓位置
+
+默认按四个位置分批执行。每一批的比例必须在 [纪律.md](纪律.md) 中提前写清，不能盘中临时改。如果没有单独计划，沿用 `30% / 30% / 20% / 20%`。
+
+1. 开仓点 `P`：首次买入。
+2. 回踩结构线或突破确认：只在原买入逻辑仍成立时加第二批。
+3. 上涨到 `P + 1R` 后的回踩：确认价格已经进入盈利方向，回踩不破结构时加第三批。
+4. 创新高：趋势延续后加第四批。
+
+### 止损移动规则
+
+1. 开始时止损为 `P - R`。
+2. 第三次加仓前，最大止损仍保持 `P - R`，不因为第二批回踩买入而下移。
+3. 价格到 `P + R` 并完成第三次加仓确认后，止损上移到 `P`，使整笔交易尽量进入不亏状态。
+4. 继续上涨后，按实时 ATR 动态移动止损：
+
+```text
+动态止损 = 持仓后的最高价 - 2.5 * 实时 ATR14
+```
+
+动态止损只允许上移，不允许下移。若价格跌破当前止损位，按纪律执行退出，不临时扩大亏损。
+
+### 止盈记录
+
+第一次止盈位置必须在买入前写入 [纪律.md](纪律.md)。默认止盈节奏为：
+
+1. 到 `P + 1.5R`，卖出 `20%-30%`。
+2. 到 `P + 3R`，再卖出 `20%-30%`。
+3. 剩余仓位按动态止损持有。
+
+没有提前写清第一次止盈位置的股票，不视为完整交易计划。
 
 ## 六个 pattern 分别在找什么
 
@@ -373,98 +450,258 @@ python -m stocks_analyzer --project-root . validate-trade-day-gate --start-date 
 
 ### 当前 Phase 验证结论
 
-截至 2026-05-08 已完成 Phase1/2/4/5/7 的独立验证和部署预测。结论只说明各 Phase 自身有无信息量，还不能替代最终组合消融回测。
+截至 2026-05-08 已完成 Phase1/2/4/5/7 的独立验证和部署预测。结论只说明各 Phase 自身有无信息量，最终组合效果以全市场严格 OOS 回测为准。
 
 | Phase | 当前结论 | 关键结果 | 当前用途 |
 | --- | --- | --- | --- |
 | Phase1 尾部风险 | 有效 | walk-forward `PR-AUC 0.151` vs 基准 `0.057`，`ROC-AUC 0.702`；高风险 decile 在所有窗口里都对应更高风险、更差回撤。过滤最高风险 20% 后，5 日未来收益略改善，最大回撤改善。 | 个股级硬风险过滤，排除最高风险 20%。 |
 | Phase2 triple-barrier 风险 | 有效，交易影响强于 Phase1 | 最优网格里过滤最高风险 20% 后，5 日未来收益改善约 `0.258%`，未来最大回撤改善约 `0.40pct`；多个网格均通过风险过滤检验。 | 个股级硬风险过滤，排除最高风险 20%；保留 CUSUM event 作为事件标记。 |
 | Phase4 Alpha158/Qlib 收益 | 有明显排序信号 | 测试集 `IC 0.0587`、`RankIC 0.0414`，正 IC 日比例约 `78%`；TopK 组合测试期 hit rate 约 `60%`。 | 通过 Phase1/2 后的收益排序核心，补入 Phase4 Top20。 |
-| Phase5 MCD crash-risk | 风险画像合理，且小样本排序结果值得继续验证 | `NEGOUTLIER` 总体比例约 `14.8%`；与 `MINRET` 相关性约 `-0.605`，与 `SIGMA` 相关性约 `0.509`；30 日小样本组合回测中 Phase5 Top 表现最好。 | 长周期极端风险提示；是否升级为排序/过滤组件，需要更长样本确认。 |
+| Phase5 MCD crash-risk | 风险画像合理 | `NEGOUTLIER` 总体比例约 `14.8%`；与 `MINRET` 相关性约 `-0.605`，与 `SIGMA` 相关性约 `0.509`。 | 长周期极端风险提示；当前不作为主硬过滤。 |
 | Phase7 交易日闸门 | 有效 | 最佳摘要 `PR-AUC 0.574` vs 基准 `0.446`；allow 日未来收益和最大回撤均优于整体。 | 日期级交易许可，`no_trade` 日只观察不积极开新仓。 |
 
-### 组合小样本回测结论
+### 严格 OOS 验证 Phase1/2/4 混合分
 
-截至 2026-05-08，已完成一次 `daily-screening` 组件小样本消融：
+严格验证使用 walk-forward：每个窗口只用测试窗口之前的数据训练 Phase1/2/4/7，再预测后续测试窗口。
 
-- 样本：30 个信号日，`2025-11-05` 到 `2025-12-16`
-- 股票池：universe 前 500 只
-- 选股数量：每日 Top20
-- 入场：次日开盘
-- 回看窗口：5/10/20/60 个交易日
-- 止损/止盈：`8% / 15%`
-- 输出：`reports/daily_screening_smoke_backtest/summary.csv`、`comparison.csv`、`trades.csv`、`daily_portfolio.csv`
+正式全市场验证建议晚上运行：
 
-下面是带止损止盈后的平均收益 `avg_barrier_return`：
+```powershell
+python -m stocks_analyzer --project-root . validate-strict-mixed-score --start-date 2015-01-01 --test-start-date 2020-01-01 --end-date 2026-04-30 --horizons 5,10,20,60 --test-window-days 60 --step-days 60 --embargo-days 60 --min-train-days 900 --output-dir reports\strict_mixed_score_validation_full --save-selected-forward-paths --path-max-horizon 60 --path-strategies mixed_top20,all90,all90_phase5_safe --lgbm-device auto --lgbm-n-jobs -1 --progress
+```
 
-| 策略 | 5日 | 10日 | 20日 | 60日 |
-| --- | ---: | ---: | ---: | ---: |
-| 随机全市场 | `-0.26%` | `-0.67%` | `0.21%` | `2.38%` |
-| Phase1 过滤 | `-0.23%` | `-0.55%` | `0.43%` | `2.81%` |
-| Phase2 过滤 | `-0.13%` | `-0.45%` | `0.42%` | `2.70%` |
-| Phase4 Top | `-0.20%` | `-0.63%` | `0.50%` | `2.40%` |
-| Phase5 Top | `0.29%` | `0.53%` | `2.50%` | `5.64%` |
-| Phase1 + Phase4 | `-0.07%` | `-0.26%` | `1.02%` | `3.39%` |
-| Phase1 + Phase2 + Phase4 | `-0.12%` | `-0.34%` | `0.88%` | `3.42%` |
-| Patterns only | `-0.53%` | `-0.97%` | `-0.03%` | `2.37%` |
-| 当前 watchlist，不含 Phase7 阻断 | `-0.07%` | `-0.43%` | `0.79%` | `3.57%` |
-| 当前 watchlist，含 Phase7 阻断 | `-0.21%` | `-0.54%` | `0.76%` | `3.48%` |
+输出包括：
+
+默认会同时比较这些关键策略：
+
+```text
+random_top20
+phase4_top20
+phase4_top20_p12_ge30
+phase4_top20_p12_ge40
+mixed_010_top20        = Phase4 + 0.1 * Phase1 + 0.1 * Phase2
+mixed_top20            = Phase4 + 0.2 * Phase1 + 0.2 * Phase2
+all90
+mixed_010_top20_phase7_allow
+mixed_top20_phase7_allow
+all90_phase7_allow
+mixed_010_top20_phase5_safe
+mixed_top20_phase5_safe
+all90_phase5_safe
+```
+
+这里的 `mixed_010_top20` 和 `mixed_top20` 是历史 OOS 验证策略名；当前每日 `watchlist` 补充 Top20 已改为上文的 centered risk 公式。
+
+```text
+reports/strict_mixed_score_validation_full/oos_panel.csv
+reports/strict_mixed_score_validation_full/strategy_trades.csv
+reports/strict_mixed_score_validation_full/strategy_summary.csv
+reports/strict_mixed_score_validation_full/score_decile_report.csv
+reports/strict_mixed_score_validation_full/benchmark_comparison.csv
+reports/strict_mixed_score_validation_full/selected_forward_paths.parquet
+```
+
+该命令支持断点续跑。同一个 `--output-dir` 下会复用：
+
+```text
+cache/tail_risk_panel.parquet
+cache/barrier_risk_panel.parquet
+cache/alpha158_return_panel.parquet
+cache/trade_day_features.parquet
+cache/oos_window_001.parquet
+cache/oos_window_002.parquet
+...
+```
+
+如果中途停止，重新运行同一条命令即可继续；已经完成的窗口会显示 `reused cached window`，不会重新训练。只有在需要强制重算全部 panel 和窗口时，才加 `--no-cache`。
+
+跑完严格 OOS 后，可以直接优化止盈止损和动态止盈：
+
+```powershell
+python -m stocks_analyzer --project-root . optimize-exit-rules --strict-dir reports\strict_mixed_score_validation_full --strategies mixed_top20,all90,all90_phase5_safe --horizons 5,10,20,60 --output-dir reports\strict_mixed_score_validation_full\exit_rule_optimization --progress
+```
+
+输出：
+
+```text
+reports/strict_mixed_score_validation_full/exit_rule_optimization/exit_rule_summary.csv
+reports/strict_mixed_score_validation_full/exit_rule_optimization/exit_rule_by_year.csv
+reports/strict_mixed_score_validation_full/exit_rule_optimization/exit_rule_by_split.csv
+reports/strict_mixed_score_validation_full/exit_rule_optimization/exit_rule_selection_report.csv
+reports/strict_mixed_score_validation_full/exit_rule_optimization/recommended_exit_rules.md
+```
+
+`optimize-exit-rules` 会同时比较固定止损止盈、保本止盈、移动止盈和时间止损。默认用 2020-2023 作为出场规则选参区间，2024-2026 作为验证区间，避免直接在全样本上挑最优参数造成二次过拟合。
+
+#### 全市场严格 OOS 持有期结果
+
+最近一次全市场严格 OOS 验证目录：`reports/strict_mixed_score_validation_full`。该结果不设 `--limit`，使用 2015-01-01 起训练、2020-01-01 至 2026-04-30 滚动测试，`test_window_days=60`、`step_days=60`、`embargo_days=60`。下表是原始持有期结果，未套用后续止盈止损优化规则。
+
+字段含义：
+
+- `收益`：买入后固定持有到对应 horizon 的收益，显示为均值 / 中位数。
+- `最大盈利`：每笔交易持有窗口内最大浮盈，显示为均值 / 中位数。
+- `最大回撤`：每笔交易持有窗口内最大回撤，显示为均值 / 中位数。
+- `盈亏比`：均值口径为盈利交易平均收益 / 亏损交易平均亏损绝对值；中位数口径为盈利交易收益中位数 / 亏损交易亏损中位数绝对值。
+- `胜率`：均值口径为全样本胜率；中位数口径为按 `signal_date` 分组后的日胜率中位数。
+
+5 日持有：
+
+| 策略 | 交易数 | 收益 均值/中位数 | 最大盈利 均值/中位数 | 最大回撤 均值/中位数 | 盈亏比 均值/中位数 | 胜率 均值/日中位数 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `all90` | 8,701 | 0.89% / 0.26% | 6.11% / 4.27% | -4.60% / -3.45% | 1.29 / 1.21 | 51.49% / 50.00% |
+| `all90_phase5_safe` | 7,293 | 0.91% / 0.26% | 6.14% / 4.26% | -4.61% / -3.45% | 1.30 / 1.21 | 51.53% / 50.00% |
+| `mixed_010_top20` | 30,600 | 0.80% / 0.18% | 5.72% / 3.88% | -4.27% / -3.28% | 1.31 / 1.13 | 50.96% / 50.00% |
+| `mixed_010_top20_phase5_safe` | 30,600 | 0.83% / 0.19% | 5.71% / 3.87% | -4.25% / -3.26% | 1.32 / 1.14 | 50.98% / 50.00% |
+| `mixed_top20` | 30,600 | 0.80% / 0.16% | 5.66% / 3.83% | -4.22% / -3.25% | 1.32 / 1.14 | 50.82% / 50.00% |
+| `mixed_top20_phase5_safe` | 30,600 | 0.81% / 0.20% | 5.63% / 3.82% | -4.21% / -3.24% | 1.31 / 1.13 | 51.08% / 50.00% |
+| `phase4_top20` | 30,600 | 0.28% / -0.48% | 7.74% / 5.28% | -6.28% / -4.79% | 1.23 / 1.06 | 46.50% / 45.00% |
+| `random_top20` | 30,600 | 0.39% / 0.00% | 4.89% / 3.11% | -3.95% / -2.87% | 1.22 / 1.05 | 48.81% / 50.00% |
+
+10 日持有：
+
+| 策略 | 交易数 | 收益 均值/中位数 | 最大盈利 均值/中位数 | 最大回撤 均值/中位数 | 盈亏比 均值/中位数 | 胜率 均值/日中位数 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `all90` | 8,673 | 1.30% / 0.31% | 9.45% / 6.43% | -6.71% / -5.16% | 1.33 / 1.19 | 51.20% / 50.00% |
+| `all90_phase5_safe` | 7,269 | 1.28% / 0.30% | 9.41% / 6.42% | -6.71% / -5.16% | 1.33 / 1.22 | 51.15% / 50.00% |
+| `mixed_010_top20` | 30,500 | 1.26% / 0.37% | 8.79% / 6.00% | -6.15% / -4.76% | 1.32 / 1.13 | 51.71% / 50.00% |
+| `mixed_010_top20_phase5_safe` | 30,500 | 1.25% / 0.40% | 8.74% / 5.97% | -6.12% / -4.74% | 1.32 / 1.12 | 51.80% / 50.00% |
+| `mixed_top20` | 30,500 | 1.25% / 0.36% | 8.70% / 5.89% | -6.10% / -4.72% | 1.33 / 1.14 | 51.54% / 50.00% |
+| `mixed_top20_phase5_safe` | 30,500 | 1.23% / 0.41% | 8.65% / 5.89% | -6.08% / -4.71% | 1.31 / 1.13 | 51.81% / 50.00% |
+| `phase4_top20` | 30,500 | 0.42% / -0.92% | 11.26% / 7.56% | -8.56% / -6.81% | 1.28 / 1.05 | 45.82% / 45.00% |
+| `random_top20` | 30,498 | 0.62% / 0.00% | 7.32% / 4.68% | -5.63% / -4.26% | 1.24 / 1.03 | 49.16% / 50.00% |
+
+20 日持有：
+
+| 策略 | 交易数 | 收益 均值/中位数 | 最大盈利 均值/中位数 | 最大回撤 均值/中位数 | 盈亏比 均值/中位数 | 胜率 均值/日中位数 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `all90` | 8,654 | 1.91% / 0.14% | 14.15% / 9.80% | -9.61% / -7.66% | 1.42 / 1.16 | 50.23% / 50.00% |
+| `all90_phase5_safe` | 7,253 | 1.89% / 0.19% | 14.06% / 9.82% | -9.58% / -7.63% | 1.41 / 1.18 | 50.38% / 50.00% |
+| `mixed_010_top20` | 30,300 | 2.20% / 0.71% | 13.45% / 9.38% | -8.70% / -6.92% | 1.41 / 1.13 | 52.40% / 50.00% |
+| `mixed_010_top20_phase5_safe` | 30,300 | 2.18% / 0.69% | 13.32% / 9.32% | -8.65% / -6.87% | 1.41 / 1.12 | 52.25% / 50.00% |
+| `mixed_top20` | 30,300 | 2.16% / 0.66% | 13.35% / 9.23% | -8.67% / -6.87% | 1.41 / 1.12 | 52.23% / 50.00% |
+| `mixed_top20_phase5_safe` | 30,300 | 2.19% / 0.69% | 13.23% / 9.23% | -8.60% / -6.82% | 1.41 / 1.13 | 52.34% / 50.00% |
+| `phase4_top20` | 30,300 | 0.91% / -1.55% | 16.10% / 10.77% | -11.45% / -9.64% | 1.37 / 1.07 | 45.44% / 45.00% |
+| `random_top20` | 30,300 | 1.26% / 0.00% | 11.07% / 7.12% | -7.86% / -6.17% | 1.34 / 1.08 | 49.42% / 50.00% |
+
+60 日持有：
+
+| 策略 | 交易数 | 收益 均值/中位数 | 最大盈利 均值/中位数 | 最大回撤 均值/中位数 | 盈亏比 均值/中位数 | 胜率 均值/日中位数 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `all90` | 8,557 | 5.83% / 0.28% | 28.60% / 20.00% | -15.04% / -13.24% | 1.86 / 1.27 | 50.41% / 50.00% |
+| `all90_phase5_safe` | 7,162 | 5.75% / 0.24% | 28.48% / 20.22% | -15.08% / -13.31% | 1.86 / 1.30 | 50.32% / 50.00% |
+| `mixed_010_top20` | 29,500 | 5.84% / 0.85% | 27.06% / 18.94% | -14.37% / -12.19% | 1.84 / 1.33 | 51.75% / 50.00% |
+| `mixed_010_top20_phase5_safe` | 29,500 | 5.88% / 0.88% | 26.91% / 18.77% | -14.30% / -12.17% | 1.85 / 1.34 | 51.81% / 50.00% |
+| `mixed_top20` | 29,500 | 5.68% / 0.85% | 26.87% / 18.90% | -14.33% / -12.18% | 1.82 / 1.30 | 51.75% / 50.00% |
+| `mixed_top20_phase5_safe` | 29,500 | 5.80% / 0.89% | 26.77% / 18.72% | -14.23% / -12.10% | 1.84 / 1.32 | 51.92% / 50.00% |
+| `phase4_top20` | 29,500 | 3.09% / -2.68% | 28.39% / 18.96% | -17.53% / -15.86% | 1.67 / 1.18 | 44.78% / 40.00% |
+| `random_top20` | 29,500 | 3.81% / 0.14% | 22.00% / 14.23% | -12.73% / -10.52% | 1.66 / 1.23 | 50.15% / 50.00% |
+
+当前从全市场持有期结果得到的直接判断：
+
+- `mixed_top20` 与 `mixed_010_top20` 是覆盖率最高、稳定性最好的主线；5/10/20/60 日均值都明显强于 `random_top20`，中位数也整体保持正收益。
+- `all90` 单笔质量不差，5-10 日均值和盈亏比较强，但交易数只有 `mixed_top20` 的约 24%-29%。结合后续分段分析，`all90` 更适合作为强信号标签，而不应机械优先。
+- `phase4_top20` 单独使用不适合做主策略。它的平均最大盈利高，但 5/10/20/60 日收益中位数均为负，且胜率低、最大回撤明显更大，说明 Phase4 必须搭配 Phase1/2 风险分。
+- `phase5_safe` 对 `mixed_top20` 的改善很小，对 60 日略有帮助；更适合作为辅助风险画像，而不是当前主硬过滤。
+
+#### Phase1/Phase2 分数不是越高越好
+
+`Phase1_score_100` 和 `Phase2_score_100` 是买入友好的百分制分数：分数越高，表示模型认为对应风险越低。但全市场 OOS 分段结果显示，风险分不是简单的线性加分项。
+
+在 `Phase4_score_100 >= 70` 的样本中：
+
+- `Phase1_score_100 < 40` 明显较差，20 日收益约 `1.43%`、60 日收益约 `3.63%`，胜率和回撤都弱于中高分段。
+- `Phase1_score_100` 的较优区间集中在 `70-90`。`90-100` 并不稳定优于 `70-90`，60 日胜率反而略弱，最大回撤也更大。
+- `Phase2_score_100 < 40` 同样较差，20 日收益约 `1.20%`、60 日收益约 `3.25%`。
+- `Phase2_score_100` 在 `70-90` 区间收益、胜率和回撤更均衡。`90-100` 虽然 60 日均值更高，但回撤也更大。
+
+当前解释是：P1/P2 过低说明风险暴露过高，应排除；但过高可能代表波动较低或收益弹性不足，并不一定是最好的买点状态。因此，后续候选池更适合采用“硬过滤 + 接近 80 分加分”的方式，而不是无脑追求 P1/P2 都大于 90。
+
+建议候选池排序口径：
+
+```text
+硬过滤：
+  Phase1_score_100 >= 40
+  Phase2_score_100 >= 50
+  Phase4_score_100 >= 70
+
+P1_center = max(0, 100 - 2 * abs(Phase1_score_100 - 80))
+P2_center = max(0, 100 - 2 * abs(Phase2_score_100 - 80))
+
+centered_risk_score = Phase4_score_100 + 0.08 * P1_center + 0.12 * P2_center
+```
+
+这里 `P1_center/P2_center` 在 80 分时最高，离 80 越远加分越少。Phase4 仍是收益排序主轴，P1/P2 负责控制风险状态。
+
+#### Centered Risk Top20 复验
+
+在不重新训练模型的前提下，已基于 `reports/strict_mixed_score_validation_full/oos_panel.csv` 复验新的 `centered_risk_top20` 排序。输出文件：
+
+```text
+reports/strict_mixed_score_validation_full/centered_risk_strategy_backtest/centered_risk_comparison_summary.csv
+reports/strict_mixed_score_validation_full/centered_risk_strategy_backtest/centered_risk_top20_trades.csv
+```
+
+核心对比：
+
+| 周期 | 策略 | 交易数 | 收益 均值/中位数 | 胜率 | 最大回撤均值 | 空仓日比例 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 5日 | `all90` | 8,701 | 0.89% / 0.26% | 51.49% | -4.60% | 7.70% |
+| 5日 | `mixed_010_top20` | 30,600 | 0.80% / 0.18% | 50.96% | -4.27% | 0.13% |
+| 5日 | `mixed_top20` | 30,600 | 0.80% / 0.16% | 50.82% | -4.22% | 0.13% |
+| 5日 | `centered_risk_top20` | 30,600 | 0.81% / 0.24% | 51.26% | -4.15% | 0.00% |
+| 10日 | `all90` | 8,673 | 1.30% / 0.31% | 51.20% | -6.71% | 8.03% |
+| 10日 | `mixed_010_top20` | 30,500 | 1.26% / 0.37% | 51.71% | -6.15% | 0.46% |
+| 10日 | `mixed_top20` | 30,500 | 1.25% / 0.36% | 51.54% | -6.10% | 0.46% |
+| 10日 | `centered_risk_top20` | 30,500 | 1.27% / 0.47% | 52.13% | -5.96% | 0.00% |
+| 20日 | `all90` | 8,654 | 1.91% / 0.14% | 50.23% | -9.61% | 8.55% |
+| 20日 | `mixed_010_top20` | 30,300 | 2.20% / 0.71% | 52.40% | -8.70% | 1.11% |
+| 20日 | `mixed_top20` | 30,300 | 2.16% / 0.66% | 52.23% | -8.67% | 1.11% |
+| 20日 | `centered_risk_top20` | 30,300 | 2.28% / 0.87% | 52.40% | -8.45% | 0.00% |
+| 60日 | `all90` | 8,557 | 5.83% / 0.28% | 50.41% | -15.04% | 10.84% |
+| 60日 | `mixed_010_top20` | 29,500 | 5.84% / 0.85% | 51.75% | -14.37% | 3.72% |
+| 60日 | `mixed_top20` | 29,500 | 5.68% / 0.85% | 51.75% | -14.33% | 3.72% |
+| 60日 | `centered_risk_top20` | 29,500 | 5.69% / 1.08% | 50.39% | -13.96% | 0.00% |
+
+结论：
+
+- `centered_risk_top20` 更适合作为每日候选池排序方法。它在 5/10/20 日的收益中位数、胜率和最大回撤均优于或不弱于 `mixed_010_top20` / `mixed_top20`。
+- 20 日是最明显的改善区间：`centered_risk_top20` 收益 `2.28% / 0.87%`，高于 `mixed_010_top20` 的 `2.20% / 0.71%`，同时最大回撤更小。
+- 60 日均值略低于 `mixed_010_top20`，但中位数更高、最大回撤更小，说明更适合压缩到每日 Top20 的候选池，而不是追求长持均值最大。
+- `all90` 不应再作为最高优先级规则。它仍可作为“极高分强信号”标记，但 P1/P2 都大于 90 并不比 70-90 的中高风险分段更稳。
+
+#### Phase5 Pass/Fail 拆分验证
+
+为检查 Phase5 是否适合作为硬过滤，已在全市场严格 OOS 的逐笔交易上按 `phase5_score_100 >= 40` 拆分为 `pass` 和 `fail` 两组。输出文件：
+
+```text
+reports/strict_mixed_score_validation_full/phase5_pass_fail_comparison.csv
+```
+
+注意：这里拆分的是非 `*_phase5_safe` 策略，避免重复过滤口径。
+
+主要结果：
+
+| 策略 | 周期 | pass 收益 | fail 收益 | 差值 | pass 胜率 | fail 胜率 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `mixed_top20` | 5日 | 0.79% | 0.71% | +0.08% | 50.69% | 50.13% |
+| `mixed_top20` | 10日 | 1.22% | 1.26% | -0.04% | 51.49% | 51.49% |
+| `mixed_top20` | 20日 | 2.14% | 2.55% | -0.41% | 52.20% | 53.96% |
+| `mixed_top20` | 60日 | 5.71% | 8.25% | -2.54% | 51.61% | 58.55% |
+| `all90` | 5日 | 0.91% | 0.48% | +0.44% | 51.53% | 49.46% |
+| `all90` | 20日 | 1.89% | 2.40% | -0.51% | 50.38% | 50.27% |
+| `all90` | 60日 | 5.75% | 9.72% | -3.97% | 50.32% | 56.41% |
+| `phase4_top20` | 60日 | 3.27% | 2.25% | +1.02% | 44.99% | 43.37% |
+| `random_top20` | 60日 | 3.88% | 4.64% | -0.77% | 50.12% | 53.56% |
 
 当前判断：
 
-- 5/10 日窗口整体偏弱，大多数策略都是负收益；20/60 日开始转正。
-- 当前 watchlist 在 60 日窗口为 `3.57%`，高于随机全市场 `2.38%`，说明组合有初步增益。
-- Phase1/Phase2 的主要价值仍是降低回撤。60 日平均最大回撤从随机的 `-8.12%` 改善到 Phase1 `-7.55%`、Phase2 `-7.63%`。
-- Phase4 单独排序有收益信号，但回撤更大。60 日平均最大回撤为 `-10.08%`，不适合裸用。
-- Phase5 Top 在这段样本里明显最好：60 日 `avg_barrier_return = 5.64%`，固定持有收益 `17.02%`，平均最大回撤 `-6.87%`。这可能是有效信号，也可能是该时间段偏差，必须扩大样本确认后再调整 daily-screening。
-- Phase7 在该样本中只阻断 `1/30` 个交易日，加入后略微降低结果，暂时不能证明增益。
+- 对 `mixed_top20`，Phase5 pass 只在 5 日略好，10 日基本无差异，20/60 日反而弱于 fail。
+- 对 `all90`，Phase5 pass 在 5 日有帮助，但 20/60 日不如 fail。
+- 对 `phase4_top20`，Phase5 pass 对 60 日略有改善，但 `phase4_top20` 本身胜率和中位收益较差，不适合作为主线依据。
+- `fail` 样本数量明显少，不能直接解释为“低 Phase5 更好”；但当前阈值 `phase5_score_100 >= 40` 没有稳定增益。
 
-当前还缺的结果：
-
-- 新版 `pattern 1-6` 在 2016-2026 全量区间的独立回测。
-- 更长时间跨度的 `daily-screening` 组合消融，尤其要验证 Phase5 Top 是否稳定。
-- 单独 pattern 1-6 的分组消融，以及 pattern 与 Phase1/2/4/5 的组合关系。
-- 加入涨跌停、无法成交、交易成本、仓位去重后的更接近实盘口径回测。
-
-因此当前判断是：模型侧 Phase1/2/4/7 已有独立价值；当前 watchlist 相对随机有初步增益；Phase5 的排序效果值得优先复核；pattern 和最终组合仍需要更长样本消融回测确认。
-
-### 回测 pattern
-
-```powershell
-python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --save-forward-prices --forward-days 40
-python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --1 --save-forward-prices --forward-days 40
-python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --2 --save-forward-prices --forward-days 40
-python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --3 --save-forward-prices --forward-days 40
-python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --4 --save-forward-prices --forward-days 40
-python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --5 --save-forward-prices --forward-days 40
-python -m stocks_analyzer --project-root . backtest-patterns --start-date 2016-01-01 --date 2026-04-30 --6 --save-forward-prices --forward-days 40
-```
-
-组合消融回测命令清单见：
-
-```text
-docs/superpowers/specs/2026-05-07-daily-screening-component-backtest-commands.md
-```
-
-小样本快速验证可以直接运行：
-
-```powershell
-python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2026-01-05 --end-date 2026-02-06 --horizons 5,10,20,60 --top-n 5 --max-signal-days 2 --symbol-limit 80 --output-dir reports\daily_screening_smoke_backtest_test --progress
-```
-
-已跑通的 30 信号日小样本命令：
-
-```powershell
-python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2025-01-01 --end-date 2025-12-16 --horizons 5,10,20,60 --top-n 20 --max-signal-days 30 --symbol-limit 500 --output-dir reports\daily_screening_smoke_backtest --progress
-```
-
-更大样本可继续扩大到 60 个信号日，但运行时间会明显增加：
-
-```powershell
-python -m stocks_analyzer --project-root . backtest-daily-screening-components --start-date 2025-01-01 --end-date 2026-02-06 --horizons 5,10,20,60 --top-n 20 --max-signal-days 60 --symbol-limit 500 --output-dir reports\daily_screening_smoke_backtest --progress
-```
-
-输出为 `trades.csv`、`daily_portfolio.csv`、`summary.csv`、`comparison.csv`。
+因此 Phase5 当前继续保留为风险画像和备注字段，不作为 `daily-screening` 的硬过滤条件。
 
 ## 目录和输出
 

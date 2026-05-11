@@ -216,6 +216,8 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
     assert output.loc[0, "phase1_score_100"] == 100.0
     assert output.loc[0, "phase2_score_100"] == 100.0
     assert output.loc[0, "phase4_score_100"] == 100.0
+    assert output.loc[0, "intraday_focus_score"] == 112.0
+    assert 0 < output.loc[0, "建议总仓位%"] <= 40.0
     assert output.loc[0, "phase1_rank"] == 1
     assert output.loc[0, "phase2_rank"] == 1
     assert output.loc[0, "phase4_rank"] == 1
@@ -235,6 +237,7 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
     assert "name_y" not in output.columns
     top20 = pd.read_csv(result.top20_path)
     assert top20.loc[0, "symbol"] == 600001
+    assert 0 < top20.loc[0, "建议总仓位%"] <= 40.0
     focus_payload = json.loads((tmp_path / "data" / "intraday" / "focus_top20.json").read_text(encoding="utf-8"))
     assert focus_payload["symbols"] == ["600001"]
 
@@ -290,7 +293,7 @@ def test_intraday_screening_prioritizes_previous_focus_before_remaining(monkeypa
                     "feature_trade_date": "2026-05-08",
                     "symbol": symbol,
                     "name": f"测试{symbol}",
-                    score_column: 0.9 if symbol == "600002" else 0.1,
+                        score_column: 0.1 if score_column != "return_score" and symbol == "600001" else 0.9,
                     "is_cusum_event": 0,
                     "model_name": score_column,
                     "model_version": "v1",
@@ -337,7 +340,7 @@ def test_intraday_screening_prioritizes_previous_focus_before_remaining(monkeypa
     focus_output = pd.read_csv(result.focus_output_path)
     assert focus_output["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
     output = pd.read_csv(result.output_path)
-    assert output["symbol"].astype(str).str.zfill(6).tolist() == ["600002", "600001"]
+    assert output["symbol"].astype(str).str.zfill(6).tolist() == ["600001", "600002"]
     top20 = pd.read_csv(result.top20_path)
     assert top20["symbol"].astype(str).str.zfill(6).tolist() == ["600001"]
     focus_payload = json.loads((tmp_path / "data" / "intraday" / "focus_top20.json").read_text(encoding="utf-8"))
@@ -375,12 +378,39 @@ def test_select_top20_focus_excludes_weak_scores_and_intraday_gain_above_8_perce
                 "phase4_score_100": 100.0,
                 "intraday_pct_change": 1.0,
             },
+            {
+                "symbol": "600005",
+                "phase1_score_100": 41.0,
+                "phase2_score_100": 41.0,
+                "phase4_score_100": 90.0,
+                "intraday_pct_change": 1.5,
+            },
+            {
+                "symbol": "600006",
+                "phase1_score_100": 95.0,
+                "phase2_score_100": 95.0,
+                "phase4_score_100": 80.0,
+                "intraday_pct_change": 1.0,
+            },
+            {
+                "symbol": "600007",
+                "phase1_score_100": 5.0,
+                "phase2_score_100": 5.0,
+                "phase4_score_100": 85.0,
+                "intraday_pct_change": 1.0,
+                "prev_pattern_match": True,
+            },
         ]
     )
 
     top20 = _select_top20_focus(frame)
 
-    assert top20["symbol"].tolist() == ["600003", "600001"]
+    assert top20["symbol"].tolist() == ["600004", "600003", "600006", "600007"]
+    scores = dict(zip(top20["symbol"], top20["intraday_focus_score"]))
+    assert scores["600004"] == 109.04
+    assert scores["600003"] == 98.4
+    assert scores["600006"] == 94.0
+    assert scores["600007"] == 85.0
 
 
 def test_intraday_screening_appends_track_stock_to_top20(monkeypatch) -> None:
@@ -437,7 +467,7 @@ def test_intraday_screening_appends_track_stock_to_top20(monkeypatch) -> None:
                     "feature_trade_date": "2026-05-08",
                     "symbol": symbol,
                     "name": f"测试{symbol}",
-                    score_column: 0.1 if symbol == "600001" else 0.9,
+                    score_column: 0.9 if (score_column == "return_score" or symbol == "600002") else 0.1,
                     "is_cusum_event": 0,
                     "model_name": score_column,
                     "model_version": "v1",
@@ -477,8 +507,10 @@ def test_intraday_screening_appends_track_stock_to_top20(monkeypatch) -> None:
 
     top20 = pd.read_csv(result.top20_path, dtype={"symbol": str})
     assert top20["symbol"].astype(str).str.zfill(6).tolist() == ["600001", "600002"]
+    assert top20["建议总仓位%"].notna().all()
     assert top20.loc[top20["symbol"].eq("600002"), "intraday_selection_source"].iloc[0] == "track_stock"
     assert bool(top20.loc[top20["symbol"].eq("600002"), "track_stock"].iloc[0]) is True
     assert result.track_stock_path is not None
     track = pd.read_csv(result.track_stock_path, dtype={"symbol": str})
     assert track["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
+    assert track["建议总仓位%"].notna().all()

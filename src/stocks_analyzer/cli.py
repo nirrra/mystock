@@ -19,6 +19,10 @@ from .daily_screening_backtest import (
     format_backtest_summary,
 )
 from .data_sources import create_data_provider
+from .exit_rule_optimization import (
+    DEFAULT_EXIT_STRATEGIES,
+    optimize_exit_rules,
+)
 from .full_market_crash import validate_mcd_crash_risk
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
 from .full_market_return import (
@@ -59,6 +63,15 @@ from .phase_display import PHASE_DISPLAY_COLUMNS, append_daily_phase_display_col
 from .reporting import format_multi_pattern_summary, format_report
 from .screener import Screener, parse_as_of
 from .storage import DailyBarsReadError, Storage
+from .strict_mixed_score_validation import (
+    DEFAULT_STRICT_MIXED_STRATEGIES,
+    format_strict_strategy_summary,
+    validate_strict_mixed_score,
+)
+from .staged_position_backtest import (
+    DEFAULT_STAGED_STRATEGIES,
+    backtest_staged_position_strategy,
+)
 from .strategies import STRATEGY_NAMES
 from .synthetic_market import build_synthetic_market_index
 from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, update_track_stock_workbook
@@ -307,6 +320,18 @@ def main() -> None:
 
     if args.command == "backtest-daily-screening-components":
         _run_backtest_daily_screening_components(storage, project_root, config, args)
+        return
+
+    if args.command == "validate-strict-mixed-score":
+        _run_validate_strict_mixed_score(storage, project_root, args)
+        return
+
+    if args.command == "optimize-exit-rules":
+        _run_optimize_exit_rules(project_root, args)
+        return
+
+    if args.command == "backtest-staged-position-strategy":
+        _run_backtest_staged_position_strategy(storage, project_root, args)
         return
 
     if args.command == "daily-screening":
@@ -644,6 +669,75 @@ def _add_backtest_parser(subparsers: argparse._SubParsersAction) -> None:
     backtest.add_argument("--output-dir", default="reports/daily_screening_smoke_backtest", help="输出目录")
     backtest.add_argument("--no-cache", action="store_true", help="不复用 output-dir/cache 下的历史预测缓存")
     backtest.add_argument("--progress", action="store_true", help="显示日期级进度")
+
+    strict = subparsers.add_parser("validate-strict-mixed-score", help="严格 OOS 验证 Phase1/2/4 混合评分")
+    strict.add_argument("--start-date", default="2015-01-01", help="训练历史起点，格式 YYYY-MM-DD")
+    strict.add_argument("--test-start-date", default="2020-01-01", help="OOS 测试起点，格式 YYYY-MM-DD")
+    strict.add_argument("--end-date", default="2026-04-30", help="OOS 测试终点，格式 YYYY-MM-DD")
+    strict.add_argument("--horizons", default="5,10,20,60", help="持有交易日窗口，逗号分隔")
+    strict.add_argument("--strategies", default=",".join(DEFAULT_STRICT_MIXED_STRATEGIES), help="策略组合，逗号分隔")
+    strict.add_argument("--test-window-days", type=int, default=60)
+    strict.add_argument("--step-days", type=int, default=60)
+    strict.add_argument("--embargo-days", type=int, default=60)
+    strict.add_argument("--min-train-days", type=int, default=900)
+    strict.add_argument("--max-windows", type=int, default=None)
+    strict.add_argument("--limit", type=int, default=None, help="仅使用 universe 前 N 只股票")
+    strict.add_argument("--top-n", type=int, default=20)
+    strict.add_argument("--phase1-min-score", type=float, default=40.0)
+    strict.add_argument("--phase2-min-score", type=float, default=40.0)
+    strict.add_argument("--all90-min-score", type=float, default=90.0)
+    strict.add_argument("--phase5-safe-min-score", type=float, default=40.0)
+    strict.add_argument("--stop-loss-pct", type=float, default=0.08)
+    strict.add_argument("--take-profit-pct", type=float, default=0.15)
+    strict.add_argument("--phase1-model-name", default="logistic_regression")
+    strict.add_argument("--phase2-model-name", default="lightgbm_classifier")
+    strict.add_argument("--phase7-model-name", default="naive_bayes")
+    strict.add_argument("--min-training-rows", type=int, default=200)
+    strict.add_argument("--min-stock-count", type=int, default=500)
+    strict.add_argument("--output-dir", default="reports/strict_mixed_score_validation")
+    strict.add_argument("--no-phase5", action="store_true", help="不附加 Phase5 年度风险画像")
+    strict.add_argument("--no-phase7", action="store_true", help="不训练/验证 Phase7 交易日闸门")
+    strict.add_argument("--no-atr", action="store_true", help="不附加 ATR")
+    strict.add_argument("--no-cache", action="store_true", help="不复用 panel 缓存")
+    strict.add_argument("--progress", action="store_true", help="显示窗口进度")
+    strict.add_argument("--save-selected-forward-paths", action="store_true", help="保存入选交易的逐日 forward path，用于后续止盈止损优化")
+    strict.add_argument("--path-max-horizon", type=int, default=None, help="forward path 最大保存交易日，默认取 horizons 最大值")
+    strict.add_argument("--path-output-format", choices=("parquet", "csv"), default="parquet")
+    strict.add_argument("--path-strategies", default=None, help="仅保存这些策略的 forward path，逗号分隔；默认保存全部策略")
+    strict.add_argument("--lgbm-device", choices=("cpu", "gpu", "cuda", "auto"), default="cpu", help="LightGBM 设备；auto 会尝试 cuda 后回退 CPU")
+    strict.add_argument("--lgbm-n-jobs", type=int, default=1, help="LightGBM/部分 sklearn 模型线程数；CPU 加速可用 -1")
+    strict.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
+    strict.add_argument("--lgbm-gpu-device-id", type=int, default=None)
+
+    exit_rules = subparsers.add_parser("optimize-exit-rules", help="基于严格 OOS 入选交易路径优化止盈止损规则")
+    exit_rules.add_argument("--strict-dir", default="reports/strict_mixed_score_validation", help="validate-strict-mixed-score 输出目录")
+    exit_rules.add_argument("--strategies", default=",".join(DEFAULT_EXIT_STRATEGIES), help="策略，逗号分隔")
+    exit_rules.add_argument("--horizons", default="5,10,20,60", help="持仓窗口，逗号分隔")
+    exit_rules.add_argument("--stop-grid", default="0.06,0.08,0.10")
+    exit_rules.add_argument("--take-grid", default="0.08,0.10,0.12,0.15,0.20")
+    exit_rules.add_argument("--trailing-grid", default="0.06,0.08,0.10")
+    exit_rules.add_argument("--breakeven-trigger-grid", default="0.08,0.10")
+    exit_rules.add_argument("--time-stop-days-grid", default="5,10")
+    exit_rules.add_argument("--time-stop-min-return-grid", default="0.02,0.03")
+    exit_rules.add_argument("--tune-end-date", default="2023-12-29", help="选参区间结束日期")
+    exit_rules.add_argument("--test-start-date", default="2024-01-01", help="验证区间开始日期")
+    exit_rules.add_argument("--output-dir", default=None, help="输出目录，默认 strict-dir/exit_rule_optimization")
+    exit_rules.add_argument("--save-trades", action="store_true", help="额外保存每条规则的逐笔模拟结果，文件会很大")
+    exit_rules.add_argument("--progress", action="store_true", help="显示路径级进度和 ETA")
+
+    staged = subparsers.add_parser("backtest-staged-position-strategy", help="回测分批建仓 + 移动止盈止损策略")
+    staged.add_argument("--strict-dir", default="reports/strict_mixed_score_validation_full_exit_rule_compare", help="包含 selected_forward_paths 的严格 OOS 目录")
+    staged.add_argument("--strategies", default=",".join(DEFAULT_STAGED_STRATEGIES), help="策略，逗号分隔")
+    staged.add_argument("--horizons", default="60", help="最大持有交易日窗口，逗号分隔")
+    staged.add_argument("--account-risk-pct", type=float, default=0.02, help="单笔账户最大风险，例如 0.02")
+    staged.add_argument("--max-position-pct", type=float, default=0.40, help="单一标的最大账户仓位，例如 0.40")
+    staged.add_argument("--batch-weights", default="0.30,0.30,0.20,0.20", help="四批仓位权重")
+    staged.add_argument("--atr-mult", type=float, default=2.0, help="初始 R 的 ATR 倍数")
+    staged.add_argument("--trailing-atr-mult", type=float, default=2.5, help="趋势仓 ATR 移动止损倍数")
+    staged.add_argument("--tune-end-date", default="2023-12-29", help="选参区间结束日期")
+    staged.add_argument("--test-start-date", default="2024-01-01", help="验证区间开始日期")
+    staged.add_argument("--output-dir", default=None, help="输出目录，默认 strict-dir/staged_position_backtest")
+    staged.add_argument("--progress", action="store_true", help="显示进度和 ETA")
 
 
 def _run_audit_full_market(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
@@ -1015,6 +1109,171 @@ def _run_backtest_daily_screening_components(
     print(f"Saved daily portfolio: {result.daily_portfolio_path}")
     print(f"Saved summary: {result.summary_path}")
     print(f"Saved comparison: {result.comparison_path}")
+    print(f"Saved benchmark: {result.benchmark_path}")
+    print(f"Saved benchmark comparison: {result.benchmark_comparison_path}")
+
+
+def _run_validate_strict_mixed_score(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    if not output_dir.is_absolute():
+        output_dir = project_root / output_dir
+    result = validate_strict_mixed_score(
+        storage=storage,
+        project_root=project_root,
+        start_date=_parse_required_date(args.start_date),
+        test_start_date=_parse_required_date(args.test_start_date),
+        end_date=_parse_required_date(args.end_date),
+        horizons=tuple(_parse_int_list(args.horizons)),
+        test_window_days=args.test_window_days,
+        step_days=args.step_days,
+        embargo_days=args.embargo_days,
+        min_train_days=args.min_train_days,
+        limit=args.limit,
+        max_windows=args.max_windows,
+        output_dir=output_dir,
+        strategies=tuple(_parse_str_list(args.strategies)),
+        top_n=args.top_n,
+        phase1_min_score=args.phase1_min_score,
+        phase2_min_score=args.phase2_min_score,
+        all90_min_score=args.all90_min_score,
+        phase5_safe_min_score=args.phase5_safe_min_score,
+        stop_loss_pct=args.stop_loss_pct,
+        take_profit_pct=args.take_profit_pct,
+        phase1_model_name=args.phase1_model_name,
+        phase2_model_name=args.phase2_model_name,
+        phase7_model_name=args.phase7_model_name,
+        min_training_rows=args.min_training_rows,
+        min_stock_count=args.min_stock_count,
+        include_phase5=not args.no_phase5,
+        include_phase7=not args.no_phase7,
+        include_atr=not args.no_atr,
+        use_cache=not args.no_cache,
+        progress=args.progress,
+        save_selected_forward_paths=args.save_selected_forward_paths,
+        path_max_horizon=args.path_max_horizon,
+        path_output_format=args.path_output_format,
+        path_strategies=tuple(_parse_str_list(args.path_strategies)) if args.path_strategies else None,
+        lgbm_device=args.lgbm_device,
+        lgbm_n_jobs=args.lgbm_n_jobs,
+        lgbm_gpu_platform_id=args.lgbm_gpu_platform_id,
+        lgbm_gpu_device_id=args.lgbm_gpu_device_id,
+    )
+    print("Strict mixed-score OOS validation complete.")
+    print(format_strict_strategy_summary(result.strategy_summary))
+    print(f"Saved windows: {result.windows_path}")
+    print(f"Saved OOS panel: {result.oos_panel_path}")
+    print(f"Saved trades: {result.strategy_trades_path}")
+    print(f"Saved summary: {result.strategy_summary_path}")
+    print(f"Saved deciles: {result.score_deciles_path}")
+    print(f"Saved benchmark: {result.benchmark_path}")
+    print(f"Saved benchmark comparison: {result.benchmark_comparison_path}")
+    if result.selected_forward_paths_path is not None:
+        print(f"Saved selected forward paths: {result.selected_forward_paths_path}")
+
+
+def _run_optimize_exit_rules(project_root: Path, args: argparse.Namespace) -> None:
+    strict_dir = Path(args.strict_dir)
+    if not strict_dir.is_absolute():
+        strict_dir = project_root / strict_dir
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    if output_dir is not None and not output_dir.is_absolute():
+        output_dir = project_root / output_dir
+    result = optimize_exit_rules(
+        strict_dir=strict_dir,
+        strategies=tuple(_parse_str_list(args.strategies)),
+        horizons=tuple(_parse_int_list(args.horizons)),
+        output_dir=output_dir,
+        stop_grid=tuple(_parse_float_list(args.stop_grid)),
+        take_grid=tuple(_parse_float_list(args.take_grid)),
+        trailing_grid=tuple(_parse_float_list(args.trailing_grid)),
+        breakeven_trigger_grid=tuple(_parse_float_list(args.breakeven_trigger_grid)),
+        time_stop_days_grid=tuple(_parse_int_list(args.time_stop_days_grid)),
+        time_stop_min_return_grid=tuple(_parse_float_list(args.time_stop_min_return_grid)),
+        tune_end_date=_parse_required_date(args.tune_end_date),
+        test_start_date=_parse_required_date(args.test_start_date),
+        save_trades=args.save_trades,
+        progress=args.progress,
+    )
+    print("Exit-rule optimization complete.")
+    if not result.selection_report.empty:
+        columns = [
+            "strategy",
+            "horizon",
+            "rule_id",
+            "test_avg_return",
+            "test_avg_daily_return",
+            "test_win_rate",
+            "test_payoff_ratio",
+            "test_avg_R",
+            "test_avg_max_drawdown",
+            "test_avg_holding_days",
+        ]
+        available = [column for column in columns if column in result.selection_report.columns]
+        print(result.selection_report.loc[:, available].to_string(index=False))
+    else:
+        print(result.summary.head(40).to_string(index=False) if not result.summary.empty else "No exit-rule summary rows.")
+    print(f"Saved summary: {result.summary_path}")
+    print(f"Saved by-year: {result.by_year_path}")
+    print(f"Saved by-split: {result.by_split_path}")
+    print(f"Saved selection report: {result.selection_report_path}")
+    print(f"Saved recommendations: {result.recommendations_path}")
+    if result.trades_path is not None:
+        print(f"Saved rule trades: {result.trades_path}")
+
+
+def _run_backtest_staged_position_strategy(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
+    strict_dir = Path(args.strict_dir)
+    if not strict_dir.is_absolute():
+        strict_dir = project_root / strict_dir
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    if output_dir is not None and not output_dir.is_absolute():
+        output_dir = project_root / output_dir
+    batch_weights = tuple(_parse_float_list(args.batch_weights))
+    if len(batch_weights) != 4:
+        raise ValueError("--batch-weights must contain exactly four comma-separated values.")
+    result = backtest_staged_position_strategy(
+        storage=storage,
+        strict_dir=strict_dir,
+        strategies=tuple(_parse_str_list(args.strategies)),
+        horizons=tuple(_parse_int_list(args.horizons)),
+        output_dir=output_dir,
+        account_risk_pct=args.account_risk_pct,
+        max_position_pct=args.max_position_pct,
+        batch_weights=batch_weights,  # type: ignore[arg-type]
+        atr_mult=args.atr_mult,
+        trailing_atr_mult=args.trailing_atr_mult,
+        tune_end_date=_parse_required_date(args.tune_end_date),
+        test_start_date=_parse_required_date(args.test_start_date),
+        progress=args.progress,
+    )
+    print("Staged-position backtest complete.")
+    if not result.summary.empty:
+        columns = [
+            "strategy",
+            "horizon",
+            "trade_count",
+            "avg_position_return",
+            "median_position_return",
+            "win_rate",
+            "payoff_ratio",
+            "avg_max_position_profit",
+            "avg_max_position_drawdown",
+            "avg_holding_days",
+            "avg_batches_filled",
+            "second_batch_rate",
+            "third_batch_rate",
+            "fourth_batch_rate",
+            "take1_rate",
+            "take2_rate",
+        ]
+        print(result.summary.loc[:, [column for column in columns if column in result.summary.columns]].to_string(index=False))
+    else:
+        print("No staged-position summary rows.")
+    print(f"Saved trades: {result.trades_path}")
+    print(f"Saved orders: {result.orders_path}")
+    print(f"Saved summary: {result.summary_path}")
+    print(f"Saved by-year: {result.by_year_path}")
+    print(f"Saved by-split: {result.by_split_path}")
 
 
 def _run_update(

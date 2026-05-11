@@ -18,10 +18,11 @@ from .full_market_trade_day import (
     load_trade_day_gate_model_artifact,
     trade_day_gate_prediction_path,
 )
-from .phase_display import add_phase5_score_100
+from .phase_display import add_phase5_score_100, score_series_100
 from .screener import Screener
 from .storage import DailyBarsReadError, Storage
 from .strategies import STRATEGY_NAMES
+from .synthetic_market import build_synthetic_market_index, synthetic_market_path
 
 
 DEFAULT_BACKTEST_STRATEGIES = (
@@ -29,6 +30,8 @@ DEFAULT_BACKTEST_STRATEGIES = (
     "phase1_filter_only",
     "phase2_filter_only",
     "phase4_top",
+    "phase1_phase2_phase4_mixed_top20",
+    "phase1_phase2_phase4_all90",
     "phase5_group_only",
     "phase7_gate_only",
     "phase1_filter_phase4_top",
@@ -58,11 +61,15 @@ class DailyScreeningBacktestResult:
     daily_portfolio: pd.DataFrame
     summary: pd.DataFrame
     comparison: pd.DataFrame
+    benchmark: pd.DataFrame
+    benchmark_comparison: pd.DataFrame
     output_dir: Path
     trades_path: Path
     daily_portfolio_path: Path
     summary_path: Path
     comparison_path: Path
+    benchmark_path: Path
+    benchmark_comparison_path: Path
 
 
 def backtest_daily_screening_components(
@@ -93,6 +100,7 @@ def backtest_daily_screening_components(
     unknown = sorted(set(strategies) - set(DEFAULT_BACKTEST_STRATEGIES))
     if unknown:
         raise ValueError(f"Unsupported backtest strategies: {unknown}")
+    needs = _strategy_component_needs(strategies)
 
     output_root = output_dir or project_root / "reports" / "daily_screening_smoke_backtest"
     output_root.mkdir(parents=True, exist_ok=True)
@@ -111,14 +119,18 @@ def backtest_daily_screening_components(
     if not signal_dates:
         raise RuntimeError("No signal dates have enough forward data for the requested backtest.")
 
-    phase5 = _load_phase5_measures(project_root)
-    phase7_predictions = _prepare_phase7_predictions(
-        storage=storage,
-        project_root=project_root,
-        signal_dates=signal_dates,
-        cache_dir=cache_dir,
-        use_cache=use_cache,
-        progress=progress,
+    phase5 = _load_phase5_measures(project_root) if needs["phase5"] else pd.DataFrame()
+    phase7_predictions = (
+        _prepare_phase7_predictions(
+            storage=storage,
+            project_root=project_root,
+            signal_dates=signal_dates,
+            cache_dir=cache_dir,
+            use_cache=use_cache,
+            progress=progress,
+        )
+        if needs["phase7"]
+        else {}
     )
     price_cache: dict[str, pd.DataFrame] = {}
     trade_parts: list[pd.DataFrame] = []
@@ -140,6 +152,9 @@ def backtest_daily_screening_components(
             symbol_limit=symbol_limit,
             phase1_filter_rate=phase1_filter_rate,
             phase2_filter_rate=phase2_filter_rate,
+            needs_patterns=needs["patterns"],
+            needs_phase5=needs["phase5"],
+            needs_phase7=needs["phase7"],
             use_cache=use_cache,
         )
         for strategy in strategies:
@@ -185,25 +200,42 @@ def backtest_daily_screening_components(
         signal_days=len(signal_dates),
     )
     comparison = _build_comparison(summary)
+    benchmark = _build_market_benchmark(
+        storage=storage,
+        project_root=project_root,
+        output_dir=output_root,
+        signal_dates=signal_dates,
+        horizons=horizons,
+        symbol_limit=symbol_limit,
+    )
+    benchmark_comparison = _build_benchmark_comparison(summary=summary, benchmark=benchmark)
 
     trades_path = output_root / "trades.csv"
     daily_path = output_root / "daily_portfolio.csv"
     summary_path = output_root / "summary.csv"
     comparison_path = output_root / "comparison.csv"
+    benchmark_path = output_root / "benchmark.csv"
+    benchmark_comparison_path = output_root / "benchmark_comparison.csv"
     trades.to_csv(trades_path, index=False, encoding="utf-8-sig")
     daily_portfolio.to_csv(daily_path, index=False, encoding="utf-8-sig")
     summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
     comparison.to_csv(comparison_path, index=False, encoding="utf-8-sig")
+    benchmark.to_csv(benchmark_path, index=False, encoding="utf-8-sig")
+    benchmark_comparison.to_csv(benchmark_comparison_path, index=False, encoding="utf-8-sig")
     return DailyScreeningBacktestResult(
         trades=trades,
         daily_portfolio=daily_portfolio,
         summary=summary,
         comparison=comparison,
+        benchmark=benchmark,
+        benchmark_comparison=benchmark_comparison,
         output_dir=output_root,
         trades_path=trades_path,
         daily_portfolio_path=daily_path,
         summary_path=summary_path,
         comparison_path=comparison_path,
+        benchmark_path=benchmark_path,
+        benchmark_comparison_path=benchmark_comparison_path,
     )
 
 
@@ -215,6 +247,18 @@ class _DailySnapshots:
     phase5: pd.DataFrame
     patterns: pd.DataFrame
     phase7_permission: str
+
+
+def _strategy_component_needs(strategies: tuple[str, ...]) -> dict[str, bool]:
+    strategy_set = set(strategies)
+    needs_patterns = any(strategy.startswith("patterns") for strategy in strategy_set) or bool(
+        strategy_set & {"current_watchlist_without_phase7", "current_watchlist_with_phase7"}
+    )
+    return {
+        "patterns": needs_patterns,
+        "phase5": "phase5_group_only" in strategy_set,
+        "phase7": bool(strategy_set & {"phase7_gate_only", "current_watchlist_with_phase7"}),
+    }
 
 
 def _load_backtest_universe(storage: Storage, *, symbol_limit: int | None) -> pd.DataFrame:
@@ -271,24 +315,31 @@ def _load_daily_snapshots(
     symbol_limit: int | None,
     phase1_filter_rate: float,
     phase2_filter_rate: float,
+    needs_patterns: bool,
+    needs_phase5: bool,
+    needs_phase7: bool,
     use_cache: bool,
 ) -> _DailySnapshots:
     phase1 = _load_or_predict_phase1(storage, project_root, signal_date, cache_dir, symbol_limit=symbol_limit, use_cache=use_cache)
     phase2 = _load_or_predict_phase2(storage, project_root, signal_date, cache_dir, symbol_limit=symbol_limit, use_cache=use_cache)
     phase4 = _load_or_predict_phase4(storage, project_root, signal_date, cache_dir, symbol_limit=symbol_limit, use_cache=use_cache)
-    phase7 = phase7_predictions.get(signal_date, pd.DataFrame())
-    patterns = _load_or_scan_patterns(
-        storage=storage,
-        config=config,
-        universe=universe,
-        signal_date=signal_date,
-        cache_dir=cache_dir,
-        use_cache=use_cache,
+    phase7 = phase7_predictions.get(signal_date, pd.DataFrame()) if needs_phase7 else pd.DataFrame()
+    patterns = (
+        _load_or_scan_patterns(
+            storage=storage,
+            config=config,
+            universe=universe,
+            signal_date=signal_date,
+            cache_dir=cache_dir,
+            use_cache=use_cache,
+        )
+        if needs_patterns
+        else pd.DataFrame(columns=["symbol", "pattern_id"])
     )
     phase1 = _prepare_phase1(phase1, filter_rate=phase1_filter_rate)
     phase2 = _prepare_phase2(phase2, filter_rate=phase2_filter_rate)
     phase4 = _prepare_phase4(phase4)
-    phase5 = _prepare_phase5_for_date(phase5_measures, signal_date)
+    phase5 = _prepare_phase5_for_date(phase5_measures, signal_date) if needs_phase5 else pd.DataFrame(columns=["symbol", "phase5_score_100"])
     permission = "unknown"
     if not phase7.empty and "trade_permission" in phase7.columns:
         permission = str(phase7.iloc[-1]["trade_permission"]).strip().lower()
@@ -459,16 +510,17 @@ def _load_phase5_measures(project_root: Path) -> pd.DataFrame:
 
 def _prepare_phase1(frame: pd.DataFrame, *, filter_rate: float) -> pd.DataFrame:
     if frame.empty or "symbol" not in frame.columns or "risk_score" not in frame.columns:
-        return pd.DataFrame(columns=["symbol", "name", "phase1_risk_score", "phase1_pass"])
+        return pd.DataFrame(columns=["symbol", "name", "phase1_risk_score", "phase1_score_100", "phase1_pass"])
     result = frame.copy()
     result["symbol"] = result["symbol"].astype(str).str.zfill(6)
     result["phase1_risk_score"] = pd.to_numeric(result["risk_score"], errors="coerce")
     result = result.dropna(subset=["phase1_risk_score"]).sort_values(["phase1_risk_score", "symbol"], ascending=[False, True])
+    result["phase1_score_100"] = score_series_100(result["phase1_risk_score"], higher_is_better=False)
     removed = max(1, int(math.ceil(len(result) * float(filter_rate)))) if len(result) else 0
     result["phase1_pass"] = True
     if removed:
         result.loc[result.index[:removed], "phase1_pass"] = False
-    keep = ["symbol", "phase1_risk_score", "phase1_pass"]
+    keep = ["symbol", "phase1_risk_score", "phase1_score_100", "phase1_pass"]
     if "name" in result.columns:
         keep.insert(1, "name")
     return result.loc[:, keep].drop_duplicates("symbol", keep="first")
@@ -476,18 +528,19 @@ def _prepare_phase1(frame: pd.DataFrame, *, filter_rate: float) -> pd.DataFrame:
 
 def _prepare_phase2(frame: pd.DataFrame, *, filter_rate: float) -> pd.DataFrame:
     if frame.empty or "symbol" not in frame.columns or "barrier_risk_score" not in frame.columns:
-        return pd.DataFrame(columns=["symbol", "phase2_barrier_risk_score", "phase2_pass"])
+        return pd.DataFrame(columns=["symbol", "phase2_barrier_risk_score", "phase2_score_100", "phase2_pass"])
     result = frame.copy()
     result["symbol"] = result["symbol"].astype(str).str.zfill(6)
     result["phase2_barrier_risk_score"] = pd.to_numeric(result["barrier_risk_score"], errors="coerce")
     result = result.dropna(subset=["phase2_barrier_risk_score"]).sort_values(
         ["phase2_barrier_risk_score", "symbol"], ascending=[False, True]
     )
+    result["phase2_score_100"] = score_series_100(result["phase2_barrier_risk_score"], higher_is_better=False)
     removed = max(1, int(math.ceil(len(result) * float(filter_rate)))) if len(result) else 0
     result["phase2_pass"] = True
     if removed:
         result.loc[result.index[:removed], "phase2_pass"] = False
-    keep = ["symbol", "phase2_barrier_risk_score", "phase2_pass"]
+    keep = ["symbol", "phase2_barrier_risk_score", "phase2_score_100", "phase2_pass"]
     if "is_cusum_event" in result.columns:
         result["phase2_is_cusum_event"] = result["is_cusum_event"]
         keep.append("phase2_is_cusum_event")
@@ -496,13 +549,14 @@ def _prepare_phase2(frame: pd.DataFrame, *, filter_rate: float) -> pd.DataFrame:
 
 def _prepare_phase4(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or "symbol" not in frame.columns or "return_score" not in frame.columns:
-        return pd.DataFrame(columns=["symbol", "phase4_return_score"])
+        return pd.DataFrame(columns=["symbol", "phase4_return_score", "phase4_score_100"])
     result = frame.copy()
     result["symbol"] = result["symbol"].astype(str).str.zfill(6)
     result["phase4_return_score"] = pd.to_numeric(result["return_score"], errors="coerce")
     result = result.dropna(subset=["phase4_return_score"]).sort_values(["phase4_return_score", "symbol"], ascending=[False, True])
     result["phase4_rank"] = range(1, len(result) + 1)
-    keep = ["symbol", "phase4_return_score", "phase4_rank"]
+    result["phase4_score_100"] = score_series_100(result["phase4_return_score"], higher_is_better=True)
+    keep = ["symbol", "phase4_return_score", "phase4_score_100", "phase4_rank"]
     if "name" in result.columns:
         result["phase4_name"] = result["name"]
         keep.append("phase4_name")
@@ -562,6 +616,10 @@ def _select_strategy_candidates(
         selected = _sort_random(base[_mask_true(base, "phase2_pass")], signal_date)
     elif strategy == "phase4_top":
         selected = base.sort_values(["phase4_return_score", "symbol"], ascending=[False, True], na_position="last")
+    elif strategy == "phase1_phase2_phase4_mixed_top20":
+        selected = _mixed_score_top(base)
+    elif strategy == "phase1_phase2_phase4_all90":
+        selected = _mixed_score_top(base, min_phase_score=90.0, min_phase4_score=90.0)
     elif strategy == "phase5_group_only":
         selected = base.dropna(subset=["phase5_score_100"]).sort_values(
             ["phase5_score_100", "symbol"], ascending=[False, True], na_position="last"
@@ -596,7 +654,10 @@ def _select_strategy_candidates(
             selected = _current_watchlist_like(base, phase4_top_n=phase4_top_n)
     else:  # pragma: no cover - guarded by caller
         raise ValueError(f"Unsupported strategy: {strategy}")
-    selected = selected.head(max(int(top_n), 0)).copy()
+    if strategy != "phase1_phase2_phase4_all90":
+        selected = selected.head(max(int(top_n), 0)).copy()
+    else:
+        selected = selected.copy()
     if selected.empty:
         return selected
     selected["strategy"] = strategy
@@ -621,6 +682,7 @@ def _base_daily_frame(universe: pd.DataFrame, snapshots: _DailySnapshots, signal
     patterns = _pattern_summary(snapshots.patterns)
     base = base.merge(patterns, on="symbol", how="left")
     base["pattern_match"] = base["pattern_ids"].notna()
+    base = _add_mixed_score(base)
     base["random_score"] = base["symbol"].map(lambda symbol: _stable_random_score(signal_date, symbol))
     return base
 
@@ -647,15 +709,50 @@ def _current_watchlist_like(base: pd.DataFrame, *, phase4_top_n: int) -> pd.Data
     passed = base[_mask_true(base, "phase1_pass") & _mask_true(base, "phase2_pass")].copy()
     pattern_part = passed[_mask_true(passed, "pattern_match")].copy()
     pattern_part["_source_order"] = 0
-    phase4_part = passed.sort_values(["phase4_return_score", "symbol"], ascending=[False, True], na_position="last").head(
-        max(int(phase4_top_n), 0)
-    )
+    phase4_part = _mixed_score_top(passed).head(max(int(phase4_top_n), 0))
     phase4_part = phase4_part[~phase4_part["symbol"].isin(pattern_part["symbol"])].copy()
     phase4_part["_source_order"] = 1
     combined = pd.concat([pattern_part, phase4_part], ignore_index=True) if not phase4_part.empty else pattern_part
     if combined.empty:
         return combined
-    return combined.sort_values(["_source_order", "phase4_return_score", "symbol"], ascending=[True, False, True], na_position="last")
+    return combined.sort_values(
+        ["_source_order", "mixed_score", "phase4_score_100", "symbol"],
+        ascending=[True, False, False, True],
+        na_position="last",
+    )
+
+
+def _add_mixed_score(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    required = {"phase1_score_100", "phase2_score_100", "phase4_score_100"}
+    if not required.issubset(result.columns):
+        result["mixed_score"] = pd.NA
+        return result
+    phase1 = pd.to_numeric(result["phase1_score_100"], errors="coerce")
+    phase2 = pd.to_numeric(result["phase2_score_100"], errors="coerce")
+    phase4 = pd.to_numeric(result["phase4_score_100"], errors="coerce")
+    result["mixed_score"] = (phase4 + 0.2 * phase1 + 0.2 * phase2).round(4)
+    return result
+
+
+def _mixed_score_top(base: pd.DataFrame, *, min_phase_score: float = 40.0, min_phase4_score: float | None = None) -> pd.DataFrame:
+    if base.empty:
+        return base.copy()
+    result = _add_mixed_score(base)
+    if not {"phase1_score_100", "phase2_score_100", "mixed_score"}.issubset(result.columns):
+        return result.iloc[0:0].copy()
+    phase1 = pd.to_numeric(result["phase1_score_100"], errors="coerce")
+    phase2 = pd.to_numeric(result["phase2_score_100"], errors="coerce")
+    keep = phase1.ge(float(min_phase_score)) & phase2.ge(float(min_phase_score)) & result["mixed_score"].notna()
+    if min_phase4_score is not None:
+        phase4 = pd.to_numeric(result.get("phase4_score_100"), errors="coerce")
+        keep = keep & phase4.ge(float(min_phase4_score))
+    result = result[keep].copy()
+    return result.sort_values(
+        ["mixed_score", "phase4_score_100", "phase1_score_100", "phase2_score_100", "symbol"],
+        ascending=[False, False, False, False, True],
+        na_position="last",
+    )
 
 
 def _sort_random(frame: pd.DataFrame, signal_date: date) -> pd.DataFrame:
@@ -715,12 +812,16 @@ def _simulate_candidate_trades(
                 "pattern_ids": candidate.get("pattern_ids", ""),
                 "trade_permission": candidate.get("trade_permission", ""),
                 "phase1_risk_score": candidate.get("phase1_risk_score"),
+                "phase1_score_100": candidate.get("phase1_score_100"),
                 "phase1_pass": candidate.get("phase1_pass"),
                 "phase2_barrier_risk_score": candidate.get("phase2_barrier_risk_score"),
+                "phase2_score_100": candidate.get("phase2_score_100"),
                 "phase2_pass": candidate.get("phase2_pass"),
                 "phase2_is_cusum_event": candidate.get("phase2_is_cusum_event"),
                 "phase4_return_score": candidate.get("phase4_return_score"),
+                "phase4_score_100": candidate.get("phase4_score_100"),
                 "phase4_rank": candidate.get("phase4_rank"),
+                "mixed_score": candidate.get("mixed_score"),
                 "phase5_score_100": candidate.get("phase5_score_100"),
             }
             row.update(outcome)
@@ -894,12 +995,195 @@ def _build_comparison(summary: pd.DataFrame) -> pd.DataFrame:
         "avg_raw_return",
         "raw_win_rate",
         "avg_max_drawdown",
+        "avg_max_profit",
         "stop_loss_rate",
         "take_profit_rate",
         "portfolio_compound_barrier_return",
     ]
     available = [column for column in columns if column in summary.columns]
     return summary.loc[:, available].sort_values(["horizon", "avg_barrier_return"], ascending=[True, False])
+
+
+def _build_market_benchmark(
+    *,
+    storage: Storage,
+    project_root: Path,
+    output_dir: Path,
+    signal_dates: list[date],
+    horizons: tuple[int, ...],
+    symbol_limit: int | None,
+) -> pd.DataFrame:
+    if not signal_dates or not horizons:
+        return pd.DataFrame()
+    market = _load_or_build_synthetic_market_for_benchmark(
+        storage=storage,
+        project_root=project_root,
+        output_dir=output_dir,
+        signal_dates=signal_dates,
+        max_horizon=max(horizons),
+        symbol_limit=symbol_limit,
+    )
+    if market.empty:
+        return pd.DataFrame()
+    return _simulate_market_benchmark_from_frame(
+        market,
+        signal_dates=signal_dates,
+        horizons=horizons,
+        value_column="synthetic_equal_weight_index",
+    )
+
+
+def _load_or_build_synthetic_market_for_benchmark(
+    *,
+    storage: Storage,
+    project_root: Path,
+    output_dir: Path,
+    signal_dates: list[date],
+    max_horizon: int,
+    symbol_limit: int | None,
+) -> pd.DataFrame:
+    min_stock_count = 500 if symbol_limit is None or symbol_limit >= 500 else max(1, int(symbol_limit * 0.8))
+    path = synthetic_market_path(project_root)
+    if symbol_limit is None and path.exists():
+        market = pd.read_csv(path)
+        if _synthetic_market_covers_benchmark(
+            market,
+            signal_dates=signal_dates,
+            max_horizon=max_horizon,
+            min_stock_count=min_stock_count,
+        ):
+            return market
+    output_path = output_dir / "synthetic_market_benchmark.csv"
+    result = build_synthetic_market_index(
+        storage=storage,
+        project_root=project_root,
+        start_date=min(signal_dates).isoformat(),
+        end_date=None,
+        limit=symbol_limit,
+        min_stock_count=min_stock_count,
+        output=output_path,
+    )
+    return result.frame
+
+
+def _synthetic_market_covers_benchmark(
+    market: pd.DataFrame,
+    *,
+    signal_dates: list[date],
+    max_horizon: int,
+    min_stock_count: int,
+) -> bool:
+    if market.empty or "trade_date" not in market.columns or "synthetic_equal_weight_index" not in market.columns:
+        return False
+    frame = market.copy()
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce")
+    if "stock_count" in frame.columns:
+        frame["stock_count"] = pd.to_numeric(frame["stock_count"], errors="coerce")
+        frame = frame[frame["stock_count"].ge(int(min_stock_count))].copy()
+    dates = frame["trade_date"].dropna().dt.date.sort_values().tolist()
+    if not dates:
+        return False
+    date_series = pd.Series(dates)
+    for signal_date in signal_dates:
+        if int(date_series.gt(signal_date).sum()) < int(max_horizon):
+            return False
+    return True
+
+
+def _simulate_market_benchmark_from_frame(
+    market: pd.DataFrame,
+    *,
+    signal_dates: list[date],
+    horizons: tuple[int, ...],
+    value_column: str,
+) -> pd.DataFrame:
+    if market.empty or "trade_date" not in market.columns or value_column not in market.columns:
+        return pd.DataFrame()
+    frame = market.copy()
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce")
+    frame[value_column] = pd.to_numeric(frame[value_column], errors="coerce")
+    frame = frame.dropna(subset=["trade_date", value_column]).sort_values("trade_date").reset_index(drop=True)
+    rows: list[dict[str, object]] = []
+    for signal_date in signal_dates:
+        future_all = frame[frame["trade_date"].dt.date.gt(signal_date)].copy()
+        for horizon in horizons:
+            future = future_all.head(int(horizon)).copy()
+            if len(future) < int(horizon):
+                continue
+            values = pd.to_numeric(future[value_column], errors="coerce").dropna()
+            if values.empty:
+                continue
+            entry = float(values.iloc[0])
+            if not math.isfinite(entry) or entry <= 0:
+                continue
+            exit_value = float(values.iloc[-1])
+            rows.append(
+                {
+                    "benchmark": value_column,
+                    "signal_date": signal_date.isoformat(),
+                    "horizon": int(horizon),
+                    "entry_date": pd.Timestamp(future.iloc[0]["trade_date"]).date().isoformat(),
+                    "entry_value": entry,
+                    "exit_date": pd.Timestamp(future.iloc[-1]["trade_date"]).date().isoformat(),
+                    "exit_value": exit_value,
+                    "raw_return": exit_value / entry - 1.0,
+                    "max_profit": float(values.max()) / entry - 1.0,
+                    "max_drawdown": float(values.min()) / entry - 1.0,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _build_benchmark_comparison(*, summary: pd.DataFrame, benchmark: pd.DataFrame) -> pd.DataFrame:
+    if summary.empty or benchmark.empty:
+        return pd.DataFrame()
+    benchmark_summary = _summarize_benchmark(benchmark)
+    if benchmark_summary.empty:
+        return pd.DataFrame()
+    keep = [
+        "strategy",
+        "horizon",
+        "trade_count",
+        "avg_raw_return",
+        "avg_max_profit",
+        "avg_max_drawdown",
+        "raw_win_rate",
+        "portfolio_compound_barrier_return",
+        "portfolio_max_drawdown",
+    ]
+    left = summary.loc[:, [column for column in keep if column in summary.columns]].copy()
+    merged = left.merge(benchmark_summary, on="horizon", how="left")
+    if "avg_raw_return" in merged.columns and "benchmark_avg_raw_return" in merged.columns:
+        merged["excess_avg_raw_return"] = merged["avg_raw_return"] - merged["benchmark_avg_raw_return"]
+    if "avg_max_profit" in merged.columns and "benchmark_avg_max_profit" in merged.columns:
+        merged["excess_avg_max_profit"] = merged["avg_max_profit"] - merged["benchmark_avg_max_profit"]
+    if "avg_max_drawdown" in merged.columns and "benchmark_avg_max_drawdown" in merged.columns:
+        merged["drawdown_advantage"] = merged["avg_max_drawdown"] - merged["benchmark_avg_max_drawdown"]
+    return merged.sort_values("horizon").reset_index(drop=True)
+
+
+def _summarize_benchmark(benchmark: pd.DataFrame) -> pd.DataFrame:
+    if benchmark.empty:
+        return pd.DataFrame()
+    grouped = benchmark.groupby("horizon", dropna=False)
+    summary = grouped.agg(
+        benchmark_days=("signal_date", "nunique"),
+        benchmark_avg_raw_return=("raw_return", "mean"),
+        benchmark_raw_win_rate=("raw_return", lambda values: float(pd.to_numeric(values, errors="coerce").gt(0).mean())),
+        benchmark_avg_max_profit=("max_profit", "mean"),
+        benchmark_avg_max_drawdown=("max_drawdown", "mean"),
+    ).reset_index()
+    compound_rows: list[dict[str, object]] = []
+    for horizon, subset in benchmark.groupby("horizon", dropna=False):
+        daily = subset.sort_values("signal_date")
+        compound_rows.append(
+            {
+                "horizon": horizon,
+                "benchmark_compound_return": _compound_return(daily, "raw_return"),
+                "benchmark_portfolio_max_drawdown": _portfolio_max_drawdown(daily, "raw_return"),
+            }
+        )
+    return summary.merge(pd.DataFrame(compound_rows), on="horizon", how="left")
 
 
 def _mean_or_nan(frame: pd.DataFrame, column: str) -> float:
@@ -978,6 +1262,7 @@ def format_backtest_summary(summary: pd.DataFrame, *, top_n: int = 80) -> str:
         "avg_raw_return",
         "raw_win_rate",
         "avg_max_drawdown",
+        "avg_max_profit",
         "stop_loss_rate",
         "take_profit_rate",
         "no_candidate_day_rate",
