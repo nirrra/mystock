@@ -35,3 +35,4 @@ reports/staged_position_backtest*/
 reports/intraday_channel_smoke_*.json
 .env.local
 command.txt
+持仓.md

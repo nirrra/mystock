@@ -291,6 +291,41 @@ def build_barrier_prediction_feature_frame(
     return features
 
 
+def build_barrier_prediction_latest_feature_frame(
+    bars: pd.DataFrame,
+    *,
+    symbol: str,
+    name: str = "",
+    volatility_lookback: int = 100,
+    cusum_threshold: float | None = None,
+    cusum_threshold_mult: float = 1.0,
+    feature_lookback_bars: int = 61,
+) -> pd.DataFrame:
+    if volatility_lookback <= 1:
+        raise ValueError("volatility_lookback must be greater than 1.")
+    frame = _prepare_price_frame(bars)
+    if frame.empty:
+        return pd.DataFrame()
+
+    feature_tail_length = max(int(feature_lookback_bars), 61)
+    features = _base_feature_frame(frame.tail(feature_tail_length).copy(), symbol=symbol, name=name)
+    if features.empty:
+        return pd.DataFrame()
+    latest = features.tail(1).reset_index(drop=True)
+
+    close = frame["close"].where(frame["close"].gt(0))
+    log_return = np.log(close / close.shift(1)).replace([np.inf, -np.inf], np.nan)
+    daily_vol = log_return.ewm(span=volatility_lookback, min_periods=volatility_lookback).std()
+    threshold = float(cusum_threshold) if cusum_threshold is not None else float(daily_vol.dropna().mean() * cusum_threshold_mult)
+    latest["mlfin_daily_vol"] = float(daily_vol.iloc[-1]) if len(daily_vol) and pd.notna(daily_vol.iloc[-1]) else np.nan
+    latest["mlfin_cusum_threshold"] = threshold if np.isfinite(threshold) and threshold > 0 else np.nan
+    latest["is_cusum_event"] = 0
+    if np.isfinite(threshold) and threshold > 0:
+        event_indices = _symmetric_cusum_events(log_return, threshold=threshold)
+        latest["is_cusum_event"] = int(bool(event_indices and event_indices[-1] == len(frame) - 1))
+    return latest
+
+
 def build_tail_risk_frame(
     bars: pd.DataFrame,
     *,
@@ -340,6 +375,23 @@ def build_tail_risk_frame(
     result["future_max_drawdown_5d"] = _future_min_return(close, horizon=5)
     result["future_return_5d"] = close.shift(-5).div(close).sub(1.0)
     return result
+
+
+def build_tail_risk_latest_feature_frame(
+    bars: pd.DataFrame,
+    *,
+    symbol: str,
+    name: str = "",
+    feature_lookback_bars: int = 61,
+) -> pd.DataFrame:
+    frame = _prepare_price_frame(bars)
+    if frame.empty:
+        return pd.DataFrame()
+    feature_tail_length = max(int(feature_lookback_bars), 61)
+    features = _base_feature_frame(frame.tail(feature_tail_length).copy(), symbol=symbol, name=name)
+    if features.empty:
+        return pd.DataFrame()
+    return features.tail(1).reset_index(drop=True)
 
 
 def build_tail_risk_panel(

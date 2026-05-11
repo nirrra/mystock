@@ -35,9 +35,19 @@ def recommended_position_percent(
 
 
 def recommended_position_percent_from_mapping(row: Mapping[str, Any] | pd.Series) -> float | None:
-    atr_pct = _first_present(row, ("atr_pct_14", "ATR%", "atr_pct", "ATR_pct"))
     atr = _first_present(row, ("atr_14", "ATR14", "atr"))
     price = _first_present(row, ("close", "atr_close", "收盘价", "price"))
+    atr_value = _safe_float(atr)
+    price_value = _safe_float(price)
+    if atr_value is not None and price_value is not None and price_value > 0:
+        return recommended_position_percent(atr=atr_value, price=price_value)
+
+    atr_pct_column, atr_pct = _first_present_with_column(row, ("atr_pct_14", "ATR%", "atr_pct", "ATR_pct"))
+    if atr_pct_column == "ATR%":
+        atr_pct_value = _safe_float(atr_pct)
+        if atr_pct_value is None:
+            return None
+        return recommended_position_percent(atr_pct=atr_pct_value / 100.0)
     return recommended_position_percent(atr_pct=atr_pct, atr=atr, price=price)
 
 
@@ -50,13 +60,21 @@ def add_recommended_position_percent(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _first_present(row: Mapping[str, Any] | pd.Series, columns: tuple[str, ...]) -> object:
+    _column, value = _first_present_with_column(row, columns)
+    return value
+
+
+def _first_present_with_column(
+    row: Mapping[str, Any] | pd.Series,
+    columns: tuple[str, ...],
+) -> tuple[str | None, object]:
     for column in columns:
         if column not in row:
             continue
         value = row[column]
         if not _is_missing(value):
-            return value
-    return None
+            return column, value
+    return None, None
 
 
 def _normalize_atr_ratio(value: object) -> float | None:

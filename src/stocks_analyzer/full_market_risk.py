@@ -38,8 +38,10 @@ except Exception:  # pragma: no cover - depends on optional local package.
 from .full_market_labels import (
     BARRIER_RISK_FEATURE_COLUMNS,
     TAIL_RISK_FEATURE_COLUMNS,
+    build_barrier_prediction_latest_feature_frame,
     build_barrier_prediction_feature_frame,
     build_barrier_risk_panel,
+    build_tail_risk_latest_feature_frame,
     build_tail_risk_frame,
     build_tail_risk_panel,
     summarize_barrier_label_distribution,
@@ -289,6 +291,10 @@ def predict_tail_risk(
     trade_date: date,
     output: Path | None = None,
     limit: int | None = None,
+    latest_only: bool = False,
+    feature_lookback_bars: int = 61,
+    include_features: bool = True,
+    prediction_scope: str | None = None,
 ) -> TailRiskPredictionResult:
     artifact = load_tail_risk_model_artifact(project_root)
     label_config = artifact.get("label_config", {})
@@ -298,6 +304,7 @@ def predict_tail_risk(
         universe = universe.head(max(int(limit), 0)).copy()
 
     rows: list[dict[str, Any]] = []
+    feature_rows: list[pd.DataFrame] = []
     skipped: list[dict[str, object]] = []
     instruments = universe.to_dict("records")
     total_symbols = len(instruments)
@@ -314,14 +321,22 @@ def predict_tail_risk(
         bars["trade_date"] = pd.to_datetime(bars["trade_date"], errors="coerce")
         bars = bars.dropna(subset=["trade_date"])
         bars = bars[bars["trade_date"].dt.date <= trade_date].copy()
-        frame = build_tail_risk_frame(
-            bars,
-            symbol=symbol,
-            name=name,
-            lookback_days=int(label_config.get("lookback_days", 100)),
-            quantile=float(label_config.get("quantile", 0.05)),
-            horizon_days=int(label_config.get("horizon_days", 1)),
-        )
+        if latest_only:
+            frame = build_tail_risk_latest_feature_frame(
+                bars,
+                symbol=symbol,
+                name=name,
+                feature_lookback_bars=feature_lookback_bars,
+            )
+        else:
+            frame = build_tail_risk_frame(
+                bars,
+                symbol=symbol,
+                name=name,
+                lookback_days=int(label_config.get("lookback_days", 100)),
+                quantile=float(label_config.get("quantile", 0.05)),
+                horizon_days=int(label_config.get("horizon_days", 1)),
+            )
         if frame.empty:
             skipped.append({"symbol": symbol, "name": name, "reason": "empty_tail_risk_frame"})
             continue
@@ -334,22 +349,42 @@ def predict_tail_risk(
             skipped.append({"symbol": symbol, "name": name, "reason": "no_feature_row"})
             continue
         feature_trade_date = pd.Timestamp(row.iloc[0]["trade_date"]).date().isoformat()
-        risk_score = float(_predict_risk_proba(artifact["model"], row.loc[:, feature_columns])[0])
         record: dict[str, Any] = {
             "trade_date": trade_date.isoformat(),
             "feature_trade_date": feature_trade_date,
             "symbol": symbol,
             "name": name,
-            "risk_score": risk_score,
             "model_name": artifact["model_name"],
             "model_version": artifact["model_version"],
         }
-        for column in feature_columns:
-            record[column] = float(row.iloc[0][column])
+        if prediction_scope is not None:
+            record["prediction_scope"] = prediction_scope
+        feature_row = row.loc[:, feature_columns].copy()
+        feature_rows.append(feature_row)
+        if include_features:
+            for column in feature_columns:
+                record[column] = float(row.iloc[0][column])
         rows.append(record)
 
     predictions = pd.DataFrame(rows)
+    if rows and feature_rows:
+        risk_scores = _predict_risk_proba(artifact["model"], pd.concat(feature_rows, ignore_index=True))
+        predictions["risk_score"] = [float(score) for score in risk_scores]
     if not predictions.empty:
+        preferred_columns = [
+            "trade_date",
+            "feature_trade_date",
+            "symbol",
+            "name",
+            "risk_score",
+            "prediction_scope",
+            "model_name",
+            "model_version",
+            *[column for column in feature_columns if column in predictions.columns],
+        ]
+        preferred_columns.extend(column for column in predictions.columns if column not in preferred_columns)
+        preferred_columns = [column for column in preferred_columns if column in predictions.columns]
+        predictions = predictions.loc[:, preferred_columns]
         predictions = predictions.sort_values(["risk_score", "symbol"], ascending=[False, True]).reset_index(drop=True)
     skipped_frame = pd.DataFrame(skipped)
     output_path = output if output is not None else tail_risk_predictions_path(project_root, trade_date)
@@ -530,6 +565,10 @@ def predict_barrier_risk(
     trade_date: date,
     output: Path | None = None,
     limit: int | None = None,
+    latest_only: bool = False,
+    feature_lookback_bars: int = 61,
+    include_features: bool = True,
+    prediction_scope: str = "full_market_daily",
 ) -> BarrierRiskPredictionResult:
     artifact = load_barrier_risk_model_artifact(project_root)
     label_config = artifact.get("label_config", {})
@@ -539,6 +578,7 @@ def predict_barrier_risk(
         universe = universe.head(max(int(limit), 0)).copy()
 
     rows: list[dict[str, Any]] = []
+    feature_rows: list[pd.DataFrame] = []
     skipped: list[dict[str, object]] = []
     instruments = universe.to_dict("records")
     total_symbols = len(instruments)
@@ -555,13 +595,23 @@ def predict_barrier_risk(
         bars["trade_date"] = pd.to_datetime(bars["trade_date"], errors="coerce")
         bars = bars.dropna(subset=["trade_date"])
         bars = bars[bars["trade_date"].dt.date <= trade_date].copy()
-        frame = build_barrier_prediction_feature_frame(
-            bars,
-            symbol=symbol,
-            name=name,
-            volatility_lookback=int(label_config.get("volatility_lookback", 100)),
-            cusum_threshold_mult=1.0,
-        )
+        if latest_only:
+            frame = build_barrier_prediction_latest_feature_frame(
+                bars,
+                symbol=symbol,
+                name=name,
+                volatility_lookback=int(label_config.get("volatility_lookback", 100)),
+                cusum_threshold_mult=1.0,
+                feature_lookback_bars=feature_lookback_bars,
+            )
+        else:
+            frame = build_barrier_prediction_feature_frame(
+                bars,
+                symbol=symbol,
+                name=name,
+                volatility_lookback=int(label_config.get("volatility_lookback", 100)),
+                cusum_threshold_mult=1.0,
+            )
         if frame.empty:
             skipped.append({"symbol": symbol, "name": name, "reason": "empty_barrier_prediction_frame"})
             continue
@@ -574,26 +624,47 @@ def predict_barrier_risk(
             skipped.append({"symbol": symbol, "name": name, "reason": "no_feature_row"})
             continue
         feature_trade_date = pd.Timestamp(row.iloc[0]["trade_date"]).date().isoformat()
-        risk_score = float(_predict_risk_proba(artifact["model"], row.loc[:, feature_columns])[0])
         record: dict[str, Any] = {
             "trade_date": trade_date.isoformat(),
             "feature_trade_date": feature_trade_date,
             "symbol": symbol,
             "name": name,
-            "barrier_risk_score": risk_score,
             "is_cusum_event": int(row.iloc[0].get("is_cusum_event", 0)),
             "mlfin_daily_vol": float(row.iloc[0].get("mlfin_daily_vol", np.nan)),
             "mlfin_cusum_threshold": float(row.iloc[0].get("mlfin_cusum_threshold", np.nan)),
-            "prediction_scope": "full_market_daily",
+            "prediction_scope": prediction_scope,
             "model_name": artifact["model_name"],
             "model_version": artifact["model_version"],
         }
-        for column in feature_columns:
-            record[column] = float(row.iloc[0][column])
+        feature_row = row.loc[:, feature_columns].copy()
+        feature_rows.append(feature_row)
+        if include_features:
+            for column in feature_columns:
+                record[column] = float(row.iloc[0][column])
         rows.append(record)
 
     predictions = pd.DataFrame(rows)
+    if rows and feature_rows:
+        risk_scores = _predict_risk_proba(artifact["model"], pd.concat(feature_rows, ignore_index=True))
+        predictions["barrier_risk_score"] = [float(score) for score in risk_scores]
     if not predictions.empty:
+        preferred_columns = [
+            "trade_date",
+            "feature_trade_date",
+            "symbol",
+            "name",
+            "barrier_risk_score",
+            "is_cusum_event",
+            "mlfin_daily_vol",
+            "mlfin_cusum_threshold",
+            "prediction_scope",
+            "model_name",
+            "model_version",
+            *[column for column in feature_columns if column in predictions.columns],
+        ]
+        preferred_columns.extend(column for column in predictions.columns if column not in preferred_columns)
+        preferred_columns = [column for column in preferred_columns if column in predictions.columns]
+        predictions = predictions.loc[:, preferred_columns]
         predictions = predictions.sort_values(["barrier_risk_score", "symbol"], ascending=[False, True]).reset_index(drop=True)
     skipped_frame = pd.DataFrame(skipped)
     output_path = output if output is not None else barrier_risk_predictions_path(project_root, trade_date)

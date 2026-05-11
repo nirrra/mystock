@@ -473,18 +473,30 @@ def _run_candidate_analysis(
         project_root=project_root,
         trade_date=trade_date,
         output=phase1_path,
+        latest_only=True,
+        feature_lookback_bars=61,
+        include_features=False,
+        prediction_scope="intraday_screening",
     ).predictions
     phase2 = predict_barrier_risk(
         storage=overlay_storage,
         project_root=project_root,
         trade_date=trade_date,
         output=phase2_path,
+        latest_only=True,
+        feature_lookback_bars=61,
+        include_features=False,
+        prediction_scope="intraday_screening",
     ).predictions
     phase4 = predict_alpha158_qlib_return(
         storage=overlay_storage,
         project_root=project_root,
         trade_date=trade_date,
         output=phase4_path,
+        latest_only=True,
+        feature_lookback_bars=61,
+        include_features=False,
+        prediction_scope="intraday_screening",
     ).predictions
 
     macd = _build_intraday_macd_summary(overlay_storage, trade_date=trade_date, symbols=symbols)

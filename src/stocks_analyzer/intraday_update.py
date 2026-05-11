@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import http.client
 import json
+import logging
 import re
+import time
 import urllib.parse
 import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +20,7 @@ from .watchlist import WATCHLIST_FILENAME_RE, extract_watchlist_symbols, watchli
 
 INTRADAY_DATA_INTERFACES = ("eastmoney_direct", "sina_raw")
 INTRADAY_REQUIRED_COLUMNS = ("symbol", "open", "close", "high", "low", "volume", "amount")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -187,7 +192,9 @@ def normalize_intraday_quotes(frame: pd.DataFrame, *, source: str) -> pd.DataFra
 
 def _fetch_eastmoney_quotes(symbols: list[str], *, timeout_seconds: float, chunk_size: int) -> pd.DataFrame:
     frames = []
-    for chunk in _chunks(symbols, chunk_size):
+    pending = list(_chunks(symbols, chunk_size))
+    while pending:
+        chunk = pending.pop(0)
         secids = ",".join(_eastmoney_secid(symbol) for symbol in chunk)
         params = {
             "fltt": "2",
@@ -196,11 +203,30 @@ def _fetch_eastmoney_quotes(symbols: list[str], *, timeout_seconds: float, chunk
             "secids": secids,
         }
         url = "https://push2.eastmoney.com/api/qt/ulist.np/get?" + urllib.parse.urlencode(params)
-        payload = json.loads(_fetch_text(url, timeout_seconds=timeout_seconds))
-        rows = (payload.get("data") or {}).get("diff") or []
-        frame = pd.DataFrame(rows)
-        if not frame.empty:
-            frames.append(frame)
+        try:
+            payload = json.loads(_fetch_text(url, timeout_seconds=timeout_seconds))
+            rows = (payload.get("data") or {}).get("diff") or []
+            frame = pd.DataFrame(rows)
+            if not frame.empty:
+                frames.append(frame)
+        except Exception as exc:  # noqa: BLE001 - retry / split below
+            if len(chunk) > 1:
+                midpoint = max(1, len(chunk) // 2)
+                left = chunk[:midpoint]
+                right = chunk[midpoint:]
+                pending.insert(0, right)
+                pending.insert(0, left)
+                logger.warning(
+                    "Eastmoney quote fetch failed for chunk size=%s; splitting into %s+%s. Error: %s",
+                    len(chunk),
+                    len(left),
+                    len(right),
+                    exc,
+                )
+                continue
+
+            logger.warning("Eastmoney quote fetch failed for symbol=%s: %s", chunk[0] if chunk else "?", exc)
+            continue
 
     if not frames:
         return pd.DataFrame()
@@ -284,16 +310,31 @@ def _fetch_text(
     timeout_seconds: float,
     encoding: str = "utf-8",
     headers: dict[str, str] | None = None,
+    max_retries: int = 3,
+    backoff_seconds: float = 0.8,
 ) -> str:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 stocks-analyzer-intraday/1.0",
-            **(headers or {}),
-        },
-    )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        return response.read().decode(encoding, errors="replace")
+    resolved_headers = {
+        "User-Agent": "Mozilla/5.0 stocks-analyzer-intraday/1.0",
+        "Accept": "*/*",
+        "Connection": "close",
+        **(headers or {}),
+    }
+
+    last_error: BaseException | None = None
+    attempts = max(1, int(max_retries) + 1)
+    for attempt in range(attempts):
+        try:
+            request = urllib.request.Request(url, headers=resolved_headers)
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                return response.read().decode(encoding, errors="replace")
+        except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError, ConnectionResetError, http.client.IncompleteRead) as exc:
+            last_error = exc
+            if attempt >= attempts - 1:
+                break
+            sleep_seconds = float(backoff_seconds) * (2**attempt)
+            time.sleep(sleep_seconds)
+
+    raise RuntimeError(f"Failed to fetch URL after {attempts} attempts: {url}") from last_error
 
 
 def _normalize_source(source: str) -> str:

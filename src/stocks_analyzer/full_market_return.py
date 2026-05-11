@@ -16,7 +16,7 @@ try:  # LightGBM is the reference model for Qlib Alpha158 benchmark.
 except Exception:  # pragma: no cover - depends on optional local package.
     LGBMRegressor = None
 
-from .full_market_alpha158 import build_alpha158_feature_frame, build_alpha158_return_panel
+from .full_market_alpha158 import build_alpha158_feature_frame, build_alpha158_latest_feature_frame, build_alpha158_return_panel
 from .full_market_panel import full_market_report_dir
 from .storage import DailyBarsReadError, Storage
 
@@ -182,6 +182,10 @@ def predict_alpha158_qlib_return(
     trade_date: date,
     output: Path | None = None,
     limit: int | None = None,
+    latest_only: bool = False,
+    feature_lookback_bars: int = 120,
+    include_features: bool = True,
+    prediction_scope: str = "full_market_daily",
 ) -> Alpha158QlibReturnPredictionResult:
     artifact = load_alpha158_qlib_return_model_artifact(project_root)
     feature_columns = tuple(artifact["feature_columns"])
@@ -190,6 +194,7 @@ def predict_alpha158_qlib_return(
         universe = universe.head(max(int(limit), 0)).copy()
 
     rows: list[dict[str, Any]] = []
+    feature_rows: list[pd.DataFrame] = []
     skipped: list[dict[str, object]] = []
     instruments = universe.to_dict("records")
     total_symbols = len(instruments)
@@ -206,7 +211,15 @@ def predict_alpha158_qlib_return(
         bars["trade_date"] = pd.to_datetime(bars["trade_date"], errors="coerce")
         bars = bars.dropna(subset=["trade_date"])
         bars = bars[bars["trade_date"].dt.date <= trade_date].copy()
-        frame = build_alpha158_feature_frame(bars, symbol=symbol, name=name)
+        if latest_only:
+            frame = build_alpha158_latest_feature_frame(
+                bars,
+                symbol=symbol,
+                name=name,
+                lookback_bars=feature_lookback_bars,
+            )
+        else:
+            frame = build_alpha158_feature_frame(bars, symbol=symbol, name=name)
         if frame.empty:
             skipped.append({"symbol": symbol, "name": name, "reason": "empty_alpha158_feature_frame"})
             continue
@@ -219,23 +232,40 @@ def predict_alpha158_qlib_return(
             skipped.append({"symbol": symbol, "name": name, "reason": "no_feature_row"})
             continue
         feature_trade_date = pd.Timestamp(row.iloc[0]["trade_date"]).date().isoformat()
-        return_score = float(artifact["model"].predict(row.loc[:, feature_columns])[0])
         record: dict[str, Any] = {
             "trade_date": trade_date.isoformat(),
             "feature_trade_date": feature_trade_date,
             "symbol": symbol,
             "name": name,
-            "return_score": return_score,
-            "prediction_scope": "full_market_daily",
+            "prediction_scope": prediction_scope,
             "model_name": artifact["model_name"],
             "model_version": artifact["model_version"],
         }
-        for column in feature_columns:
-            record[column] = float(row.iloc[0][column])
+        feature_row = row.loc[:, feature_columns].copy()
+        feature_rows.append(feature_row)
+        if include_features:
+            for column in feature_columns:
+                record[column] = float(row.iloc[0][column])
         rows.append(record)
 
     predictions = pd.DataFrame(rows)
+    if rows and feature_rows:
+        prediction_scores = artifact["model"].predict(pd.concat(feature_rows, ignore_index=True))
+        predictions["return_score"] = [float(score) for score in prediction_scores]
     if not predictions.empty:
+        preferred_columns = [
+            "trade_date",
+            "feature_trade_date",
+            "symbol",
+            "name",
+            "return_score",
+            "prediction_scope",
+            "model_name",
+            "model_version",
+            *[column for column in feature_columns if column in predictions.columns],
+        ]
+        preferred_columns.extend(column for column in predictions.columns if column not in preferred_columns)
+        predictions = predictions.loc[:, preferred_columns]
         predictions = predictions.sort_values(["return_score", "symbol"], ascending=[False, True]).reset_index(drop=True)
     skipped_frame = pd.DataFrame(skipped)
     output_path = output if output is not None else alpha158_qlib_return_predictions_path(project_root, trade_date)

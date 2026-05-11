@@ -142,6 +142,27 @@ def build_alpha158_feature_frame(
     return _downcast_alpha158_numeric(result)
 
 
+def build_alpha158_latest_feature_frame(
+    bars: pd.DataFrame,
+    *,
+    symbol: str,
+    name: str = "",
+    windows: tuple[int, ...] = ALPHA158_WINDOWS,
+    lookback_bars: int = 120,
+) -> pd.DataFrame:
+    """Build only the latest Alpha158 feature row from a recent price window."""
+    frame = _prepare_price_frame(bars)
+    if frame.empty:
+        return pd.DataFrame()
+    max_window = max(windows) if windows else 1
+    tail_length = max(int(lookback_bars), max_window + 1)
+    recent = frame.tail(tail_length).copy()
+    features = build_alpha158_feature_frame(recent, symbol=symbol, name=name, windows=windows)
+    if features.empty:
+        return features
+    return features.tail(1).reset_index(drop=True)
+
+
 def build_alpha158_return_frame(
     bars: pd.DataFrame,
     *,
