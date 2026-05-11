@@ -61,6 +61,11 @@ from .models import NetworkConfig
 from .paths import ProjectPaths
 from .phase_display import PHASE_DISPLAY_COLUMNS, append_daily_phase_display_columns
 from .reporting import format_multi_pattern_summary, format_report
+from .rolling_phase_score_validation import (
+    DEFAULT_ROLLING_PHASE_STRATEGIES,
+    format_rolling_phase_strategy_summary,
+    validate_rolling_phase_scores,
+)
 from .screener import Screener, parse_as_of
 from .storage import DailyBarsReadError, Storage
 from .strict_mixed_score_validation import (
@@ -324,6 +329,10 @@ def main() -> None:
 
     if args.command == "validate-strict-mixed-score":
         _run_validate_strict_mixed_score(storage, project_root, args)
+        return
+
+    if args.command == "validate-rolling-phase-scores":
+        _run_validate_rolling_phase_scores(project_root, args)
         return
 
     if args.command == "optimize-exit-rules":
@@ -717,6 +726,21 @@ def _add_backtest_parser(subparsers: argparse._SubParsersAction) -> None:
     strict.add_argument("--lgbm-n-jobs", type=int, default=1, help="LightGBM/部分 sklearn 模型线程数；CPU 加速可用 -1")
     strict.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
     strict.add_argument("--lgbm-gpu-device-id", type=int, default=None)
+
+    rolling_phase = subparsers.add_parser("validate-rolling-phase-scores", help="验证 Phase1/2/4 五日均分和 std 的解释力")
+    rolling_phase.add_argument("--strict-dir", default="reports/strict_mixed_score_validation", help="validate-strict-mixed-score 输出目录")
+    rolling_phase.add_argument("--output-dir", default=None, help="输出目录，默认 strict-dir/rolling5_phase_score_validation")
+    rolling_phase.add_argument("--window", type=int, default=5, help="滚动窗口交易日数")
+    rolling_phase.add_argument("--min-periods", type=int, default=None, help="滚动统计最少交易日，默认等于 window")
+    rolling_phase.add_argument("--horizons", default="5,10,20,60", help="持有交易日窗口，逗号分隔")
+    rolling_phase.add_argument("--strategies", default=",".join(DEFAULT_ROLLING_PHASE_STRATEGIES), help="策略组合，逗号分隔")
+    rolling_phase.add_argument("--top-n", type=int, default=20)
+    rolling_phase.add_argument("--phase1-min-score", type=float, default=40.0)
+    rolling_phase.add_argument("--phase2-min-score", type=float, default=50.0)
+    rolling_phase.add_argument("--phase4-min-score", type=float, default=70.0)
+    rolling_phase.add_argument("--std-penalty-phase1", type=float, default=0.05)
+    rolling_phase.add_argument("--std-penalty-phase2", type=float, default=0.05)
+    rolling_phase.add_argument("--std-penalty-phase4", type=float, default=0.10)
 
     exit_rules = subparsers.add_parser("optimize-exit-rules", help="基于严格 OOS 入选交易路径优化止盈止损规则")
     exit_rules.add_argument("--strict-dir", default="reports/strict_mixed_score_validation", help="validate-strict-mixed-score 输出目录")
@@ -1190,6 +1214,36 @@ def _run_validate_strict_mixed_score(storage: Storage, project_root: Path, args:
     print(f"Saved benchmark comparison: {result.benchmark_comparison_path}")
     if result.selected_forward_paths_path is not None:
         print(f"Saved selected forward paths: {result.selected_forward_paths_path}")
+
+
+def _run_validate_rolling_phase_scores(project_root: Path, args: argparse.Namespace) -> None:
+    strict_dir = Path(args.strict_dir)
+    if not strict_dir.is_absolute():
+        strict_dir = project_root / strict_dir
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    if output_dir is not None and not output_dir.is_absolute():
+        output_dir = project_root / output_dir
+    result = validate_rolling_phase_scores(
+        strict_dir=strict_dir,
+        output_dir=output_dir,
+        window=args.window,
+        min_periods=args.min_periods,
+        horizons=tuple(_parse_int_list(args.horizons)),
+        strategies=tuple(_parse_str_list(args.strategies)),
+        top_n=args.top_n,
+        phase1_min_score=args.phase1_min_score,
+        phase2_min_score=args.phase2_min_score,
+        phase4_min_score=args.phase4_min_score,
+        std_penalty_phase1=args.std_penalty_phase1,
+        std_penalty_phase2=args.std_penalty_phase2,
+        std_penalty_phase4=args.std_penalty_phase4,
+    )
+    print("Rolling phase-score validation complete.")
+    print(format_rolling_phase_strategy_summary(result.strategy_summary))
+    print(f"Saved deciles: {result.rolling_deciles_path}")
+    print(f"Saved trades: {result.strategy_trades_path}")
+    print(f"Saved summary: {result.strategy_summary_path}")
+    print(f"Saved daily counts: {result.daily_counts_path}")
 
 
 def _run_optimize_exit_rules(project_root: Path, args: argparse.Namespace) -> None:
