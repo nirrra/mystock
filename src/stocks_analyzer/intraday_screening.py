@@ -299,6 +299,7 @@ def _previous_watchlist_candidates(payload: dict[str, object], *, limit: int | N
                 "prev_phase1_score_100": raw.get("phase1_score_100"),
                 "prev_phase2_score_100": raw.get("phase2_score_100"),
                 "prev_phase4_score_100": raw.get("phase4_score_100"),
+                "prev_phase5_score_100": raw.get("phase5_score_100"),
                 "prev_watchlist_streak": raw.get("连续上榜天数"),
             }
         )
@@ -351,6 +352,7 @@ def _full_market_candidates(storage: Storage, previous_candidates: list[dict[str
             "prev_phase1_score_100": previous.get("prev_phase1_score_100", pd.NA),
             "prev_phase2_score_100": previous.get("prev_phase2_score_100", pd.NA),
             "prev_phase4_score_100": previous.get("prev_phase4_score_100", pd.NA),
+            "prev_phase5_score_100": previous.get("prev_phase5_score_100", pd.NA),
             "prev_watchlist_streak": previous.get("prev_watchlist_streak", pd.NA),
         }
         rows.append(merged)
@@ -430,6 +432,7 @@ def _merge_tracked_candidates(
                 "prev_phase1_score_100": pd.NA,
                 "prev_phase2_score_100": pd.NA,
                 "prev_phase4_score_100": pd.NA,
+                "prev_phase5_score_100": pd.NA,
                 "prev_watchlist_streak": pd.NA,
                 "track_stock": True,
             }
@@ -938,6 +941,13 @@ def _build_output_frame(
         frame = frame.drop(columns=["name"], errors="ignore")
         result = result.merge(frame, on="symbol", how="left")
     result = _add_phase_display_ranks(result)
+    if "phase5_score_100" not in result.columns:
+        result["phase5_score_100"] = result.get("prev_phase5_score_100", pd.NA)
+    else:
+        result["phase5_score_100"] = result["phase5_score_100"].where(
+            result["phase5_score_100"].notna(),
+            result.get("prev_phase5_score_100", pd.NA),
+        )
     result = _add_intraday_focus_score(result)
     result = add_recommended_position_percent(result)
     result = _drop_internal_score_columns(result)
@@ -996,61 +1006,96 @@ def _drop_internal_score_columns(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
-    preferred = [
-        "phase4_rank",
-        "phase4_score_100",
-        "intraday_focus_score",
-        "centered_risk_score",
-        "phase1_center_score",
-        "phase2_center_score",
-        "phase1_rank",
-        "phase1_score_100",
-        "phase2_rank",
-        "phase2_score_100",
-        "symbol",
-        "name",
-        "intraday_selection_source",
-        "track_stock",
-        "prev_rank",
-        "universe_rank",
-        "intraday_trade_date",
-        "intraday_quote_datetime",
-        "intraday_source",
-        "intraday_pct_change",
-        RECOMMENDED_POSITION_PERCENT_FIELD,
-        "phase1_excluded_by_top20_risk",
-        "phase1_feature_trade_date",
-        "phase2_excluded_by_top20_risk",
-        "phase2_is_cusum_event",
-        "phase2_feature_trade_date",
-        "phase4_feature_trade_date",
-        "macd",
-        "macd_signal_line",
-        "macd_hist",
+    technical_columns = [
         "macd_cross_state",
         "macd_divergence_state",
         "volume_price_divergence_state",
         "macd_top_divergence_15d",
         "macd_bottom_divergence_15d",
+        "macd_top_divergence_signal_date",
+        "macd_bottom_divergence_signal_date",
+        "bullish_volume_price_divergence_flag",
+        "bearish_volume_price_divergence_flag",
+        "macd",
+        "macd_signal_line",
+        "macd_hist",
         "atr_trade_date",
         "atr_close",
         "atr_14",
-        "atr_pct_14",
         "atr_stop_loss_1x",
         "atr_stop_loss_2x",
         "atr_take_profit_2x",
         "atr_take_profit_3x",
         "atr_volatility_regime",
+    ]
+    phase_detail_columns = [
+        "intraday_focus_score",
+        "centered_risk_score",
+        "phase1_center_score",
+        "phase2_center_score",
+        "phase4_rank",
+        "phase1_rank",
+        "phase2_rank",
+        "phase1_excluded_by_top20_risk",
+        "phase2_excluded_by_top20_risk",
+        "phase2_is_cusum_event",
+        "phase1_feature_trade_date",
+        "phase2_feature_trade_date",
+        "phase4_feature_trade_date",
+        "phase1_model_name",
+        "phase1_model_version",
+        "phase2_mlfin_daily_vol",
+        "phase2_mlfin_cusum_threshold",
+        "phase2_model_name",
+        "phase2_model_version",
+        "phase4_name",
+        "phase4_model_name",
+        "phase4_model_version",
+        "track_stock",
+        "prev_rank",
+        "universe_rank",
+        "intraday_quote_datetime",
+        "intraday_quote_time",
+        "intraday_fetched_at",
+        "intraday_provisional",
+    ]
+    pattern_detail_columns = [
+        "prev_source_tags",
+        "prev_reason",
+        "prev_watchlist_streak",
+        "prev_patterns",
+        "prev_phase1_score_100",
+        "prev_phase2_score_100",
+        "prev_phase4_score_100",
+        "prev_phase5_score_100",
+    ]
+    preferred = [
+        "intraday_trade_date",
+        "symbol",
+        "name",
+        "intraday_pct_change",
+        "intraday_selection_source",
         "prev_source",
         "prev_pattern_match",
         "prev_pattern_id",
         "prev_pattern_ids",
-        "prev_reason",
-        "prev_watchlist_streak",
-        "prev_source_tags",
-        "prev_patterns",
+        "phase1_score_100",
+        "phase2_score_100",
+        "phase4_score_100",
+        "phase5_score_100",
+        "atr_pct_14",
+        RECOMMENDED_POSITION_PERCENT_FIELD,
+        "intraday_source",
+        *technical_columns,
+        *phase_detail_columns,
+        *pattern_detail_columns,
     ]
-    columns = [column for column in preferred if column in frame.columns]
+    seen_columns: set[str] = set()
+    columns = []
+    for column in preferred:
+        if column in frame.columns and column not in seen_columns:
+            columns.append(column)
+            seen_columns.add(column)
     columns.extend([column for column in frame.columns if column not in columns])
     ordered = frame.loc[:, columns].copy()
     sort_columns = [column for column in ("phase4_rank", "phase1_rank", "phase2_rank", "prev_rank", "universe_rank", "symbol") if column in ordered.columns]

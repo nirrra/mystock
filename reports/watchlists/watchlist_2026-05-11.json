@@ -1,15 +1,6 @@
 {
   "trade_date": "2026-05-11",
   "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-05-11.csv",
-  "trade_permission": "allow",
-  "phase7_model_name": "naive_bayes",
-  "phase7_selected_threshold": 0.6763,
-  "phase7_buy_day_risk_score": 0.0095,
-  "trade_permission_note": "Phase7 判断当日买点环境允许交易。",
-  "phase7_trade_permission": "allow",
-  "next_open_trade_warning": false,
-  "phase7_model_version": "trade_day_gate_phase7_v1",
-  "next_open_trade_permission": "allow",
   "model_source_files": {
     "pattern": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-05-11.csv",
     "phase1": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\tail_risk_predictions_2026-05-11.csv",
@@ -20,8 +11,11 @@
     "macd": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\macd\\macd_2026-05-11.csv",
     "atr": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\atr\\atr_2026-05-11.csv"
   },
-  "phase7_feature_trade_date": "2026-05-11",
-  "phase7_score_100": 100.0,
+  "phase7_selected_threshold": 0.6763,
+  "phase7_suggested_action": "candidate_allowed",
+  "trade_permission_note": "Phase7 判断当日买点环境允许交易。",
+  "next_open_trade_warning": false,
+  "next_open_trade_permission": "allow",
   "filter_summary": {
     "phase1_rows": 2982,
     "phase1_excluded_top20": 597,
@@ -36,8 +30,14 @@
     "phase4_top_candidates_after_score_floor": 382,
     "phase4_top_n_added_count": 20
   },
-  "phase7_suggested_action": "candidate_allowed",
+  "phase7_trade_permission": "allow",
+  "phase7_buy_day_risk_score": 0.0095,
+  "phase7_score_100": 100.0,
+  "phase7_feature_trade_date": "2026-05-11",
   "phase7_reason": "buy_day_risk_score_below_threshold",
+  "phase7_model_name": "naive_bayes",
+  "phase7_model_version": "trade_day_gate_phase7_v1",
+  "trade_permission": "allow",
   "selection_policy": {
     "phase1_filter": "exclude highest risk 20%",
     "phase2_filter": "exclude highest risk 20%",

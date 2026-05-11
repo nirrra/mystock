@@ -847,6 +847,58 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
         frame = pd.DataFrame(rows)
         if "symbol" in frame.columns:
             frame["symbol"] = frame["symbol"].map(_format_symbol_for_excel)
+        technical_columns = [
+            "macd_cross_state",
+            "macd_divergence_state",
+            "volume_price_divergence_state",
+            "macd_top_divergence_15d",
+            "macd_bottom_divergence_15d",
+            "macd_top_divergence_signal_date",
+            "macd_bottom_divergence_signal_date",
+            "bullish_volume_price_divergence_flag",
+            "bearish_volume_price_divergence_flag",
+            "macd",
+            "macd_signal_line",
+            "macd_hist",
+            "ATR14",
+            "1ATR止损参考",
+            "2ATR止损参考",
+            "2ATR止盈参考",
+            "3ATR止盈参考",
+            "波动分层",
+        ]
+        phase_detail_columns = [
+            "phase2_is_cusum_event",
+            "phase1_center_score",
+            "phase2_center_score",
+            "centered_risk_score",
+            "phase4_composite_score",
+            "phase4_composite_rank",
+            "phase7_score_100",
+            "phase7_trade_permission",
+            "phase1_feature_trade_date",
+            "phase1_model_name",
+            "phase1_model_version",
+            "phase2_feature_trade_date",
+            "phase2_model_name",
+            "phase2_model_version",
+            "phase4_feature_trade_date",
+            "phase4_model_name",
+            "phase4_model_version",
+            "phase7_feature_trade_date",
+            "phase7_model_name",
+            "phase7_model_version",
+            "trade_permission",
+            "next_open_trade_permission",
+            "next_open_trade_warning",
+            "trade_permission_note",
+            "phase7_reason",
+        ]
+        pattern_detail_columns = [
+            "reason",
+            "patterns",
+            *PATTERN_CANDIDATE_FIELDS,
+        ]
         preferred = [
             "trade_date",
             "candidate_index",
@@ -859,30 +911,20 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "pattern_id",
             "phase1_score_100",
             "phase2_score_100",
-            "phase2_is_cusum_event",
-            "phase1_center_score",
-            "phase2_center_score",
-            "centered_risk_score",
             "phase4_score_100",
-            "phase4_composite_score",
-            "phase4_composite_rank",
             "phase5_score_100",
-            "phase7_score_100",
-            "phase7_trade_permission",
-            "macd_cross_state",
-            "macd_divergence_state",
-            "volume_price_divergence_state",
-            "ATR14",
             "ATR%",
-            "1ATR止损参考",
-            "2ATR止损参考",
-            "2ATR止盈参考",
-            "3ATR止盈参考",
             RECOMMENDED_POSITION_PERCENT_FIELD,
-            "波动分层",
-            "reason",
+            *technical_columns,
+            *phase_detail_columns,
+            *pattern_detail_columns,
         ]
-        ordered = [column for column in preferred if column in frame.columns]
+        seen_columns: set[str] = set()
+        ordered = []
+        for column in preferred:
+            if column in frame.columns and column not in seen_columns:
+                ordered.append(column)
+                seen_columns.add(column)
         frame = frame.loc[:, ordered + [column for column in frame.columns if column not in ordered]]
     else:
         frame = pd.DataFrame(

@@ -101,6 +101,8 @@ python -m stocks_analyzer --project-root . update --start-date 20240101 --end-da
 
 两条入口都会在最终入选前排除当日涨幅 `> 9.9%` 的股票，避免把已经涨停或接近涨停的标的放入盘后候选。整理 [选股.md](选股.md) 时，最终选股表展示 `P1/P2/P4`、Phase5、当日涨幅和连续上榜天数；建议总仓位、收盘价、ATR、止损止盈只放在交易辅助信息表。
 
+`watchlist_YYYY-MM-DD.csv` 和盘中 `intraday_top20_YYYY-MM-DD.csv` 的前置列按人工查看顺序排列：交易日期、股票代码、名称、涨幅、来源、pattern 命中情况、P1/P2/P4/P5、ATR%、建议总仓位、技术指标、Phase 细节、pattern 细节。日常快速浏览优先看前 15-20 列即可。
+
 ## 六个 pattern 在识别什么
 
 pattern 只是候选结构，不是独立买点。
