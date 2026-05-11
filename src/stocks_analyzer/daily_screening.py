@@ -63,9 +63,28 @@ def run_daily_screening(
     )
     _run_project_stage(2, total_stages, "macd", project_root, ["macd", "--date", trade_date.isoformat()])
     _run_project_stage(3, total_stages, "atr", project_root, ["atr", "--date", trade_date.isoformat()])
-    _run_project_stage(4, total_stages, "phase1_tail_risk", project_root, ["predict-tail-risk", "--date", trade_date.isoformat()])
-    _run_project_stage(5, total_stages, "phase2_barrier_risk", project_root, ["predict-barrier-risk", "--date", trade_date.isoformat()])
-    _run_project_stage(6, total_stages, "phase4_alpha158_return", project_root, ["predict-alpha158-qlib-return", "--date", trade_date.isoformat()])
+    fast_prediction_args = ["--latest-only", "--feature-lookback-bars", "61", "--compact-output"]
+    _run_project_stage(
+        4,
+        total_stages,
+        "phase1_tail_risk",
+        project_root,
+        ["predict-tail-risk", "--date", trade_date.isoformat(), *fast_prediction_args],
+    )
+    _run_project_stage(
+        5,
+        total_stages,
+        "phase2_barrier_risk",
+        project_root,
+        ["predict-barrier-risk", "--date", trade_date.isoformat(), *fast_prediction_args],
+    )
+    _run_project_stage(
+        6,
+        total_stages,
+        "phase4_alpha158_return",
+        project_root,
+        ["predict-alpha158-qlib-return", "--date", trade_date.isoformat(), *fast_prediction_args],
+    )
     _run_project_stage(7, total_stages, "phase7_trade_day_gate", project_root, ["predict-trade-day-gate", "--date", trade_date.isoformat()])
     _run_phase5_stage(
         8,

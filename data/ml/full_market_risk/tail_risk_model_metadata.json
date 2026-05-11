@@ -1,0 +1,36 @@
+{
+  "model_version": "tail_risk_phase1_v1",
+  "created_at": "2026-05-07T14:16:39",
+  "model_name": "logistic_regression",
+  "feature_columns": [
+    "log_return_1d",
+    "return_5d",
+    "return_20d",
+    "return_60d",
+    "volatility_20d",
+    "volatility_60d",
+    "downside_volatility_20d",
+    "max_drawdown_20d",
+    "distance_to_ma20",
+    "distance_to_ma60",
+    "volume_ratio_5d_20d",
+    "amount_log",
+    "intraday_range_pct"
+  ],
+  "label_config": {
+    "lookback_days": 100,
+    "quantile": 0.05,
+    "horizon_days": 1
+  },
+  "train_config": {
+    "start_date": "2015-01-01",
+    "end_date": "2026-05-07",
+    "limit": null,
+    "min_training_rows": 200
+  },
+  "train_rows": 6715856,
+  "train_start": "2015-04-07",
+  "train_end": "2026-05-06",
+  "risk_rate": 0.0586849986062834,
+  "skipped_symbols": 7
+}

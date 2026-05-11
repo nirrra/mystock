@@ -1,0 +1,32 @@
+{
+  "trade_date": "2026-05-11",
+  "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-05-11.csv",
+  "watchlist_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_2026-05-11.json",
+  "watchlist_csv_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_2026-05-11.csv",
+  "watchlist_pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_pattern_2026-05-11.json",
+  "macd_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\macd\\macd_2026-05-11.csv",
+  "atr_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\atr\\atr_2026-05-11.csv",
+  "pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-05-11.csv",
+  "phase1_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\tail_risk_predictions_2026-05-11.csv",
+  "phase2_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\barrier_risk_predictions_2026-05-11.csv",
+  "phase4_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\alpha158_qlib_return_predictions_2026-05-11.csv",
+  "phase5_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\mcd_crash_annual_measures.csv",
+  "phase7_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\trade_day_gate_prediction_2026-05-11.csv",
+  "track_stock_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\track_stock.xlsx",
+  "trade_permission": "allow",
+  "filter_summary": {
+    "phase1_rows": 2982,
+    "phase1_excluded_top20": 597,
+    "phase2_rows": 2982,
+    "phase2_excluded_top20": 597,
+    "phase1_phase2_intersection": 2982,
+    "hard_filter_pass_count_before_limit_up_filter": 2171,
+    "limit_up_excluded_gt_9_9pct": 0,
+    "hard_filter_pass_count": 2171,
+    "pattern_symbols_after_filter": 14,
+    "pattern_symbols_phase4_gt_70": 14,
+    "phase4_top_candidates_after_score_floor": 391,
+    "phase4_top_n_added_count": 19
+  },
+  "candidate_count": 33
+}

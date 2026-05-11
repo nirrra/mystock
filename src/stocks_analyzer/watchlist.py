@@ -303,9 +303,12 @@ def build_phase_daily_watchlist_candidates(
     evaluated["phase4_composite_score"] = evaluated["centered_risk_score"]
     evaluated["phase4_top_score_filter_pass"] = False
     pattern_symbol_set = set(pattern_groups)
-    evaluated["pattern_score_filter_pass"] = (
+    evaluated["pattern_score_filter_pass_before_limit_up"] = (
         evaluated["symbol"].astype(str).str.zfill(6).isin(pattern_symbol_set)
         & evaluated["phase4_score_100"].gt(PATTERN_MIN_PHASE4_SCORE)
+    )
+    evaluated["pattern_score_filter_pass"] = (
+        evaluated["pattern_score_filter_pass_before_limit_up"].fillna(False).astype(bool)
         & ~evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)
     )
 
@@ -314,7 +317,8 @@ def build_phase_daily_watchlist_candidates(
         & ~evaluated["phase2_excluded_by_top20_risk"].fillna(True).astype(bool)
     )
     hard_filter_pass_count_before_limit_up = int(hard_filter_mask.sum())
-    limit_up_excluded = int((hard_filter_mask & evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)).sum())
+    limit_up_candidate_mask = hard_filter_mask | evaluated["pattern_score_filter_pass_before_limit_up"].fillna(False).astype(bool)
+    limit_up_excluded = int((limit_up_candidate_mask & evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)).sum())
     passed = evaluated[hard_filter_mask & ~evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)].copy()
     for score_column in ("phase1_score_100", "phase2_score_100", "phase4_score_100"):
         if score_column in passed.columns:
@@ -412,7 +416,7 @@ def build_phase_daily_watchlist_candidates(
             "centered_risk_sort_formula": "phase4_score_100 + 0.08 * max(0, 100 - 2 * abs(phase1_score_100 - 80)) + 0.12 * max(0, 100 - 2 * abs(phase2_score_100 - 80))",
             "phase4_top_sort_formula": "centered_risk_score",
             "phase7_no_trade_policy": "block highest-risk 20% trade days based on trained threshold",
-            "limit_up_filter": "exclude candidates with same-day return > 9.9% before watchlist selection",
+            "limit_up_filter": "exclude both pattern and phase4_top candidates with same-day return > 9.9% before watchlist selection",
             "limit_up_filter_threshold": float(LIMIT_UP_DAILY_RETURN_THRESHOLD),
             "position_size_formula": "D = 2 * ATR14; effective average stop distance before third add = 0.85D; total planned position = min(40%, 2% / (0.85 * 2 * ATR14 / close))",
         },

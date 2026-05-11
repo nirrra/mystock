@@ -11,8 +11,13 @@ task_plan.md
 findings.md
 progress.md
 
-data/
+data/*
 !data/.gitkeep
+!data/ml/
+data/ml/*
+!data/ml/**/
+!data/ml/**/*.pkl
+!data/ml/**/*_metadata.json
 
 dist/
 build/

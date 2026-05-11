@@ -1,0 +1,39 @@
+{
+  "model_version": "barrier_risk_phase2_v1",
+  "created_at": "2026-05-07T21:44:42",
+  "model_name": "lightgbm_classifier",
+  "feature_columns": [
+    "log_return_1d",
+    "return_5d",
+    "return_20d",
+    "return_60d",
+    "volatility_20d",
+    "volatility_60d",
+    "downside_volatility_20d",
+    "max_drawdown_20d",
+    "distance_to_ma20",
+    "distance_to_ma60",
+    "volume_ratio_5d_20d",
+    "amount_log",
+    "intraday_range_pct"
+  ],
+  "label_config": {
+    "label_method": "mlfin_cusum",
+    "horizon_days": 5,
+    "volatility_lookback": 100,
+    "pt_mult": 1.0,
+    "sl_mult": 1.0,
+    "min_ret": 0.005
+  },
+  "train_config": {
+    "start_date": "2015-01-01",
+    "end_date": "2026-05-06",
+    "limit": null,
+    "min_training_rows": 200
+  },
+  "train_rows": 2226052,
+  "train_start": "2015-06-03",
+  "train_end": "2026-05-06",
+  "risk_rate": 0.4098835067644422,
+  "skipped_symbols": 14
+}

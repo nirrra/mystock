@@ -1,0 +1,18 @@
+{
+  "trade_date":"2026-05-11",
+  "kind":"atr",
+  "rows":2997,
+  "columns":[
+    "symbol",
+    "name",
+    "trade_date",
+    "close",
+    "atr_14",
+    "atr_pct_14",
+    "atr_stop_loss_1x",
+    "atr_stop_loss_2x",
+    "atr_take_profit_2x",
+    "atr_take_profit_3x",
+    "atr_volatility_regime"
+  ]
+}

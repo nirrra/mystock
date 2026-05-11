@@ -54,6 +54,7 @@ from .synthetic_market import build_synthetic_market_index, synthetic_market_pat
 
 TAIL_RISK_MODEL_VERSION = "tail_risk_phase1_v1"
 NOH_INDEX_FEATURE_COLUMNS = ("log_return_1d",)
+TAIL_RISK_COMPACT_OUTPUT_FEATURE_COLUMNS = ("log_return_1d",)
 PANEL_KNN_MAX_ROWS = 50_000
 ALL_TAIL_RISK_MODEL_NAMES = (
     "dummy_prior",
@@ -361,8 +362,9 @@ def predict_tail_risk(
             record["prediction_scope"] = prediction_scope
         feature_row = row.loc[:, feature_columns].copy()
         feature_rows.append(feature_row)
-        if include_features:
-            for column in feature_columns:
+        output_feature_columns = feature_columns if include_features else TAIL_RISK_COMPACT_OUTPUT_FEATURE_COLUMNS
+        for column in output_feature_columns:
+            if column in row.columns:
                 record[column] = float(row.iloc[0][column])
         rows.append(record)
 

@@ -503,6 +503,9 @@ def _add_phase1_parsers(subparsers: argparse._SubParsersAction) -> None:
     predict_tail.add_argument("--limit", type=int, default=None)
     predict_tail.add_argument("--top-n", type=int, default=20)
     predict_tail.add_argument("--output", default=None)
+    predict_tail.add_argument("--latest-only", action="store_true", help="只计算最新一行特征；用于日常预测加速")
+    predict_tail.add_argument("--feature-lookback-bars", type=int, default=61, help="latest-only 模式下使用的最近交易日数量")
+    predict_tail.add_argument("--compact-output", action="store_true", help="预测输出不保存原始特征列")
 
 
 def _add_phase2_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -570,6 +573,9 @@ def _add_phase2_parsers(subparsers: argparse._SubParsersAction) -> None:
     predict_barrier.add_argument("--limit", type=int, default=None)
     predict_barrier.add_argument("--top-n", type=int, default=20)
     predict_barrier.add_argument("--output", default=None)
+    predict_barrier.add_argument("--latest-only", action="store_true", help="只计算最新一行特征；用于日常预测加速")
+    predict_barrier.add_argument("--feature-lookback-bars", type=int, default=61, help="latest-only 模式下使用的最近交易日数量")
+    predict_barrier.add_argument("--compact-output", action="store_true", help="预测输出不保存原始特征列")
 
 
 def _add_phase4_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -594,6 +600,9 @@ def _add_phase4_parsers(subparsers: argparse._SubParsersAction) -> None:
     predict_return.add_argument("--limit", type=int, default=None)
     predict_return.add_argument("--top-n", type=int, default=20)
     predict_return.add_argument("--output", default=None)
+    predict_return.add_argument("--latest-only", action="store_true", help="只计算最新一行 Alpha158 特征；用于日常预测加速")
+    predict_return.add_argument("--feature-lookback-bars", type=int, default=61, help="latest-only 模式下使用的最近交易日数量")
+    predict_return.add_argument("--compact-output", action="store_true", help="预测输出不保存 Alpha158 原始特征列")
 
 
 def _add_phase5_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -851,6 +860,10 @@ def _run_predict_tail_risk(storage: Storage, project_root: Path, args: argparse.
         trade_date=_parse_required_date(args.date),
         output=Path(args.output).resolve() if args.output else None,
         limit=args.limit,
+        latest_only=args.latest_only,
+        feature_lookback_bars=args.feature_lookback_bars,
+        include_features=not args.compact_output,
+        prediction_scope="full_market_daily_fast" if args.latest_only else None,
     )
     print("Tail-risk prediction complete.")
     print(format_tail_risk_prediction_table(result.predictions, top_n=args.top_n))
@@ -946,6 +959,10 @@ def _run_predict_barrier_risk(storage: Storage, project_root: Path, args: argpar
         trade_date=_parse_required_date(args.date),
         output=Path(args.output).resolve() if args.output else None,
         limit=args.limit,
+        latest_only=args.latest_only,
+        feature_lookback_bars=args.feature_lookback_bars,
+        include_features=not args.compact_output,
+        prediction_scope="full_market_daily_fast" if args.latest_only else "full_market_daily",
     )
     print("Barrier-risk prediction complete.")
     print(format_barrier_risk_prediction_table(result.predictions, top_n=args.top_n))
@@ -992,6 +1009,10 @@ def _run_predict_alpha158_return(storage: Storage, project_root: Path, args: arg
         trade_date=_parse_required_date(args.date),
         output=Path(args.output).resolve() if args.output else None,
         limit=args.limit,
+        latest_only=args.latest_only,
+        feature_lookback_bars=args.feature_lookback_bars,
+        include_features=not args.compact_output,
+        prediction_scope="full_market_daily_fast" if args.latest_only else "full_market_daily",
     )
     print("Alpha158 Qlib return prediction complete.")
     print(format_alpha158_qlib_return_prediction_table(result.predictions, top_n=args.top_n))
