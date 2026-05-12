@@ -56,13 +56,13 @@ python -m stocks_analyzer --project-root . daily-screening --date $DATE
 
 ## 接口受限时怎么跑
 
-盘中默认接口是东财 `eastmoney_direct`。如果看到 `push2.eastmoney.com` 请求失败、批量拆分、代理断开等日志，优先改用新浪：
+盘中 `intraday-screening` 默认接口是新浪 `sina_raw`。如果需要临时改用东财：
 
 ```powershell
-python -m stocks_analyzer --project-root . intraday-screening --date $DATE --data-interface sina_raw
+python -m stocks_analyzer --project-root . intraday-screening --date $DATE --data-interface eastmoney_direct
 ```
 
-如果东财只是批量受限，可以降低批量大小：
+如果接口批量受限，可以降低批量大小：
 
 ```powershell
 python -m stocks_analyzer --project-root . intraday-screening --date $DATE --chunk-size 10

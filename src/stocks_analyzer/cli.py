@@ -397,7 +397,7 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
     intraday_screening.add_argument(
         "--data-interface",
         choices=INTRADAY_DATA_INTERFACES,
-        default="eastmoney_direct",
+        default="sina_raw",
         help="盘中数据接口",
     )
     intraday_screening.add_argument("--limit", type=int, default=None, help="仅分析前 N 只股票")

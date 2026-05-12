@@ -91,7 +91,7 @@ def run_intraday_screening(
     storage: Storage,
     project_root: Path,
     trade_date: date,
-    data_interface: str = "eastmoney_direct",
+    data_interface: str = "sina_raw",
     limit: int | None = None,
     watchlist_only: bool = False,
     skip_intraday_update: bool = False,

@@ -49,7 +49,7 @@ def test_build_parser_accepts_daily_screening_main_commands() -> None:
     intraday_screening = parser.parse_args(["intraday-screening", "--date", "2026-05-08", "--skip-intraday-update", "--watchlist-only"])
     assert intraday_screening.command == "intraday-screening"
     assert intraday_screening.date == "2026-05-08"
-    assert intraday_screening.data_interface == "eastmoney_direct"
+    assert intraday_screening.data_interface == "sina_raw"
     assert intraday_screening.skip_intraday_update is True
     assert intraday_screening.watchlist_only is True
     assert intraday_screening.keep_report_dates == 10
