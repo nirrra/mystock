@@ -16,6 +16,7 @@ from .full_market_risk import predict_barrier_risk, predict_tail_risk
 from .indicators import add_indicators
 from .intraday_update import INTRADAY_DATA_INTERFACES, run_intraday_update
 from .macd_divergence import summarize_recent_macd_divergence
+from .phase4_rolling import PHASE4_ROLLING_COLUMNS, PHASE4_ROLLING_RANK_COLUMNS, merge_phase4_rolling_frame
 from .phase_display import normalize_symbol
 from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, add_recommended_position_percent
 from .storage import DailyBarsReadError, Storage
@@ -167,6 +168,8 @@ def run_intraday_screening(
             combined_macd = _concat_frames(focus_analysis.macd, remaining_analysis.macd)
             combined_atr = _concat_frames(focus_analysis.atr, remaining_analysis.atr)
             combined = _build_output_frame(
+                project_root=project_root,
+                trade_date=trade_date,
                 candidates=candidates,
                 intraday=combined_intraday,
                 phase1=combined_phase1,
@@ -506,6 +509,8 @@ def _run_candidate_analysis(
     atr = _build_intraday_atr_summary(overlay_storage, trade_date=trade_date, symbols=symbols)
     intraday = _load_intraday_snapshot_frame(storage, symbols=symbols)
     frame = _build_output_frame(
+        project_root=project_root,
+        trade_date=trade_date,
         candidates=candidates,
         intraday=intraday,
         phase1=phase1,
@@ -598,7 +603,8 @@ def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
         & phase4.ge(CENTERED_RISK_TOP_MIN_PHASE4_SCORE)
     )
     pattern_pass = prev_pattern_match & phase4.gt(PATTERN_MIN_PHASE4_SCORE)
-    eligible_mask = (standard_pass | pattern_pass) & pct_change.le(INTRADAY_FOCUS_MAX_PCT_CHANGE)
+    pct_change_ok = pct_change.le(INTRADAY_FOCUS_MAX_PCT_CHANGE) | pct_change.isna()
+    eligible_mask = (standard_pass | pattern_pass) & pct_change_ok
     result = result[eligible_mask].copy()
     pattern_symbols = (
         set(result.loc[pattern_pass.reindex(result.index, fill_value=False), "symbol"].astype(str))
@@ -903,6 +909,8 @@ def _load_intraday_snapshot_frame(storage: Storage, *, symbols: list[str]) -> pd
 
 def _build_output_frame(
     *,
+    project_root: Path,
+    trade_date: date,
     candidates: list[dict[str, object]],
     intraday: pd.DataFrame,
     phase1: pd.DataFrame,
@@ -930,6 +938,7 @@ def _build_output_frame(
         extra_columns=("is_cusum_event", "mlfin_daily_vol", "mlfin_cusum_threshold"),
     )
     phase4_prepared = _prepare_phase4_predictions(phase4)
+    phase4_prepared = merge_phase4_rolling_frame(phase4_prepared, project_root=project_root, trade_date=trade_date)
     macd_prepared = _prepare_macd_frame(macd)
     atr_prepared = _prepare_atr_frame(atr).rename(columns={"trade_date": "atr_trade_date", "close": "atr_close"})
     intraday_prepared = _prepare_intraday_for_output(intraday)
@@ -1034,6 +1043,7 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "phase1_center_score",
         "phase2_center_score",
         "phase4_rank",
+        *PHASE4_ROLLING_RANK_COLUMNS,
         "phase1_rank",
         "phase2_rank",
         "phase1_excluded_by_top20_risk",
@@ -1082,6 +1092,7 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "phase1_score_100",
         "phase2_score_100",
         "phase4_score_100",
+        *PHASE4_ROLLING_COLUMNS,
         "phase5_score_100",
         "atr_pct_14",
         RECOMMENDED_POSITION_PERCENT_FIELD,

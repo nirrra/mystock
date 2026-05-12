@@ -6,12 +6,15 @@ from pathlib import Path
 
 import pandas as pd
 
+from .phase4_rolling import PHASE4_ROLLING_COLUMNS, merge_phase4_rolling_frame
+
 
 PHASE_DISPLAY_COLUMNS = [
     "phase1_score_100",
     "phase2_score_100",
     "phase2_is_cusum_event",
     "phase4_score_100",
+    *PHASE4_ROLLING_COLUMNS,
     "phase5_score_100",
     "phase7_score_100",
     "phase7_trade_permission",
@@ -88,6 +91,7 @@ def build_daily_phase_display_frame(*, project_root: Path, trade_date: date) -> 
         )
     )
     phase4 = _prepare_phase4(_read_csv_columns(_phase4_path(project_root, trade_date), {"symbol", "return_score"}))
+    phase4 = merge_phase4_rolling_frame(phase4, project_root=project_root, trade_date=trade_date)
     phase5 = _prepare_phase5(
         _read_csv_columns(
             _phase5_path(project_root),

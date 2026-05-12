@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from .atr import ATR_WATCHLIST_FIELD_MAP, normalize_atr_summary_frame
+from .phase4_rolling import PHASE4_ROLLING_COLUMNS, PHASE4_ROLLING_RANK_COLUMNS, merge_phase4_rolling_frame
 from .phase_display import PHASE_TABLE_DROP_COLUMNS, add_phase5_score_100, phase7_score_100, score_series_100
 from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, recommended_position_percent_from_mapping
 
@@ -212,6 +213,20 @@ def build_watchlist_candidates_from_patterns(
             "stable_score": round(float(row["stable_score"]), 4),
             "reason": row.get("reason", ""),
         }
+        for field in (
+            "phase1_score_100",
+            "phase2_score_100",
+            "phase2_is_cusum_event",
+            "phase4_score_100",
+            *PHASE4_ROLLING_COLUMNS,
+            *PHASE4_ROLLING_RANK_COLUMNS,
+            "phase5_score_100",
+            "phase7_score_100",
+            "phase7_trade_permission",
+            "daily_return_1d",
+            "涨幅%",
+        ):
+            _copy_candidate_field(candidate, row, field)
         _append_supported_fields(candidate, row)
         candidates.append(candidate)
 
@@ -256,6 +271,11 @@ def build_phase_daily_watchlist_candidates(
         extra_columns=("is_cusum_event", "mlfin_daily_vol", "mlfin_cusum_threshold"),
     )
     phase4 = _prepare_phase4_predictions(phase4_predictions)
+    phase4 = merge_phase4_rolling_frame(
+        phase4,
+        project_root=_project_root_from_source_files(source_files),
+        trade_date=trade_date,
+    )
     phase5 = _prepare_phase5_measures(phase5_measures, trade_date=trade_date)
     macd = _prepare_macd_frame(macd_frame)
     atr = _prepare_atr_frame(atr_frame)
@@ -711,6 +731,8 @@ def _phase_watchlist_candidate(
         "phase2_center_score",
         "centered_risk_score",
         "phase4_score_100",
+        *PHASE4_ROLLING_COLUMNS,
+        *PHASE4_ROLLING_RANK_COLUMNS,
         "phase4_composite_score",
         "phase4_composite_rank",
         "phase4_top_score_filter_pass",
@@ -912,6 +934,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "phase1_score_100",
             "phase2_score_100",
             "phase4_score_100",
+            *PHASE4_ROLLING_COLUMNS,
             "phase5_score_100",
             "ATR%",
             RECOMMENDED_POSITION_PERCENT_FIELD,
@@ -939,6 +962,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
                 "phase1_score_100",
                 "phase2_score_100",
                 "phase4_score_100",
+                *PHASE4_ROLLING_COLUMNS,
                 "phase5_score_100",
                 "phase7_score_100",
             ]
@@ -1100,6 +1124,14 @@ def _resolve_watchlist_target(project_root: Path, trade_date: date, kind: str | 
     if kind == "pattern":
         return watchlist_pattern_path(project_root, trade_date)
     return watchlist_path(project_root, trade_date)
+
+
+def _project_root_from_source_files(source_files: dict[str, str] | None) -> Path:
+    if source_files and source_files.get("phase4"):
+        path = Path(str(source_files["phase4"])).resolve()
+        if len(path.parents) >= 3:
+            return path.parents[2]
+    return Path(".").resolve()
 
 
 def _append_supported_fields(candidate: dict[str, object], row: pd.Series | dict[str, object]) -> None:

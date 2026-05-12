@@ -94,8 +94,22 @@ class StockLookupResult:
     post_market: PostMarketLookupResult
 
 
+@dataclass(frozen=True)
+class StockNameMatch:
+    symbol: str
+    name: str
+    source: str
+
+
 class StockLookupError(RuntimeError):
     pass
+
+
+class StockLookupAmbiguousError(StockLookupError):
+    def __init__(self, query: str, matches: list[StockNameMatch]) -> None:
+        self.query = query
+        self.matches = matches
+        super().__init__(format_ambiguous_matches(query, matches))
 
 
 def normalize_symbol(value: object) -> str:
@@ -143,12 +157,9 @@ def report_date_from_path(path: Path, prefix: str) -> str:
     return match.group(1) if match else ""
 
 
-def lookup_stock(symbol: str, project_root: Path | None = None) -> StockLookupResult:
-    normalized = normalize_symbol(symbol)
-    if not normalized:
-        raise StockLookupError("请输入股票代码。")
-
+def lookup_stock(query: str, project_root: Path | None = None) -> StockLookupResult:
     root = project_root or find_project_root()
+    normalized = resolve_stock_query(query, root)
     post_market = lookup_post_market(root, normalized)
     intraday = lookup_intraday(root, normalized)
     name = post_market.phase1.extra.get("name") or ""
@@ -163,6 +174,103 @@ def lookup_stock(symbol: str, project_root: Path | None = None) -> StockLookupRe
         intraday=intraday,
         post_market=post_market,
     )
+
+
+def resolve_stock_query(query: str, root: Path) -> str:
+    text = str(query or "").strip()
+    if not text:
+        raise StockLookupError("请输入股票代码或名称。")
+
+    symbol = parse_symbol_query(text)
+    if symbol:
+        return symbol
+
+    matches = find_stock_name_matches(root, text)
+    if not matches:
+        raise StockLookupError(f"未找到股票名称：{text}")
+
+    exact_matches = [match for match in matches if normalize_name(match.name) == normalize_name(text)]
+    if len(exact_matches) == 1:
+        return exact_matches[0].symbol
+    if len(matches) == 1:
+        return matches[0].symbol
+    raise StockLookupAmbiguousError(text, exact_matches or matches)
+
+
+def parse_symbol_query(query: str) -> str:
+    text = str(query or "").strip()
+    if not text:
+        return ""
+    if text.startswith('="') and text.endswith('"'):
+        text = text[2:-1]
+    text = text.strip().strip('"').strip("'")
+    if re.fullmatch(r"(?i)(?:sh|sz|bj)?\d{1,6}", text):
+        return normalize_symbol(text)
+    groups = re.findall(r"(?<!\d)(\d{6})(?!\d)", text)
+    if len(groups) == 1:
+        return normalize_symbol(groups[0])
+    return ""
+
+
+def find_stock_name_matches(root: Path, query: str) -> list[StockNameMatch]:
+    needle = normalize_name(query)
+    if not needle:
+        return []
+    matches: list[StockNameMatch] = []
+    seen: set[str] = set()
+    for path, source in candidate_name_sources(root):
+        if path is None or not path.exists():
+            continue
+        for row in iter_csv_rows(path):
+            symbol = normalize_symbol(first_present(row, ("代码", "symbol", "股票代码")))
+            name = str(first_present(row, ("名称", "name", "股票名称")) or "").strip()
+            if not symbol or not name or symbol in seen:
+                continue
+            normalized_name = normalize_name(name)
+            if normalized_name == needle or needle in normalized_name:
+                seen.add(symbol)
+                matches.append(StockNameMatch(symbol=symbol, name=name, source=source))
+    return sorted(
+        matches,
+        key=lambda match: (
+            normalize_name(match.name) != needle,
+            len(normalize_name(match.name)),
+            match.symbol,
+        ),
+    )
+
+
+def candidate_name_sources(root: Path) -> list[tuple[Path | None, str]]:
+    sources: list[tuple[Path | None, str]] = []
+    for directory, prefix, label in (
+        (root / "reports" / "atr", "atr", "最新ATR全市场"),
+        (root / "reports" / "intraday_screening", "intraday_top20", "最新日中Top20"),
+        (root / "reports" / "intraday_screening", "intraday_top20_previous", "上一轮日中Top20"),
+        (root / "reports" / "intraday_screening", "intraday_track_stock", "日中跟踪股"),
+        (root / "reports" / "intraday_screening", "intraday_screening", "日中全市场"),
+        (root / "reports" / "watchlists", "watchlist", "最新watchlist"),
+        (root / "reports" / "watchlists", "watchlist_pattern", "最新pattern watchlist"),
+        (root / "reports" / "patterns", "patterns_all", "最新pattern结果"),
+    ):
+        sources.append((find_latest_optional_report_path(directory, prefix), label))
+    return sources
+
+
+def find_latest_optional_report_path(directory: Path, prefix: str) -> Path | None:
+    found = find_latest_optional_report(directory, prefix)
+    return found[1] if found is not None else None
+
+
+def iter_csv_rows(path: Path) -> list[dict[str, str]]:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            return list(csv.DictReader(handle))
+    except (OSError, csv.Error, UnicodeDecodeError):
+        return []
+
+
+def normalize_name(value: object) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip()).lower()
 
 
 def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
@@ -201,6 +309,14 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         extra_columns=("is_cusum_event",),
     )
     phase4 = lookup_phase_score(paths["Phase4"], symbol, score_column="return_score", higher_is_better=True)
+    phase4_rolling = lookup_phase4_rolling(root, symbol, trade_date)
+    if phase4_rolling:
+        phase4 = PhaseValue(
+            score_100=phase4.score_100,
+            raw_score=phase4.raw_score,
+            rank=phase4.rank,
+            extra={**phase4.extra, **phase4_rolling},
+        )
     phase5 = lookup_phase5(paths["Phase5"], symbol, trade_date)
     pattern = lookup_patterns(paths["Pattern"], symbol)
 
@@ -264,7 +380,15 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
         rank=safe_int(row.get("phase2_rank")),
         extra={"is_cusum_event": row.get("phase2_is_cusum_event")},
     )
-    phase4 = PhaseValue(score_100=safe_float(row.get("phase4_score_100")), rank=safe_int(row.get("phase4_rank")), extra={"name": row.get("name")})
+    phase4 = PhaseValue(
+        score_100=safe_float(row.get("phase4_score_100")),
+        rank=safe_int(row.get("phase4_rank")),
+        extra={
+            "name": row.get("name"),
+            "phase4_5d_mean": first_present(row, ("phase4_5d_mean",)),
+            "phase4_5d_std": first_present(row, ("phase4_5d_std",)),
+        },
+    )
     return IntradayLookupResult(
         trade_date=str(trade_date),
         quote_datetime=str(quote_datetime),
@@ -361,6 +485,59 @@ def lookup_phase_score(
     if "name" in row:
         extra["name"] = row.get("name")
     return PhaseValue(score_100=score_100, raw_score=raw_score, rank=rank, extra=extra)
+
+
+def lookup_phase4_rolling(root: Path, symbol: str, trade_date_text: str, *, window: int = 5) -> dict[str, object]:
+    try:
+        trade_date_value = date.fromisoformat(trade_date_text)
+    except ValueError:
+        return {}
+    report_dir = root / "reports" / "full_market_model"
+    files: list[tuple[date, Path]] = []
+    for path in report_dir.glob("alpha158_qlib_return_predictions_*.csv"):
+        match = re.match(r"^alpha158_qlib_return_predictions_(\d{4}-\d{2}-\d{2})\.csv$", path.name)
+        if not match:
+            continue
+        try:
+            parsed = date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        if parsed <= trade_date_value:
+            files.append((parsed, path))
+    files = sorted(files, key=lambda item: item[0], reverse=True)[: max(int(window), 0)]
+    scores: list[float] = []
+    for _parsed, path in files:
+        score = lookup_phase4_daily_score_100(path, symbol)
+        if score is not None:
+            scores.append(score)
+    if not scores:
+        return {}
+    mean = sum(scores) / len(scores)
+    variance = sum((score - mean) ** 2 for score in scores) / len(scores)
+    return {
+        "phase4_5d_mean": round(mean, 2),
+        "phase4_5d_std": round(math.sqrt(variance), 2),
+    }
+
+
+def lookup_phase4_daily_score_100(path: Path, symbol: str) -> float | None:
+    rows: list[tuple[str, float]] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            row_symbol = normalize_symbol(row.get("symbol"))
+            score = safe_float(row.get("return_score"))
+            if not row_symbol or score is None:
+                continue
+            rows.append((row_symbol, score))
+    if not rows:
+        return None
+    rows = sorted(rows, key=lambda item: (item[1], item[0]), reverse=True)
+    deduped: dict[str, float] = {}
+    for row_symbol, score in rows:
+        deduped.setdefault(row_symbol, score)
+    if symbol not in deduped:
+        return None
+    return percentile_score(list(deduped.values()), deduped[symbol], higher_is_better=True)
 
 
 def lookup_phase5(path: Path | None, symbol: str, trade_date_text: str) -> PhaseValue:
@@ -536,6 +713,7 @@ def format_result(result: StockLookupResult) -> str:
                 f"最新价格：{format_number(intra.latest_price, 2)}  涨幅：{format_signed_percent(intra.pct_change)}",
                 f"ATR14：{format_number(intra.atr14, 4)}  ATR%：{format_number(intra.atr_pct, 2)}%  建议仓位：{format_number(intra.max_position_pct, 2)}%",
                 f"P1/P2/P4：{format_number(intra.phase1.score_100, 2)} / {format_number(intra.phase2.score_100, 2)} / {format_number(intra.phase4.score_100, 2)}",
+                f"P4五日均/波动：{format_number(safe_float(intra.phase4.extra.get('phase4_5d_mean')), 2)} / {format_number(safe_float(intra.phase4.extra.get('phase4_5d_std')), 2)}",
                 f"Phase2 CUSUM：{format_flag(intra.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(intra.phase4.rank)}",
                 f"MACD：{translate_macd(intra.macd.get('macd_cross_state'))}  背离：{translate_macd(intra.macd.get('macd_divergence_state'))}  量价：{translate_macd(intra.macd.get('volume_price_divergence_state'))}",
             ]
@@ -551,6 +729,7 @@ def format_result(result: StockLookupResult) -> str:
             f"盘后收盘价：{format_number(post.close, 2)}",
             f"ATR14：{format_number(post.atr14, 4)}  ATR%：{format_number(post.atr_pct, 2)}%  建议仓位：{format_number(post.max_position_pct, 2)}%",
             f"P1/P2/P4/P5：{format_number(post.phase1.score_100, 2)} / {format_number(post.phase2.score_100, 2)} / {format_number(post.phase4.score_100, 2)} / {format_number(post.phase5.score_100, 2)}",
+            f"P4五日均/波动：{format_number(safe_float(post.phase4.extra.get('phase4_5d_mean')), 2)} / {format_number(safe_float(post.phase4.extra.get('phase4_5d_std')), 2)}",
             f"Phase2 CUSUM：{format_flag(post.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(post.phase4.rank)}",
             f"MACD：{translate_macd(post.macd.get('macd_cross_state'))}  背离：{translate_macd(post.macd.get('macd_divergence_state'))}  量价：{translate_macd(post.macd.get('volume_price_divergence_state'))}",
             f"Pattern：{pattern_text}",
@@ -611,6 +790,16 @@ def trim_text(text: str, max_length: int) -> str:
     return text[: max_length - 3] + "..."
 
 
+def format_ambiguous_matches(query: str, matches: list[StockNameMatch]) -> str:
+    shown = matches[:20]
+    lines = [f"名称“{query}”匹配到多个股票，请输入更完整名称或直接输入代码："]
+    for match in shown:
+        lines.append(f"- {match.symbol}  {match.name}（{match.source}）")
+    if len(matches) > len(shown):
+        lines.append(f"... 另有 {len(matches) - len(shown)} 个匹配结果")
+    return "\n".join(lines)
+
+
 def run_cli(symbol: str) -> int:
     try:
         print(format_result(lookup_stock(symbol)))
@@ -647,7 +836,7 @@ def run_gui() -> None:
 
     input_card = Frame(shell, bg="#ffffff", highlightthickness=1, highlightbackground="#d7dee6")
     input_card.grid(row=2, column=0, columnspan=3, sticky="ew")
-    Label(input_card, text="股票代码", bg="#ffffff", fg="#334155", font=("Microsoft YaHei UI", 10)).grid(
+    Label(input_card, text="代码/名称", bg="#ffffff", fg="#334155", font=("Microsoft YaHei UI", 10)).grid(
         row=0,
         column=0,
         padx=(14, 8),
@@ -697,7 +886,7 @@ def run_gui() -> None:
     result_box.tag_configure("title", foreground="#0f766e", font=("Microsoft YaHei UI", 14, "bold"))
     result_box.tag_configure("section", foreground="#0f172a", font=("Microsoft YaHei UI", 12, "bold"))
     result_box.tag_configure("muted", foreground="#64748b")
-    write_result(result_box, "输入 6 位股票代码后点击查询。")
+    write_result(result_box, "输入股票代码或名称后点击查询。名称支持模糊匹配；如果匹配多个，会列出候选代码。")
 
     def submit() -> None:
         try:
@@ -728,7 +917,7 @@ def write_result(widget: Text, content: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="查询最新 ATR、MACD、Phase、Pattern 与建议最大持仓比例。")
-    parser.add_argument("--symbol", help="股票代码；不传则启动 GUI。")
+    parser.add_argument("--symbol", help="股票代码或名称；不传则启动 GUI。")
     args = parser.parse_args()
     if args.symbol:
         return run_cli(args.symbol)
