@@ -360,6 +360,7 @@ Phase8 Top5短线观察表字段固定如下：
 - 数据来源是 [track_stock.xlsx](/C:/Users/wdyab/Desktop/wdy/stocks/track_stock.xlsx) 的 `Sheet2`
 - 如果当天 `daily-screening` 没有更新 `track_stock.xlsx`，先运行 `track-stock --date YYYY-MM-DD` 再写总结
 - 跟踪股票总结表必须显示 `股票名称`，紧跟在 `股票代码` 后面；如果 `Sheet2` 未带名称，就从主 `watchlist`、universe 或历史候选中补齐，实在缺失才写 `缺失`
+- 跟踪股票总结表的 `P4五日均/std` 优先读取 `Sheet2` 的 `Phase4五日均分` 和 `Phase4五日STD`；如果两列缺失，说明 `track-stock` 输出过旧，应先重新运行 `track-stock --date YYYY-MM-DD`
 - 跟踪股票不要求进入主 `watchlist`；即使没有进入 watchlist，也必须给出“适合买入 / 观察 / 不适合”的结论
 - `Phase分` 固定写成 `P1 x / P2 x / P4 x / P5 x / P7 x / P8 x`
 - `是否适合买入` 只使用三档：

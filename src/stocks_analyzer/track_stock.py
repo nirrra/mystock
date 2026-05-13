@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 
 from .phase_display import add_phase5_score_100, phase7_score_100, score_series_100
+from .phase4_rolling import merge_phase4_rolling_frame
 from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, recommended_position_percent_from_mapping
 
 
@@ -32,10 +33,13 @@ class TrackStockUpdateResult:
 TRACK_STOCK_COLUMNS = [
     "trade_date",
     "symbol",
+    "name",
     "phase1_score_100",
     "phase2_score_100",
     "phase2_is_cusum_event",
     "phase4_score_100",
+    "phase4_5d_mean",
+    "phase4_5d_std",
     "phase5_score_100",
     "phase8_score_100",
     "phase7_score_100",
@@ -71,10 +75,13 @@ TRACK_STOCK_COLUMNS = [
 TRACK_STOCK_HEADERS_ZH = {
     "trade_date": "交易日期",
     "symbol": "股票代码",
+    "name": "股票名称",
     "phase1_score_100": "Phase1买入分",
     "phase2_score_100": "Phase2买入分",
     "phase2_is_cusum_event": "Phase2是否CUSUM事件",
     "phase4_score_100": "Phase4买入分",
+    "phase4_5d_mean": "Phase4五日均分",
+    "phase4_5d_std": "Phase4五日STD",
     "phase5_score_100": "Phase5买入分",
     "phase8_score_100": "Phase8短线分",
     "phase7_score_100": "Phase7交易日分",
@@ -120,7 +127,7 @@ def update_track_stock_workbook(
 
     phase1 = _prepare_phase1(_read_csv(_phase1_path(project_root, trade_date)), filter_rate=0.2)
     phase2 = _prepare_phase2(_read_csv(_phase2_path(project_root, trade_date)), filter_rate=0.2)
-    phase4 = _prepare_phase4(_read_csv(_phase4_path(project_root, trade_date)))
+    phase4 = _prepare_phase4(_read_csv(_phase4_path(project_root, trade_date)), project_root=project_root, trade_date=trade_date)
     phase5 = _prepare_phase5(_read_csv(_phase5_path(project_root)), trade_date=trade_date)
     phase8 = _prepare_phase8(_read_csv(_phase8_path(project_root, trade_date)))
     phase7 = _prepare_phase7(_read_csv(_phase7_path(project_root, trade_date)))
@@ -345,7 +352,7 @@ def _prepare_risk_scores(
     return _records_by_symbol(data, keep)
 
 
-def _prepare_phase4(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+def _prepare_phase4(frame: pd.DataFrame, *, project_root: Path, trade_date: date) -> dict[str, dict[str, Any]]:
     if frame.empty or "symbol" not in frame.columns or "return_score" not in frame.columns:
         return {}
     data = frame.copy()
@@ -358,7 +365,17 @@ def _prepare_phase4(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
     data["phase4_rank"] = data.index + 1
     data["phase4_score_percentile"] = data["phase4_return_score"].rank(pct=True, method="max")
     data["phase4_score_100"] = score_series_100(data["phase4_return_score"], higher_is_better=True)
-    keep = ["symbol", "name", "phase4_score_100", "phase4_return_score", "phase4_rank", "phase4_score_percentile"]
+    data = merge_phase4_rolling_frame(data, project_root=project_root, trade_date=trade_date)
+    keep = [
+        "symbol",
+        "name",
+        "phase4_score_100",
+        "phase4_5d_mean",
+        "phase4_5d_std",
+        "phase4_return_score",
+        "phase4_rank",
+        "phase4_score_percentile",
+    ]
     return _records_by_symbol(data, keep)
 
 
