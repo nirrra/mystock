@@ -38,6 +38,15 @@ MACD_TEXT = {
     "none": "无",
 }
 
+APP_BG = "#f3f5f7"
+CARD_BG = "#ffffff"
+TEXT_DARK = "#111827"
+TEXT_MUTED = "#667085"
+BORDER = "#d8dee6"
+ACCENT = "#c24130"
+ACCENT_DARK = "#9f2d24"
+ACCENT_LIGHT = "#fee2dc"
+
 
 @dataclass(frozen=True)
 class PhaseValue:
@@ -810,32 +819,32 @@ def format_result(result: StockLookupResult) -> str:
         lines.extend(
             [
                 "",
-                "最新日中结果",
-                f"时间：{format_datetime(intra.trade_date, intra.quote_datetime)}",
-                f"来源：{intra.source_label} / {intra.source_file.name}",
-                f"最新价格：{format_number(intra.latest_price, 2)}  涨幅：{format_signed_percent(intra.pct_change)}",
-                f"ATR14：{format_number(intra.atr14, 4)}  ATR%：{format_number(intra.atr_pct, 2)}%  建议仓位：{format_number(intra.max_position_pct, 2)}%",
-                f"P1/P2/P4/P8：{format_number(intra.phase1.score_100, 2)} / {format_number(intra.phase2.score_100, 2)} / {format_number(intra.phase4.score_100, 2)} / {format_number(intra.phase8.score_100, 2)}",
-                f"P4五日均/波动：{format_number(safe_float(intra.phase4.extra.get('phase4_5d_mean')), 2)} / {format_number(safe_float(intra.phase4.extra.get('phase4_5d_std')), 2)}",
-                f"Phase2 CUSUM：{format_flag(intra.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(intra.phase4.rank)}  P8排名：{format_rank(intra.phase8.rank)}",
-                f"MACD：{translate_macd(intra.macd.get('macd_cross_state'))}  背离：{translate_macd(intra.macd.get('macd_divergence_state'))}  量价：{translate_macd(intra.macd.get('volume_price_divergence_state'))}",
+                "日中参数",
+                f"时间    {format_datetime(intra.trade_date, intra.quote_datetime)}",
+                f"来源    {intra.source_label} / {intra.source_file.name}",
+                f"价格    {format_number(intra.latest_price, 2)}    涨幅 {format_signed_percent(intra.pct_change)}",
+                f"ATR     {format_number(intra.atr14, 4)}    ATR% {format_number(intra.atr_pct, 2)}%    仓位 {format_number(intra.max_position_pct, 2)}%",
+                f"Phase   P1 {format_number(intra.phase1.score_100, 1)}   P2 {format_number(intra.phase2.score_100, 1)}   P4 {format_number(intra.phase4.score_100, 1)}   P8 {format_number(intra.phase8.score_100, 1)}",
+                f"P4五日   均值 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_mean')), 1)}   波动 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_std')), 1)}",
+                f"事件    CUSUM {format_flag(intra.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(intra.phase4.rank)}   P8排名 {format_rank(intra.phase8.rank)}",
+                f"技术    MACD {translate_macd(intra.macd.get('macd_cross_state'))}   背离 {translate_macd(intra.macd.get('macd_divergence_state'))}   量价 {translate_macd(intra.macd.get('volume_price_divergence_state'))}",
             ]
         )
     else:
-        lines.extend(["", "最新日中结果", "无日中数据"])
+        lines.extend(["", "日中参数", "无日中数据"])
 
     lines.extend(
         [
             "",
-            "最新盘后结果",
-            f"日期：{post.trade_date}",
-            f"盘后收盘价：{format_number(post.close, 2)}",
-            f"ATR14：{format_number(post.atr14, 4)}  ATR%：{format_number(post.atr_pct, 2)}%  建议仓位：{format_number(post.max_position_pct, 2)}%",
-            f"P1/P2/P4/P5/P8：{format_number(post.phase1.score_100, 2)} / {format_number(post.phase2.score_100, 2)} / {format_number(post.phase4.score_100, 2)} / {format_number(post.phase5.score_100, 2)} / {format_number(post.phase8.score_100, 2)}",
-            f"P4五日均/波动：{format_number(safe_float(post.phase4.extra.get('phase4_5d_mean')), 2)} / {format_number(safe_float(post.phase4.extra.get('phase4_5d_std')), 2)}",
-            f"Phase2 CUSUM：{format_flag(post.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(post.phase4.rank)}  P8排名：{format_rank(post.phase8.rank)}",
-            f"MACD：{translate_macd(post.macd.get('macd_cross_state'))}  背离：{translate_macd(post.macd.get('macd_divergence_state'))}  量价：{translate_macd(post.macd.get('volume_price_divergence_state'))}",
-            f"Pattern：{pattern_text}",
+            "盘后参数",
+            f"日期    {post.trade_date}",
+            f"收盘    {format_number(post.close, 2)}",
+            f"ATR     {format_number(post.atr14, 4)}    ATR% {format_number(post.atr_pct, 2)}%    仓位 {format_number(post.max_position_pct, 2)}%",
+            f"Phase   P1 {format_number(post.phase1.score_100, 1)}   P2 {format_number(post.phase2.score_100, 1)}   P4 {format_number(post.phase4.score_100, 1)}   P5 {format_number(post.phase5.score_100, 1)}   P8 {format_number(post.phase8.score_100, 1)}",
+            f"P4五日   均值 {format_number(safe_float(post.phase4.extra.get('phase4_5d_mean')), 1)}   波动 {format_number(safe_float(post.phase4.extra.get('phase4_5d_std')), 1)}",
+            f"事件    CUSUM {format_flag(post.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(post.phase4.rank)}   P8排名 {format_rank(post.phase8.rank)}",
+            f"技术    MACD {translate_macd(post.macd.get('macd_cross_state'))}   背离 {translate_macd(post.macd.get('macd_divergence_state'))}   量价 {translate_macd(post.macd.get('volume_price_divergence_state'))}",
+            f"Pattern {pattern_text}",
         ]
     )
     lines.extend(["", "六维评分"])
@@ -919,30 +928,30 @@ def run_gui() -> None:
     root = Tk()
     root.title("股票参数查询工具")
     root.resizable(False, False)
-    root.configure(bg="#eef2f3")
+    root.configure(bg=APP_BG)
 
     symbol_value = StringVar()
-    shell = Frame(root, bg="#eef2f3")
-    shell.grid(row=0, column=0, padx=18, pady=16, sticky="nsew")
+    shell = Frame(root, bg=APP_BG)
+    shell.grid(row=0, column=0, padx=16, pady=14, sticky="nsew")
 
     Label(
         shell,
         text="股票参数查询工具",
-        bg="#eef2f3",
-        fg="#0f172a",
+        bg=APP_BG,
+        fg=TEXT_DARK,
         font=("Microsoft YaHei UI", 16, "bold"),
-    ).grid(row=0, column=0, columnspan=3, sticky="w")
+    ).grid(row=0, column=0, columnspan=2, sticky="w")
     Label(
         shell,
         text="最新日中结果 + 盘后参数 + 六维评分",
-        bg="#eef2f3",
-        fg="#475569",
+        bg=APP_BG,
+        fg=TEXT_MUTED,
         font=("Microsoft YaHei UI", 9),
-    ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 12))
+    ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 10))
 
-    input_card = Frame(shell, bg="#ffffff", highlightthickness=1, highlightbackground="#d7dee6")
-    input_card.grid(row=2, column=0, columnspan=3, sticky="ew")
-    Label(input_card, text="代码/名称", bg="#ffffff", fg="#334155", font=("Microsoft YaHei UI", 10)).grid(
+    input_card = Frame(shell, bg=CARD_BG, highlightthickness=1, highlightbackground=BORDER)
+    input_card.grid(row=2, column=0, columnspan=2, sticky="ew")
+    Label(input_card, text="代码/名称", bg=CARD_BG, fg="#334155", font=("Microsoft YaHei UI", 10)).grid(
         row=0,
         column=0,
         padx=(14, 8),
@@ -955,8 +964,8 @@ def run_gui() -> None:
         width=18,
         relief="flat",
         bg="#f8fafc",
-        fg="#0f172a",
-        insertbackground="#0f172a",
+        fg=TEXT_DARK,
+        insertbackground=TEXT_DARK,
         font=("Consolas", 12),
     )
     entry.grid(row=0, column=1, padx=(0, 10), pady=12, ipady=5)
@@ -966,44 +975,55 @@ def run_gui() -> None:
         width=10,
         command=lambda: submit(),
         relief="flat",
-        bg="#0f766e",
+        bg=ACCENT,
         fg="#ffffff",
-        activebackground="#115e59",
+        activebackground=ACCENT_DARK,
         activeforeground="#ffffff",
         font=("Microsoft YaHei UI", 10, "bold"),
     )
     query_button.grid(row=0, column=2, padx=(0, 14), pady=12, ipady=3)
 
-    chart = Canvas(
-        shell,
-        width=760,
-        height=260,
-        bg="#ffffff",
-        highlightthickness=1,
-        highlightbackground="#d7dee6",
-    )
-    chart.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(12, 0))
-    draw_empty_radar(chart)
+    content = Frame(shell, bg=APP_BG)
+    content.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
 
     result_box = Text(
-        shell,
-        width=86,
-        height=20,
+        content,
+        width=58,
+        height=27,
         wrap="word",
         relief="flat",
-        bg="#ffffff",
-        fg="#111827",
+        bg=CARD_BG,
+        fg=TEXT_DARK,
         padx=16,
         pady=14,
         font=("Microsoft YaHei UI", 11),
         highlightthickness=1,
-        highlightbackground="#d7dee6",
+        highlightbackground=BORDER,
+        spacing1=2,
+        spacing3=4,
     )
-    result_box.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(12, 0))
-    result_box.tag_configure("title", foreground="#0f766e", font=("Microsoft YaHei UI", 14, "bold"))
-    result_box.tag_configure("section", foreground="#0f172a", font=("Microsoft YaHei UI", 12, "bold"))
-    result_box.tag_configure("muted", foreground="#64748b")
-    write_result(result_box, "输入股票代码或名称后点击查询。名称支持模糊匹配；如果匹配多个，会列出候选代码。")
+    result_box.grid(row=0, column=0, sticky="nsew")
+
+    chart = Canvas(
+        content,
+        width=390,
+        height=420,
+        bg=CARD_BG,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+    )
+    chart.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+    draw_empty_radar(chart)
+
+    result_box.tag_configure("title", foreground=ACCENT_DARK, font=("Microsoft YaHei UI", 15, "bold"), spacing3=8)
+    result_box.tag_configure("section", foreground=TEXT_DARK, font=("Microsoft YaHei UI", 12, "bold"), spacing1=8, spacing3=3)
+    result_box.tag_configure("muted", foreground=TEXT_MUTED)
+    result_box.tag_configure("metric", foreground="#1f2937", font=("Microsoft YaHei UI", 10))
+    write_result(result_box, "输入股票代码或名称后点击查询。\n名称支持模糊匹配；如果匹配多个，会列出候选代码。")
+
+    # Keep a reference on shell so nested submit can update both widgets without globals.
+    shell._result_box = result_box  # type: ignore[attr-defined]
+    shell._chart = chart  # type: ignore[attr-defined]
 
     def submit() -> None:
         try:
@@ -1021,35 +1041,42 @@ def run_gui() -> None:
 
 
 def draw_empty_radar(canvas: Canvas) -> None:
-    canvas.delete("all")
-    canvas.create_text(
-        380,
-        130,
-        text="查询后显示六维评分图",
-        fill="#64748b",
-        font=("Microsoft YaHei UI", 14, "bold"),
-    )
+    draw_radar_base(canvas, [(label, None) for label, _score in empty_six_dimension_labels()])
 
 
 def draw_radar(canvas: Canvas, result: StockLookupResult) -> None:
+    draw_radar_base(canvas, build_six_dimension_scores(result))
+
+
+def empty_six_dimension_labels() -> list[tuple[str, None]]:
+    return [
+        ("风险质量", None),
+        ("上涨预期", None),
+        ("趋势稳定", None),
+        ("长期稳健", None),
+        ("短线爆发", None),
+        ("仓位空间", None),
+    ]
+
+
+def draw_radar_base(canvas: Canvas, scores: list[tuple[str, float | None]]) -> None:
     canvas.delete("all")
-    scores = build_six_dimension_scores(result)
     width = int(canvas["width"])
     height = int(canvas["height"])
     center_x = width // 2
-    center_y = height // 2 + 8
-    radius = 82
-    label_radius = 112
+    center_y = height // 2 + 16
+    radius = 112
+    label_radius = 148
     axis_count = len(scores)
     start_angle = -math.pi / 2
 
     canvas.create_text(
-        18,
-        16,
+        20,
+        22,
         text="六维参数图（0-100，越高越有利）",
         anchor="w",
-        fill="#0f172a",
-        font=("Microsoft YaHei UI", 12, "bold"),
+        fill=TEXT_DARK,
+        font=("Microsoft YaHei UI", 13, "bold"),
     )
 
     for level in (20, 40, 60, 80, 100):
@@ -1060,17 +1087,27 @@ def draw_radar(canvas: Canvas, result: StockLookupResult) -> None:
             points.extend([center_x + level_radius * math.cos(angle), center_y + level_radius * math.sin(angle)])
         canvas.create_polygon(
             points,
-            outline="#dbe4ea" if level < 100 else "#c5d0dc",
+            outline="#e2e8f0" if level < 100 else "#cbd5e1",
             fill="",
             width=1,
         )
+        if level in {60, 100}:
+            canvas.create_text(
+                center_x + 6,
+                center_y - level_radius,
+                text=str(level),
+                anchor="w",
+                fill="#94a3b8",
+                font=("Microsoft YaHei UI", 8),
+            )
 
     polygon_points: list[float] = []
+    valid_points = 0
     for index, (label, score) in enumerate(scores):
         angle = start_angle + 2 * math.pi * index / axis_count
         axis_x = center_x + radius * math.cos(angle)
         axis_y = center_y + radius * math.sin(angle)
-        canvas.create_line(center_x, center_y, axis_x, axis_y, fill="#d1dae4", width=1)
+        canvas.create_line(center_x, center_y, axis_x, axis_y, fill="#d8e0e8", width=1)
 
         label_x = center_x + label_radius * math.cos(angle)
         label_y = center_y + label_radius * math.sin(angle)
@@ -1079,37 +1116,38 @@ def draw_radar(canvas: Canvas, result: StockLookupResult) -> None:
             anchor = "w"
         elif math.cos(angle) < -0.35:
             anchor = "e"
-        value_text = "缺失" if score is None else f"{score:.0f}"
+        value_text = "--" if score is None else f"{score:.0f}"
         canvas.create_text(
             label_x,
             label_y,
             text=f"{label}\n{value_text}",
             anchor=anchor,
             justify="center",
-            fill="#0f172a",
+            fill=TEXT_DARK,
             font=("Microsoft YaHei UI", 9, "bold"),
         )
 
-        score_value = 0.0 if score is None else min(100.0, max(0.0, float(score)))
+        if score is None:
+            continue
+        score_value = min(100.0, max(0.0, float(score)))
         point_radius = radius * score_value / 100.0
         point_x = center_x + point_radius * math.cos(angle)
         point_y = center_y + point_radius * math.sin(angle)
         polygon_points.extend([point_x, point_y])
-        canvas.create_oval(point_x - 3, point_y - 3, point_x + 3, point_y + 3, fill="#0f766e", outline="#0f766e")
+        valid_points += 1
+        canvas.create_oval(
+            point_x - 4,
+            point_y - 4,
+            point_x + 4,
+            point_y + 4,
+            fill=ACCENT,
+            outline=ACCENT_DARK,
+            tags=("score_point",),
+        )
 
-    if polygon_points:
-        canvas.create_polygon(polygon_points, fill="#14b8a6", outline="#0f766e", width=2, stipple="gray25")
-
-    legend_x = 20
-    legend_y = height - 46
-    canvas.create_text(
-        legend_x,
-        legend_y,
-        anchor="w",
-        text="风险质量=P1/P2均值；仓位空间=建议总仓位相对40%上限归一化。",
-        fill="#64748b",
-        font=("Microsoft YaHei UI", 9),
-    )
+    if valid_points == axis_count:
+        canvas.create_polygon(polygon_points, fill=ACCENT_LIGHT, outline=ACCENT_DARK, width=2)
+        canvas.tag_raise("score_point")
 
 
 def write_result(widget: Text, content: str) -> None:
@@ -1119,10 +1157,12 @@ def write_result(widget: Text, content: str) -> None:
         tag = None
         if index == 0:
             tag = "title"
-        elif line in {"最新日中结果", "最新盘后结果", "六维评分"}:
+        elif line in {"日中参数", "盘后参数", "六维评分"}:
             tag = "section"
-        elif line.startswith("来源：") or line == "无日中数据":
+        elif line.startswith("来源") or line == "无日中数据":
             tag = "muted"
+        elif index > 0 and line.strip():
+            tag = "metric"
         widget.insert(END, line + "\n", tag)
     widget.configure(state="disabled")
 
