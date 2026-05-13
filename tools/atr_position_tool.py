@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from tkinter import Button, END, Entry, Frame, Label, StringVar, Text, Tk, messagebox
+from tkinter import Button, Canvas, END, Entry, Frame, Label, StringVar, Text, Tk, messagebox
 
 
 POSITION_RISK_FRACTION = 0.02
@@ -67,6 +67,7 @@ class IntradayLookupResult:
     phase1: PhaseValue
     phase2: PhaseValue
     phase4: PhaseValue
+    phase8: PhaseValue
     source_file: Path
 
 
@@ -82,6 +83,7 @@ class PostMarketLookupResult:
     phase2: PhaseValue
     phase4: PhaseValue
     phase5: PhaseValue
+    phase8: PhaseValue
     pattern: PatternValue
     source_files: dict[str, Path | None]
 
@@ -282,6 +284,7 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         "Phase2": root / "reports" / "full_market_model" / f"barrier_risk_predictions_{trade_date}.csv",
         "Phase4": root / "reports" / "full_market_model" / f"alpha158_qlib_return_predictions_{trade_date}.csv",
         "Phase5": root / "reports" / "full_market_model" / "mcd_crash_annual_measures.csv",
+        "Phase8": root / "reports" / "full_market_model" / f"limit_up_3d_opportunity_predictions_{trade_date}.csv",
         "Pattern": root / "reports" / "patterns" / f"patterns_all_{trade_date}.csv",
     }
 
@@ -318,6 +321,7 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
             extra={**phase4.extra, **phase4_rolling},
         )
     phase5 = lookup_phase5(paths["Phase5"], symbol, trade_date)
+    phase8 = lookup_phase8(paths["Phase8"], symbol)
     pattern = lookup_patterns(paths["Pattern"], symbol)
 
     return PostMarketLookupResult(
@@ -331,6 +335,7 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         phase2=phase2,
         phase4=phase4,
         phase5=phase5,
+        phase8=phase8,
         pattern=pattern,
         source_files={key: path if path.exists() else None for key, path in paths.items()},
     )
@@ -389,6 +394,12 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
             "phase4_5d_std": first_present(row, ("phase4_5d_std",)),
         },
     )
+    phase8 = PhaseValue(
+        score_100=safe_float(row.get("phase8_score_100")),
+        raw_score=safe_float(row.get("phase8_raw_score")),
+        rank=safe_int(row.get("phase8_rank")),
+        extra={"today_limit_up_excluded": row.get("today_limit_up_excluded")},
+    )
     return IntradayLookupResult(
         trade_date=str(trade_date),
         quote_datetime=str(quote_datetime),
@@ -402,6 +413,7 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
         phase1=phase1,
         phase2=phase2,
         phase4=phase4,
+        phase8=phase8,
         source_file=path,
     )
 
@@ -583,6 +595,26 @@ def lookup_phase5(path: Path | None, symbol: str, trade_date_text: str) -> Phase
     return PhaseValue(score_100=score_100, extra=extra)
 
 
+def lookup_phase8(path: Path | None, symbol: str) -> PhaseValue:
+    if path is None or not path.exists():
+        return PhaseValue()
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if normalize_symbol(row.get("symbol")) != symbol:
+                continue
+            return PhaseValue(
+                score_100=safe_float(row.get("phase8_score_100")),
+                raw_score=safe_float(row.get("phase8_raw_score")),
+                rank=safe_int(row.get("phase8_rank")),
+                extra={
+                    "today_limit_up_excluded": row.get("today_limit_up_excluded"),
+                    "today_high_return_vs_prev_close": row.get("today_high_return_vs_prev_close"),
+                    "today_close_return_vs_prev_close": row.get("today_close_return_vs_prev_close"),
+                },
+            )
+    return PhaseValue()
+
+
 def lookup_patterns(path: Path | None, symbol: str) -> PatternValue:
     if path is None or not path.exists():
         return PatternValue()
@@ -688,6 +720,77 @@ def recommended_position_percent(atr_pct: float) -> float:
     return round(position_fraction * 100.0, 2)
 
 
+def build_six_dimension_scores(result: StockLookupResult) -> list[tuple[str, float | None]]:
+    p1 = latest_phase_score(result, "phase1")
+    p2 = latest_phase_score(result, "phase2")
+    p4 = latest_phase_score(result, "phase4")
+    p5 = result.post_market.phase5.score_100
+    p8 = latest_phase_score(result, "phase8")
+    phase4_mean = latest_phase4_mean(result)
+    position_pct = latest_position_pct(result)
+    return [
+        ("风险质量", average_scores(p1, p2)),
+        ("上涨预期", clamp_score(p4)),
+        ("趋势稳定", clamp_score(phase4_mean)),
+        ("长期稳健", clamp_score(p5)),
+        ("短线爆发", clamp_score(p8)),
+        ("仓位空间", position_space_score(position_pct)),
+    ]
+
+
+def latest_phase_score(result: StockLookupResult, phase_name: str) -> float | None:
+    if result.intraday is not None:
+        value = getattr(result.intraday, phase_name).score_100
+        if is_valid_number(value):
+            return float(value)
+    value = getattr(result.post_market, phase_name).score_100
+    return float(value) if is_valid_number(value) else None
+
+
+def latest_phase4_mean(result: StockLookupResult) -> float | None:
+    if result.intraday is not None:
+        value = safe_float(result.intraday.phase4.extra.get("phase4_5d_mean"))
+        if is_valid_number(value):
+            return value
+    value = safe_float(result.post_market.phase4.extra.get("phase4_5d_mean"))
+    return value if is_valid_number(value) else None
+
+
+def latest_position_pct(result: StockLookupResult) -> float | None:
+    if result.intraday is not None and is_valid_number(result.intraday.max_position_pct):
+        return float(result.intraday.max_position_pct)
+    if is_valid_number(result.post_market.max_position_pct):
+        return float(result.post_market.max_position_pct)
+    return None
+
+
+def average_scores(*values: float | None) -> float | None:
+    valid = [float(value) for value in values if is_valid_number(value)]
+    if not valid:
+        return None
+    return clamp_score(sum(valid) / len(valid))
+
+
+def position_space_score(position_pct: float | None) -> float | None:
+    if not is_valid_number(position_pct):
+        return None
+    return clamp_score(float(position_pct) / (POSITION_MAX_SYMBOL_FRACTION * 100.0) * 100.0)
+
+
+def clamp_score(value: float | None) -> float | None:
+    if not is_valid_number(value):
+        return None
+    return round(min(100.0, max(0.0, float(value))), 2)
+
+
+def is_valid_number(value: object) -> bool:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number)
+
+
 def format_result(result: StockLookupResult) -> str:
     title = f"{result.symbol}"
     if result.name:
@@ -712,9 +815,9 @@ def format_result(result: StockLookupResult) -> str:
                 f"来源：{intra.source_label} / {intra.source_file.name}",
                 f"最新价格：{format_number(intra.latest_price, 2)}  涨幅：{format_signed_percent(intra.pct_change)}",
                 f"ATR14：{format_number(intra.atr14, 4)}  ATR%：{format_number(intra.atr_pct, 2)}%  建议仓位：{format_number(intra.max_position_pct, 2)}%",
-                f"P1/P2/P4：{format_number(intra.phase1.score_100, 2)} / {format_number(intra.phase2.score_100, 2)} / {format_number(intra.phase4.score_100, 2)}",
+                f"P1/P2/P4/P8：{format_number(intra.phase1.score_100, 2)} / {format_number(intra.phase2.score_100, 2)} / {format_number(intra.phase4.score_100, 2)} / {format_number(intra.phase8.score_100, 2)}",
                 f"P4五日均/波动：{format_number(safe_float(intra.phase4.extra.get('phase4_5d_mean')), 2)} / {format_number(safe_float(intra.phase4.extra.get('phase4_5d_std')), 2)}",
-                f"Phase2 CUSUM：{format_flag(intra.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(intra.phase4.rank)}",
+                f"Phase2 CUSUM：{format_flag(intra.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(intra.phase4.rank)}  P8排名：{format_rank(intra.phase8.rank)}",
                 f"MACD：{translate_macd(intra.macd.get('macd_cross_state'))}  背离：{translate_macd(intra.macd.get('macd_divergence_state'))}  量价：{translate_macd(intra.macd.get('volume_price_divergence_state'))}",
             ]
         )
@@ -728,13 +831,16 @@ def format_result(result: StockLookupResult) -> str:
             f"日期：{post.trade_date}",
             f"盘后收盘价：{format_number(post.close, 2)}",
             f"ATR14：{format_number(post.atr14, 4)}  ATR%：{format_number(post.atr_pct, 2)}%  建议仓位：{format_number(post.max_position_pct, 2)}%",
-            f"P1/P2/P4/P5：{format_number(post.phase1.score_100, 2)} / {format_number(post.phase2.score_100, 2)} / {format_number(post.phase4.score_100, 2)} / {format_number(post.phase5.score_100, 2)}",
+            f"P1/P2/P4/P5/P8：{format_number(post.phase1.score_100, 2)} / {format_number(post.phase2.score_100, 2)} / {format_number(post.phase4.score_100, 2)} / {format_number(post.phase5.score_100, 2)} / {format_number(post.phase8.score_100, 2)}",
             f"P4五日均/波动：{format_number(safe_float(post.phase4.extra.get('phase4_5d_mean')), 2)} / {format_number(safe_float(post.phase4.extra.get('phase4_5d_std')), 2)}",
-            f"Phase2 CUSUM：{format_flag(post.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(post.phase4.rank)}",
+            f"Phase2 CUSUM：{format_flag(post.phase2.extra.get('is_cusum_event'))}  Phase4排名：{format_rank(post.phase4.rank)}  P8排名：{format_rank(post.phase8.rank)}",
             f"MACD：{translate_macd(post.macd.get('macd_cross_state'))}  背离：{translate_macd(post.macd.get('macd_divergence_state'))}  量价：{translate_macd(post.macd.get('volume_price_divergence_state'))}",
             f"Pattern：{pattern_text}",
         ]
     )
+    lines.extend(["", "六维评分"])
+    for label, score in build_six_dimension_scores(result):
+        lines.append(f"{label}：{format_number(score, 1)}")
     if reason_text:
         lines.append(reason_text)
     return "\n".join(lines)
@@ -811,7 +917,7 @@ def run_cli(symbol: str) -> int:
 
 def run_gui() -> None:
     root = Tk()
-    root.title("股票速查")
+    root.title("股票参数查询工具")
     root.resizable(False, False)
     root.configure(bg="#eef2f3")
 
@@ -821,14 +927,14 @@ def run_gui() -> None:
 
     Label(
         shell,
-        text="股票速查",
+        text="股票参数查询工具",
         bg="#eef2f3",
         fg="#0f172a",
         font=("Microsoft YaHei UI", 16, "bold"),
     ).grid(row=0, column=0, columnspan=3, sticky="w")
     Label(
         shell,
-        text="最新日中结果 + 最新盘后背景",
+        text="最新日中结果 + 盘后参数 + 六维评分",
         bg="#eef2f3",
         fg="#475569",
         font=("Microsoft YaHei UI", 9),
@@ -868,10 +974,21 @@ def run_gui() -> None:
     )
     query_button.grid(row=0, column=2, padx=(0, 14), pady=12, ipady=3)
 
+    chart = Canvas(
+        shell,
+        width=760,
+        height=260,
+        bg="#ffffff",
+        highlightthickness=1,
+        highlightbackground="#d7dee6",
+    )
+    chart.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+    draw_empty_radar(chart)
+
     result_box = Text(
         shell,
-        width=64,
-        height=24,
+        width=86,
+        height=20,
         wrap="word",
         relief="flat",
         bg="#ffffff",
@@ -882,7 +999,7 @@ def run_gui() -> None:
         highlightthickness=1,
         highlightbackground="#d7dee6",
     )
-    result_box.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+    result_box.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(12, 0))
     result_box.tag_configure("title", foreground="#0f766e", font=("Microsoft YaHei UI", 14, "bold"))
     result_box.tag_configure("section", foreground="#0f172a", font=("Microsoft YaHei UI", 12, "bold"))
     result_box.tag_configure("muted", foreground="#64748b")
@@ -890,14 +1007,109 @@ def run_gui() -> None:
 
     def submit() -> None:
         try:
-            write_result(result_box, format_result(lookup_stock(symbol_value.get())))
+            result = lookup_stock(symbol_value.get())
+            draw_radar(chart, result)
+            write_result(result_box, format_result(result))
         except StockLookupError as exc:
+            draw_empty_radar(chart)
             write_result(result_box, str(exc))
             messagebox.showwarning("查询失败", str(exc), parent=root)
 
     entry.bind("<Return>", lambda _event: submit())
     entry.focus_set()
     root.mainloop()
+
+
+def draw_empty_radar(canvas: Canvas) -> None:
+    canvas.delete("all")
+    canvas.create_text(
+        380,
+        130,
+        text="查询后显示六维评分图",
+        fill="#64748b",
+        font=("Microsoft YaHei UI", 14, "bold"),
+    )
+
+
+def draw_radar(canvas: Canvas, result: StockLookupResult) -> None:
+    canvas.delete("all")
+    scores = build_six_dimension_scores(result)
+    width = int(canvas["width"])
+    height = int(canvas["height"])
+    center_x = width // 2
+    center_y = height // 2 + 8
+    radius = 82
+    label_radius = 112
+    axis_count = len(scores)
+    start_angle = -math.pi / 2
+
+    canvas.create_text(
+        18,
+        16,
+        text="六维参数图（0-100，越高越有利）",
+        anchor="w",
+        fill="#0f172a",
+        font=("Microsoft YaHei UI", 12, "bold"),
+    )
+
+    for level in (20, 40, 60, 80, 100):
+        points: list[float] = []
+        level_radius = radius * level / 100.0
+        for index in range(axis_count):
+            angle = start_angle + 2 * math.pi * index / axis_count
+            points.extend([center_x + level_radius * math.cos(angle), center_y + level_radius * math.sin(angle)])
+        canvas.create_polygon(
+            points,
+            outline="#dbe4ea" if level < 100 else "#c5d0dc",
+            fill="",
+            width=1,
+        )
+
+    polygon_points: list[float] = []
+    for index, (label, score) in enumerate(scores):
+        angle = start_angle + 2 * math.pi * index / axis_count
+        axis_x = center_x + radius * math.cos(angle)
+        axis_y = center_y + radius * math.sin(angle)
+        canvas.create_line(center_x, center_y, axis_x, axis_y, fill="#d1dae4", width=1)
+
+        label_x = center_x + label_radius * math.cos(angle)
+        label_y = center_y + label_radius * math.sin(angle)
+        anchor = "center"
+        if math.cos(angle) > 0.35:
+            anchor = "w"
+        elif math.cos(angle) < -0.35:
+            anchor = "e"
+        value_text = "缺失" if score is None else f"{score:.0f}"
+        canvas.create_text(
+            label_x,
+            label_y,
+            text=f"{label}\n{value_text}",
+            anchor=anchor,
+            justify="center",
+            fill="#0f172a",
+            font=("Microsoft YaHei UI", 9, "bold"),
+        )
+
+        score_value = 0.0 if score is None else min(100.0, max(0.0, float(score)))
+        point_radius = radius * score_value / 100.0
+        point_x = center_x + point_radius * math.cos(angle)
+        point_y = center_y + point_radius * math.sin(angle)
+        polygon_points.extend([point_x, point_y])
+        canvas.create_oval(point_x - 3, point_y - 3, point_x + 3, point_y + 3, fill="#0f766e", outline="#0f766e")
+
+    if polygon_points:
+        canvas.create_polygon(polygon_points, fill="#14b8a6", outline="#0f766e", width=2, stipple="gray25")
+
+    legend_x = 20
+    legend_y = height - 46
+    canvas.create_text(
+        legend_x,
+        legend_y,
+        anchor="w",
+        text="风险质量=P1/P2均值；仓位空间=建议总仓位相对40%上限归一化。",
+        fill="#64748b",
+        font=("Microsoft YaHei UI", 9),
+    )
 
 
 def write_result(widget: Text, content: str) -> None:
@@ -907,7 +1119,7 @@ def write_result(widget: Text, content: str) -> None:
         tag = None
         if index == 0:
             tag = "title"
-        elif line in {"最新日中结果", "最新盘后结果"}:
+        elif line in {"最新日中结果", "最新盘后结果", "六维评分"}:
             tag = "section"
         elif line.startswith("来源：") or line == "无日中数据":
             tag = "muted"
@@ -916,7 +1128,7 @@ def write_result(widget: Text, content: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="查询最新 ATR、MACD、Phase、Pattern 与建议最大持仓比例。")
+    parser = argparse.ArgumentParser(description="查询最新日中与盘后股票参数、Phase分、Pattern、ATR仓位和六维评分。")
     parser.add_argument("--symbol", help="股票代码或名称；不传则启动 GUI。")
     args = parser.parse_args()
     if args.symbol:
