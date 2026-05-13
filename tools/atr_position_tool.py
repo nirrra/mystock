@@ -66,6 +66,7 @@ class PatternValue:
 class IntradayLookupResult:
     trade_date: str
     quote_datetime: str
+    generated_at: str
     source_label: str
     latest_price: float | None
     pct_change: float | None
@@ -358,9 +359,13 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
         ("intraday_track_stock", "跟踪股"),
         ("intraday_screening", "全市场"),
     )
+    latest_reports = find_latest_intraday_report_batch(intraday_dir, source_defs)
+    if not latest_reports:
+        return None
+
     candidates: list[tuple[datetime, float, int, str, Path, dict[str, str]]] = []
     for priority, (prefix, label) in enumerate(source_defs):
-        found = find_latest_optional_report(intraday_dir, prefix)
+        found = latest_reports.get(prefix)
         if found is None:
             continue
         trade_date, path = found
@@ -374,6 +379,7 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
     _date_key, _mtime, _priority, label, path, row = max(candidates, key=lambda item: (item[0], item[1], item[2]))
     trade_date = first_present(row, ("intraday_trade_date", "trade_date", "atr_trade_date")) or report_date_from_path(path, "")
     quote_datetime = first_present(row, ("intraday_quote_datetime", "intraday_fetched_at", "intraday_quote_time")) or ""
+    generated_at = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
     latest_price = safe_float(first_present(row, ("atr_close", "latest_price", "close", "price")))
     pct_change_column, pct_change_value = first_present_item(row, ("intraday_pct_change", "涨幅%", "pct_change"))
     pct_change = parse_percent_value(pct_change_value, value_is_percent=pct_change_column in {"intraday_pct_change", "涨幅%"})
@@ -412,6 +418,7 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
     return IntradayLookupResult(
         trade_date=str(trade_date),
         quote_datetime=str(quote_datetime),
+        generated_at=generated_at,
         source_label=label,
         latest_price=latest_price,
         pct_change=pct_change,
@@ -425,6 +432,37 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
         phase8=phase8,
         source_file=path,
     )
+
+
+def find_latest_intraday_report_batch(
+    directory: Path,
+    source_defs: tuple[tuple[str, str], ...],
+) -> dict[str, tuple[str, Path]]:
+    found_by_prefix: dict[str, tuple[str, Path]] = {}
+    for prefix, _label in source_defs:
+        found = find_latest_optional_report(directory, prefix)
+        if found is not None:
+            found_by_prefix[prefix] = found
+    if not found_by_prefix:
+        return {}
+
+    latest_date = max(parse_report_date(trade_date) for trade_date, _path in found_by_prefix.values())
+    same_date = {
+        prefix: (trade_date, path)
+        for prefix, (trade_date, path) in found_by_prefix.items()
+        if parse_report_date(trade_date) == latest_date
+    }
+    if not same_date:
+        return {}
+
+    latest_mtime = max(path.stat().st_mtime for _trade_date, path in same_date.values())
+    # Files in the same intraday run can differ by a few seconds; keep that batch together.
+    batch_window_seconds = 120
+    return {
+        prefix: (trade_date, path)
+        for prefix, (trade_date, path) in same_date.items()
+        if latest_mtime - path.stat().st_mtime <= batch_window_seconds
+    }
 
 
 def find_latest_report(directory: Path, prefix: str) -> tuple[str, Path]:
@@ -814,25 +852,6 @@ def format_result(result: StockLookupResult) -> str:
         reason_text = trim_text("；".join(post.pattern.reasons), 120)
 
     lines = [title]
-    if result.intraday is not None:
-        intra = result.intraday
-        lines.extend(
-            [
-                "",
-                "日中参数",
-                f"时间    {format_datetime(intra.trade_date, intra.quote_datetime)}",
-                f"来源    {intra.source_label} / {intra.source_file.name}",
-                f"价格    {format_number(intra.latest_price, 2)}    涨幅 {format_signed_percent(intra.pct_change)}",
-                f"ATR     {format_number(intra.atr14, 4)}    ATR% {format_number(intra.atr_pct, 2)}%    仓位 {format_number(intra.max_position_pct, 2)}%",
-                f"Phase   P1 {format_number(intra.phase1.score_100, 1)}   P2 {format_number(intra.phase2.score_100, 1)}   P4 {format_number(intra.phase4.score_100, 1)}   P8 {format_number(intra.phase8.score_100, 1)}",
-                f"P4五日   均值 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_mean')), 1)}   波动 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_std')), 1)}",
-                f"事件    CUSUM {format_flag(intra.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(intra.phase4.rank)}   P8排名 {format_rank(intra.phase8.rank)}",
-                f"技术    MACD {translate_macd(intra.macd.get('macd_cross_state'))}   背离 {translate_macd(intra.macd.get('macd_divergence_state'))}   量价 {translate_macd(intra.macd.get('volume_price_divergence_state'))}",
-            ]
-        )
-    else:
-        lines.extend(["", "日中参数", "无日中数据"])
-
     lines.extend(
         [
             "",
@@ -847,6 +866,26 @@ def format_result(result: StockLookupResult) -> str:
             f"Pattern {pattern_text}",
         ]
     )
+    if result.intraday is not None:
+        intra = result.intraday
+        lines.extend(
+            [
+                "",
+                "日中参数",
+                f"时间    {format_datetime(intra.trade_date, intra.quote_datetime)}",
+                f"生成    {intra.generated_at}",
+                f"来源    {intra.source_label}",
+                f"价格    {format_number(intra.latest_price, 2)}    涨幅 {format_signed_percent(intra.pct_change)}",
+                f"ATR     {format_number(intra.atr14, 4)}    ATR% {format_number(intra.atr_pct, 2)}%    仓位 {format_number(intra.max_position_pct, 2)}%",
+                f"Phase   P1 {format_number(intra.phase1.score_100, 1)}   P2 {format_number(intra.phase2.score_100, 1)}   P4 {format_number(intra.phase4.score_100, 1)}   P8 {format_number(intra.phase8.score_100, 1)}",
+                f"P4五日   均值 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_mean')), 1)}   波动 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_std')), 1)}",
+                f"事件    CUSUM {format_flag(intra.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(intra.phase4.rank)}   P8排名 {format_rank(intra.phase8.rank)}",
+                f"技术    MACD {translate_macd(intra.macd.get('macd_cross_state'))}   背离 {translate_macd(intra.macd.get('macd_divergence_state'))}   量价 {translate_macd(intra.macd.get('volume_price_divergence_state'))}",
+            ]
+        )
+    else:
+        lines.extend(["", "日中参数", "无盘中信息"])
+
     lines.extend(["", "六维评分"])
     for label, score in build_six_dimension_scores(result):
         lines.append(f"{label}：{format_number(score, 1)}")
@@ -1159,7 +1198,7 @@ def write_result(widget: Text, content: str) -> None:
             tag = "title"
         elif line in {"日中参数", "盘后参数", "六维评分"}:
             tag = "section"
-        elif line.startswith("来源") or line == "无日中数据":
+        elif line.startswith("来源") or line == "无盘中信息":
             tag = "muted"
         elif index > 0 and line.strip():
             tag = "metric"
