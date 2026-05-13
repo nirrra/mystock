@@ -211,7 +211,6 @@ def main() -> None:
             trade_date=trade_date,
             data_interface=args.data_interface,
             limit=args.limit,
-            watchlist_only=args.watchlist_only,
             skip_intraday_update=args.skip_intraday_update,
             timeout_seconds=args.timeout,
             chunk_size=args.chunk_size,
@@ -220,14 +219,11 @@ def main() -> None:
         )
         print("Intraday screening complete.")
         print(f"Trade date: {result.trade_date.isoformat()}")
-        print(f"Source watchlist: {result.source_watchlist_path}")
+        print(f"Source intraday pool: {result.source_pool_path}")
+        print(f"Pool candidates: {result.pool_candidate_count}")
         print(f"Candidates: {result.candidate_count}")
         print(f"Intraday updated: {result.intraday_updated_count}")
-        if result.focus_output_path is not None:
-            print(f"Previous Top20 output: {result.focus_output_path}")
-            print(f"Previous Top20 candidates: {result.focus_candidate_count}")
         print(f"Output: {result.output_path}")
-        print(f"Top20 focus: {result.top20_path}")
         if result.track_stock_path is not None:
             print(f"Intraday track stock: {result.track_stock_path}")
             print(f"Tracked symbols: {result.track_stock_count}")
@@ -410,7 +406,7 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
     intraday.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
     intraday.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")
 
-    intraday_screening = subparsers.add_parser("intraday-screening", help="用盘中临时日 K 做全市场或 watchlist 分析")
+    intraday_screening = subparsers.add_parser("intraday-screening", help="用盘后 intraday_pool 加手动跟踪股做盘中快速分析")
     intraday_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     intraday_screening.add_argument(
         "--data-interface",
@@ -418,8 +414,7 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
         default="sina_raw",
         help="盘中数据接口",
     )
-    intraday_screening.add_argument("--limit", type=int, default=None, help="仅分析前 N 只股票")
-    intraday_screening.add_argument("--watchlist-only", action="store_true", help="只分析前一日主 watchlist；默认分析全市场")
+    intraday_screening.add_argument("--limit", type=int, default=None, help="仅分析 intraday_pool 前 N 只股票")
     intraday_screening.add_argument("--skip-intraday-update", action="store_true", help="不刷新盘中数据，直接使用 data/intraday")
     intraday_screening.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
     intraday_screening.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")

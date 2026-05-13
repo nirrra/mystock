@@ -14,24 +14,19 @@
 
 ```text
 主线.md
-reports/intraday_screening/intraday_top20_YYYY-MM-DD.csv
-reports/intraday_screening/intraday_top20_previous_YYYY-MM-DD.csv
-reports/intraday_screening/intraday_screening_YYYY-MM-DD.csv
+reports/watchlists/intraday_pool_上一交易日.csv
+reports/intraday_screening/intraday_pool_screening_YYYY-MM-DD.csv
 reports/intraday_screening/intraday_track_stock_YYYY-MM-DD.csv
 track_stock.xlsx
 ```
 
-`intraday_top20_previous_YYYY-MM-DD.csv` 是“上一轮 Top20/focus 股票池，在本次盘中数据下重新计算后的结果”。它不是旧文件原样复制，而是用于快速查看上一轮表现好的股票在本次盘中是否继续保持强度。
+`reports/watchlists/intraday_pool_上一交易日.csv` 是盘后 `daily-screening` 为下一交易日盘中快速跟踪生成的固定 100 池。`intraday_pool_screening_YYYY-MM-DD.csv` 是这个 100 池在当天盘中临时日 K 下重新计算后的结果，并已额外合并 `track_stock.xlsx` 里的手动跟踪股。
 
-日中名单必须先确定本次参考源：
-
-- 如果 `intraday_top20_previous_YYYY-MM-DD.csv` 不存在，说明没有上一轮 focus 缓存，直接使用 `intraday_top20_YYYY-MM-DD.csv`。
-- 如果 `intraday_top20_YYYY-MM-DD.csv` 的文件修改时间晚于 `intraday_top20_previous_YYYY-MM-DD.csv`，说明新的全市场 Top20 已经重新生成，优先参考 `intraday_top20_YYYY-MM-DD.csv`。
-- 否则优先参考 `intraday_top20_previous_YYYY-MM-DD.csv`，因为完整全市场名单可能尚未跑完，此时应先看上一轮 Top20 在本次盘中的最新表现。
+日中名单必须以 `intraday_pool_screening_YYYY-MM-DD.csv` 为主参考源，不从全市场临时重挑。`intraday_track_stock_YYYY-MM-DD.csv` 只用于手动跟踪股票总结。
 
 ## 数据口径
 
-`intraday-screening` 使用 `data/intraday` 下的盘中临时日 K，不写入 `data/daily`。它只跑 MACD、ATR、Phase1、Phase2、Phase4 和 Phase8；Phase8 模型文件尚未训练完成时会自动跳过，不影响日中流程。它不跑 Phase5、Phase7，也不重新识别 pattern。
+`intraday-screening` 使用 `data/intraday` 下的盘中临时日 K，不写入 `data/daily`。它只扫描盘后生成的 `intraday_pool` 和手动跟踪股，不做全市场扫描。盘中流程只跑 MACD、ATR、Phase1、Phase2、Phase4 和 Phase8；Phase8 模型文件尚未训练完成时会自动跳过，不影响日中流程。它不跑 Phase5、Phase7，也不重新识别 pattern。
 
 因此日中名单必须遵守：
 
@@ -39,7 +34,7 @@ track_stock.xlsx
 - `prev_pattern_*` 只能作为前一日形态背景，不写成“今日新命中 pattern”。
 - 没有 Phase7，当天交易环境只能结合主线和盘中强弱描述，不补写 Phase7 许可。
 - 没有 Phase5，不做长周期极端风险判断；盘后正式名单再补。若前一日 watchlist 带有 Phase5，可作为历史参考，但不能当成当日新计算结果。
-- Phase8 是三日内触及涨停机会模型，日中只独立展示和列出 Top5，不参与主 Top20 的 centered 排序。
+- Phase8 是三日内触及涨停机会模型，日中只独立展示和列出 Top5，不替代主线、P1/P2/P4 和涨幅约束。
 - `intraday_pct_change` 是盘中涨幅。涨幅超过 8% 的股票不进入日中主表。
 
 ## 选股原则
@@ -57,32 +52,34 @@ track_stock.xlsx
 
 如果股票技术分很高，但与当前主线无关，默认降级为“观察”，不要放在日中主表前列。
 
-### 2. 优先看可用的 Top20 参考源，不从全市场随意重挑
+### 2. 只看盘后 100 池和手动跟踪股，不从全市场随意重挑
 
-日中主表不直接从全市场随意重挑，而是先按文件时间确定一个“当前参考源”：
+盘中参考源固定为：
 
 ```text
-如果 intraday_top20_YYYY-MM-DD.csv 比 intraday_top20_previous_YYYY-MM-DD.csv 更新：
-    当前参考源 = intraday_top20_YYYY-MM-DD.csv
-否则：
-    当前参考源 = intraday_top20_previous_YYYY-MM-DD.csv
+当前参考源 = reports/intraday_screening/intraday_pool_screening_YYYY-MM-DD.csv
+手动跟踪源 = reports/intraday_screening/intraday_track_stock_YYYY-MM-DD.csv
 ```
 
-这样做是为了提高日中效率：完整全市场 Top20 重新生成可能较慢；在新 Top20 尚未更新完成时，优先查看上一轮 Top20/focus 股票在本次盘中数据下的表现。
+这样做是为了提高日中效率：全市场发现工作已经在盘后完成，盘中只刷新最多 100 只池内股票和手动跟踪股。
 
-当前参考源里的股票已经做过基础过滤，但过滤口径按来源分层：
+盘后 `intraday_pool` 的组成口径：
 
-- 非前日 pattern 背景票：`phase1_score_100 >= 40`、`phase2_score_100 >= 50`、`phase4_score_100 >= 70`
-- 前日 pattern 背景票：取消 P1/P2 分数底线，只要求 `phase4_score_100 > 70`
-- 所有来源都要求 `intraday_pct_change <= 8`
-- 计算 `intraday_focus_score = phase4_score_100 + 0.08 * P1_center + 0.12 * P2_center`
+- `pattern_pool`：`patterns_all` 中所有 pattern 命中股，最多 30 只；超过 30 只时保留 P4 分数更高的。
+- `p124_top50`：按 P1/P2/P4 混合分 `centered_risk_score` 排名前 50 的股票。
+- `p8_fill`：剩余名额用 Phase8 排名补足到最多 100 只。
+- `track_stock`：手动跟踪股由盘中流程额外合并，不占 100 池名额。
+
+当前参考源里的股票并不等同于自动买入名单。写日中主表时仍要二次筛选：
+
+- 非 pattern 背景票：优先要求 `phase1_score_100 >= 40`、`phase2_score_100 >= 50`、`phase4_score_100 >= 70`。
+- 前日 pattern 背景票：可以绕过 P1/P2 底线，但 P4 低于 70 时一般只能观察，不直接列为积极日中关注。
+- 所有主表股票都要求 `intraday_pct_change <= 8`。
+- 计算 `intraday_pool_score = phase4_score_100 + 0.08 * P1_center + 0.12 * P2_center`
 - 其中 `P1_center = max(0, 100 - 2 * abs(P1 - 80))`，`P2_center = max(0, 100 - 2 * abs(P2 - 80))`
-- 符合 P4 `> 70` 的前日 pattern 背景票优先保留，再用非 pattern 票按 `intraday_focus_score` 从高到低补足 20；同分时再看 `phase4_score_100 / phase1_center_score / phase2_center_score`
-- 如果存在 Phase8 预测，额外把 Phase8 Top5 作为 `p8_top5` 来源加入日中参考表；它是短线弹性观察，不改变 centered Top20 的排序口径。
+- 如果存在 Phase8 预测，额外从当前参考源中整理 Phase8 Top5 短线观察表；它是短线弹性观察，不改变主表排序。
 
-另外，`track_stock.xlsx` 的手动跟踪股票会额外并入 `intraday_top20_YYYY-MM-DD.csv`。这类行用 `track_stock = true` 和 `intraday_selection_source = track_stock` 或 `top20+track_stock` 标记。手动跟踪股是“必须点评的监测对象”，但不是自动买入名单。
-
-全市场 `intraday_screening_YYYY-MM-DD.csv` 只用于补充解释、查看同主线其他股票，不能绕过当前参考源大量重挑。只有当当前参考源明显缺少主线内候选时，才可从全市场结果中少量补充观察对象，并必须说明这是补充观察，不是 Top20 主筛结果。
+不要绕过 `intraday_pool_screening_YYYY-MM-DD.csv` 去全市场模型预测文件里挑新股。若当前参考源没有主线内合格股票，可以少选或不选。
 
 ### 3. P1/P2 是非 pattern 票的盘中风险底线
 
@@ -90,8 +87,8 @@ track_stock.xlsx
 
 写日中名单时：
 
-- 对非 pattern 背景票，P1 `>= 40`、P2 `>= 50` 是自动进入 Top20 的风险底线。
-- 对前一日 pattern 背景票，P1/P2 不作为剔除条件；只要 P4 `> 70` 且涨幅不过热，可以进入日中主表候选，但必须写清风险分偏低意味着波动和止损压力更大。
+- 对非 pattern 背景票，P1 `>= 40`、P2 `>= 50` 是进入日中主表的风险底线。
+- 对前一日 pattern 背景票，P1/P2 不作为硬剔除条件；但如果 P4 低于 70，通常只能观察，不能因为命中 pattern 就升为积极关注。
 - P1/P2 接近 `80`：优先。
 - P1/P2 过高，例如都在 `90+`：不自动升为最高优先级，需要结合 Phase4 和主线判断。
 - 非 pattern 背景票任一低于自动底线：不进入日中主表。
@@ -106,16 +103,16 @@ track_stock.xlsx
 ```text
 P1_center = max(0, 100 - 2 * abs(phase1_score_100 - 80))
 P2_center = max(0, 100 - 2 * abs(phase2_score_100 - 80))
-intraday_focus_score = phase4_score_100 + 0.08 * P1_center + 0.12 * P2_center
+intraday_pool_score = phase4_score_100 + 0.08 * P1_center + 0.12 * P2_center
 ```
 
-这个分数只用于生成和排序日中 Top20/focus 参考源，不是新的模型预测目标，也不写入最终日中选股表。
+这个分数只用于盘中 100 池内排序参考，不是新的模型预测目标，也不写入最终日中选股表。
 
 正确用法：
 
 - 先按主线归类。
 - 同一主线内，优先选择 P1/P2 更接近 `80`、Phase4 更高、涨幅不过热的股票。
-- 同一候选池内，优先看 centered Top20 中同时进入五日 P4 均分 Top5 的股票；这类股票说明当日风险位置和 Phase4 连续强度同时较好。
+- 同一候选池内，优先看 `p124_top50` 或同时进入五日 P4 均分 Top5 的股票；这类股票说明当日风险位置和 Phase4 连续强度同时较好。
 - Phase8 高分只代表三日内涨停机会更靠前，不能替代主线、P1/P2/P4 和涨幅约束；若 P8 高但涨幅已经偏高，只能写成观察或不追。
 - 如果两只股票 Phase4 接近，优先选 P1/P2 更接近 `80` 的一只。
 - 主线不匹配时，即使 Phase4 或内部排序分很高，也不要压过主线内质量合格的股票。
@@ -154,16 +151,16 @@ intraday_focus_score = phase4_score_100 + 0.08 * P1_center + 0.12 * P2_center
 
 ### 7. 手动跟踪股票必须单独总结
 
-日中名单必须包含“手动跟踪股票总结”。数据优先来自 `intraday_track_stock_YYYY-MM-DD.csv`；如果该文件不存在，就在 `intraday_top20_YYYY-MM-DD.csv` 中筛选 `track_stock = true` 的行。
+日中名单必须包含“手动跟踪股票总结”。数据优先来自 `intraday_track_stock_YYYY-MM-DD.csv`；如果该文件不存在，就在 `intraday_pool_screening_YYYY-MM-DD.csv` 中筛选 `track_stock = true` 的行。
 
 写法要求：
 
 - 每只 `track_stock` 都要给出“适合日中关注 / 观察 / 不适合”的结论。
 - 如果跟踪股不属于当前主线，默认降级为观察或不选。
 - 如果不是前日 pattern 背景票，P1 `< 40` 或 P2 `< 50` 默认不进入日中主表，但仍要在跟踪总结里说明风险。
-- 如果是前日 pattern 背景票，P1/P2 低分不直接剔除，但 P4 必须 `> 70`，且要说明“形态弹性较强但风险分偏低”。
+- 如果是前日 pattern 背景票，P1/P2 低分不直接剔除；但 P4 低于 70 时只能观察，不能作为积极日中关注。
 - 如果盘中涨幅高于 8%，不进入日中主表，只写“涨幅过高，不追”。
-- 如果跟踪股同时也是 Top20，说明它既在技术筛选内，也在手动跟踪列表内。
+- 如果跟踪股同时来自 `intraday_pool`，说明它既在盘后 100 池内，也在手动跟踪列表内。
 
 ## 输出格式
 
@@ -182,9 +179,9 @@ intraday_focus_score = phase4_score_100 + 0.08 * P1_center + 0.12 * P2_center
 
 Phase8 Top5短线观察：
 
-| 股票代码 | 股票名称 | P1 | P2 | P4 | P5 | P8 | 盘中涨幅 | ATR% | 建议总仓位 | 观察要点 |
-| -------- | -------- | -: | -: | -: | -: | -: | -------: | ---: | -----------: | -------- |
-| 000000 | 示例股票 | 80 | 78 | 86 | 缺失 | 93 | 2.8% | 4.10% | 28.7% | P8 短线弹性高，尾盘只看是否站稳结构位。 |
+| 股票代码 | 股票名称 | P1 | P2 | P4 | P8 | 盘中涨幅 | ATR% | 建议总仓位 | 观察要点 |
+| -------- | -------- | -: | -: | -: | -: | -------: | ---: | -----------: | -------- |
+| 000000 | 示例股票 | 80 | 78 | 86 | 93 | 2.8% | 4.10% | 28.7% | P8 短线弹性高，尾盘只看是否站稳结构位。 |
 
 日中判断：
 
@@ -200,20 +197,19 @@ Phase8 Top5短线观察：
 ## 写作要求
 
 - 结果先于分析，先给表，再给简短说明。
-- 日中选股表中不显示 `Focus` 或 `intraday_focus_score`。
+- 日中选股表中不显示 `intraday_pool_score`。
 - 日中选股表中把 P1、P2、P4 合并成一列，写成 `P1 / P2 / P4`。
 - 日中选股表和手动跟踪股票总结中必须显示 `P4五日均/std`，紧跟在 `P1/P2/P4` 后面，写成 `均值 / 标准差`。
 - 日中选股表和手动跟踪股票总结中必须显示 `P8`，紧跟在 `P4五日均/std` 后面；如果缺失，写 `缺失`。
-- 如果当天存在 Phase8 预测，必须额外写“Phase8 Top5短线观察”表，列出 P1/P2/P4/P5/P8、盘中涨幅、ATR% 和建议总仓位。
+- 如果当天存在 Phase8 预测，必须额外写“Phase8 Top5短线观察”表，列出 P1/P2/P4/P8、盘中涨幅、ATR% 和建议总仓位；不显示 P5。
 - 日中选股表中不放长判断，判断统一放在表格下方的 `日中判断` 短文本里。
 - 每只股票的判断必须尽量短，直接回答：可买、观察、不追或不适合。
 - 必须写“手动跟踪股票总结”；不要因为跟踪股没有进入日中主表就省略。
 - 不需要单独写“主线判断”和“盘中状态”。
-- 不需要写“上一轮重点股延续”。
 - 不需要写“不选或降级”清单。
 - 不要写“确定买入”“必涨”“下午拉升”这类确定性措辞。
-- 不要把全市场高 P4 股票全部放进主表；非 pattern 背景票 P4 高但 P1/P2 一般，默认只能观察。
-- 前一日 pattern 背景票可以绕过 P1/P2 底线，但必须有 P4 `> 70`，且不能忽略止损和仓位约束。
+- 不要绕过 `intraday_pool_screening_YYYY-MM-DD.csv` 去全市场模型预测文件里挑新股。
+- 前一日 pattern 背景票可以绕过 P1/P2 底线，但 P4 低于 70 时只能观察，且不能忽略止损和仓位约束。
 - 不要把前一日 pattern 写成今日 pattern。
 - 如果主线内没有合格股票，可以少选或不选，不用用非主线股票补满数量。
 - 最终盘后写入 [选股.md](/C:/Users/wdyab/Desktop/wdy/stocks/选股.md) 时，必须重新参考 [picks-writing-guide.md](/C:/Users/wdyab/Desktop/wdy/stocks/docs/picks-writing-guide.md)。

@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from stocks_analyzer.daily_screening import run_daily_screening
-from stocks_analyzer.watchlist import watchlist_path, watchlist_pattern_path
+from stocks_analyzer.watchlist import intraday_pool_path, watchlist_path, watchlist_pattern_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,8 +43,21 @@ def test_run_daily_screening_runs_current_pipeline_without_touching_picks(monkey
         target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return target, payload
 
+    def fake_intraday_pool(stage_index: int, total_stages: int, project_root: Path, trade_date: date):
+        target = intraday_pool_path(project_root, trade_date)
+        payload = {
+            "trade_date": trade_date.isoformat(),
+            "candidate_count": 1,
+            "candidates": [{"symbol": "002579", "name": "中京电子", "source": "pattern_pool"}],
+            "filter_summary": {"intraday_pool_count": 1},
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return target, payload
+
     monkeypatch.setattr("stocks_analyzer.daily_screening._run_project_command", fake_run_project_command)
     monkeypatch.setattr("stocks_analyzer.daily_screening._run_phase_watchlist_stage", fake_phase_watchlist)
+    monkeypatch.setattr("stocks_analyzer.daily_screening._run_intraday_pool_stage", fake_intraday_pool)
 
     result = run_daily_screening(project_root=tmp_path, trade_date=date(2026, 4, 11))
     output = capsys.readouterr().out
@@ -52,6 +65,8 @@ def test_run_daily_screening_runs_current_pipeline_without_touching_picks(monkey
     assert result.skipped is False
     assert result.watchlist_path is not None
     assert result.watchlist_path.exists()
+    assert result.intraday_pool_path is not None
+    assert result.intraday_pool_path.exists()
     assert picks_path.read_text(encoding="utf-8") == "原始内容\n"
     assert commands == [
         ["update", "--start-date", "20240101", "--end-date", "20260411"],
@@ -68,6 +83,8 @@ def test_run_daily_screening_runs_current_pipeline_without_touching_picks(monkey
 
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
     assert report["watchlist_path"] == str(result.watchlist_path)
+    assert report["intraday_pool_path"] == str(result.intraday_pool_path)
+    assert report["intraday_pool_csv_path"].endswith("intraday_pool_2026-04-11.csv")
     assert report["watchlist_pattern_path"].endswith("watchlist_pattern_2026-04-11.json")
     assert report["macd_path"].endswith("macd_2026-04-11.csv")
     assert report["atr_path"].endswith("atr_2026-04-11.csv")
@@ -78,9 +95,9 @@ def test_run_daily_screening_runs_current_pipeline_without_touching_picks(monkey
     assert report["phase8_path"] is None
     assert report["phase5_path"].endswith("mcd_crash_annual_measures.csv")
     assert report["phase7_path"].endswith("trade_day_gate_prediction_2026-04-11.csv")
-    assert "[0/12] 检查 2026-04-11 是否为交易日..." in output
-    assert "[7/12] phase8_limit_up_3d 跳过" in output
-    assert "[10/12] pattern 完成" in output
+    assert "[0/13] 检查 2026-04-11 是否为交易日..." in output
+    assert "[7/13] phase8_limit_up_3d 跳过" in output
+    assert "[10/13] pattern 完成" in output
 
 
 def _write_stage_output(project_root: Path, args: list[str]) -> None:

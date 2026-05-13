@@ -9,9 +9,10 @@ import pandas as pd
 from openpyxl import Workbook
 
 from stocks_analyzer.config import load_config
-from stocks_analyzer.intraday_screening import _select_top20_focus, run_intraday_screening
+from stocks_analyzer.intraday_screening import run_intraday_screening
 from stocks_analyzer.paths import ProjectPaths
 from stocks_analyzer.storage import Storage
+from stocks_analyzer.watchlist import intraday_pool_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,8 +58,8 @@ def _daily_bars(symbol: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _write_watchlist(project_root: Path) -> Path:
-    target = project_root / "reports" / "watchlists" / "watchlist_2026-05-07.json"
+def _write_intraday_pool(project_root: Path) -> Path:
+    target = intraday_pool_path(project_root, pd.Timestamp("2026-05-07").date())
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         json.dumps(
@@ -67,7 +68,8 @@ def _write_watchlist(project_root: Path) -> Path:
                     {
                         "symbol": "600001",
                         "name": "测试股份",
-                        "source": "pattern",
+                        "source": "pattern_pool",
+                        "source_tags": ["pattern_pool"],
                         "pattern_match": True,
                         "pattern_id": "5",
                         "pattern_ids": ["5"],
@@ -76,6 +78,7 @@ def _write_watchlist(project_root: Path) -> Path:
                         "phase2_score_100": 50.0,
                         "phase4_score_100": 60.0,
                         "连续上榜天数": 3,
+                        "intraday_pool_rank": 1,
                     }
                 ]
             },
@@ -114,21 +117,20 @@ def _save_intraday(storage: Storage) -> None:
     )
 
 
-def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeypatch) -> None:
+def test_intraday_screening_combines_intraday_bar_and_previous_pool(monkeypatch) -> None:
     tmp_path = _make_workspace_tmp_dir("intraday_screening")
     storage = _make_storage(tmp_path)
-    source_watchlist = _write_watchlist(tmp_path)
+    source_pool = _write_intraday_pool(tmp_path)
     storage.save_universe(pd.DataFrame([{"symbol": "600001", "name": "测试股份"}]))
     storage.save_daily_bars("600001", _daily_bars("600001"))
     _save_intraday(storage)
     report_dir = tmp_path / "reports" / "intraday_screening"
     report_dir.mkdir(parents=True, exist_ok=True)
     old_intermediate = report_dir / "intraday_all_tail_risk_predictions_2026-05-01.csv"
-    old_final = report_dir / "intraday_screening_2026-05-01.csv"
-    old_focus = report_dir / "intraday_screening_focus_2026-05-01.csv"
-    old_top10 = report_dir / "intraday_top10_2026-05-01.csv"
+    old_final = report_dir / "intraday_pool_screening_2026-05-01.csv"
+    old_track = report_dir / "intraday_track_stock_2026-05-01.csv"
     unrelated = report_dir / "manual_note.csv"
-    for path in (old_intermediate, old_final, old_focus, old_top10, unrelated):
+    for path in (old_intermediate, old_final, old_track, unrelated):
         path.write_text("x\n", encoding="utf-8")
 
     def fake_tail(*, storage, project_root, trade_date, output, limit=None, **kwargs):
@@ -198,15 +200,15 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
         report_keep_dates=1,
     )
 
-    assert result.source_watchlist_path == source_watchlist
+    assert result.source_pool_path == source_pool
     assert result.candidate_count == 1
-    assert result.top20_path.exists()
-    assert result.cleaned_report_files == 4
+    assert result.pool_candidate_count == 1
+    assert result.output_path.name == "intraday_pool_screening_2026-05-08.csv"
+    assert result.cleaned_report_files == 3
     assert result.phase1_path.parent == tmp_path / "data" / "intraday" / "screening_cache"
     assert not old_intermediate.exists()
     assert not old_final.exists()
-    assert not old_focus.exists()
-    assert not old_top10.exists()
+    assert not old_track.exists()
     assert unrelated.exists()
     output = pd.read_csv(result.output_path)
     assert output.loc[0, "symbol"] == 600001
@@ -216,7 +218,8 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
     assert output.loc[0, "phase1_score_100"] == 100.0
     assert output.loc[0, "phase2_score_100"] == 100.0
     assert output.loc[0, "phase4_score_100"] == 100.0
-    assert output.loc[0, "intraday_focus_score"] == 112.0
+    assert output.loc[0, "intraday_pool_score"] == 112.0
+    assert output.loc[0, "intraday_selection_source"] == "pattern_pool"
     assert 0 < output.loc[0, "建议总仓位%"] <= 40.0
     assert output.loc[0, "phase1_rank"] == 1
     assert output.loc[0, "phase2_rank"] == 1
@@ -235,22 +238,35 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
     assert "phase4_return_score" not in output.columns
     assert "name_x" not in output.columns
     assert "name_y" not in output.columns
-    top20 = pd.read_csv(result.top20_path)
-    assert top20.loc[0, "symbol"] == 600001
-    assert 0 < top20.loc[0, "建议总仓位%"] <= 40.0
-    focus_payload = json.loads((tmp_path / "data" / "intraday" / "focus_top20.json").read_text(encoding="utf-8"))
-    assert focus_payload["symbols"] == ["600001"]
 
 
-def test_intraday_screening_prioritizes_previous_focus_before_remaining(monkeypatch) -> None:
-    tmp_path = _make_workspace_tmp_dir("intraday_focus_first")
+def test_intraday_screening_uses_intraday_pool_without_full_market_remaining(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("intraday_pool_only")
     storage = _make_storage(tmp_path)
-    _write_watchlist(tmp_path)
+    pool_path = tmp_path / "reports" / "watchlists" / "intraday_pool_2026-05-07.json"
+    pool_path.parent.mkdir(parents=True, exist_ok=True)
+    pool_path.write_text(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "symbol": "600002",
+                        "name": "池内股份",
+                        "source": "p124_top50",
+                        "source_tags": ["p124_top50"],
+                        "intraday_pool_rank": 1,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     storage.save_universe(
         pd.DataFrame(
             [
-                {"symbol": "600001", "name": "测试股份"},
-                {"symbol": "600002", "name": "焦点股份"},
+                {"symbol": "600001", "name": "池外股份"},
+                {"symbol": "600002", "name": "池内股份"},
             ]
         )
     )
@@ -281,8 +297,6 @@ def test_intraday_screening_prioritizes_previous_focus_before_remaining(monkeypa
                 ]
             ),
         )
-    focus_path = tmp_path / "data" / "intraday" / "focus_top10.json"
-    focus_path.write_text(json.dumps({"symbols": ["600002"]}), encoding="utf-8")
     calls: list[list[str]] = []
 
     def fake_frame(symbols: list[str], score_column: str) -> pd.DataFrame:
@@ -333,90 +347,17 @@ def test_intraday_screening_prioritizes_previous_focus_before_remaining(monkeypa
     )
 
     assert calls[0] == ["600002"]
-    assert calls[1] == ["600001"]
-    assert result.focus_output_path is not None
-    assert result.focus_output_path.exists()
-    assert result.focus_output_path.name == "intraday_top20_previous_2026-05-08.csv"
-    focus_output = pd.read_csv(result.focus_output_path)
-    assert focus_output["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
+    assert len(calls) == 1
+    assert result.source_pool_path == pool_path
     output = pd.read_csv(result.output_path)
-    assert output["symbol"].astype(str).str.zfill(6).tolist() == ["600001", "600002"]
-    top20 = pd.read_csv(result.top20_path)
-    assert top20["symbol"].astype(str).str.zfill(6).tolist() == ["600001"]
-    focus_payload = json.loads((tmp_path / "data" / "intraday" / "focus_top20.json").read_text(encoding="utf-8"))
-    assert focus_payload["symbols"] == ["600001"]
+    assert output["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
+    assert output.loc[0, "intraday_selection_source"] == "p124_top50"
 
 
-def test_select_top20_focus_excludes_weak_scores_and_intraday_gain_above_8_percent() -> None:
-    frame = pd.DataFrame(
-        [
-            {
-                "symbol": "600001",
-                "phase1_score_100": 80.0,
-                "phase2_score_100": 70.0,
-                "phase4_score_100": 60.0,
-                "intraday_pct_change": 2.0,
-            },
-            {
-                "symbol": "600002",
-                "phase1_score_100": 85.0,
-                "phase2_score_100": 75.0,
-                "phase4_score_100": 99.0,
-                "intraday_pct_change": 9.2,
-            },
-            {
-                "symbol": "600003",
-                "phase1_score_100": 90.0,
-                "phase2_score_100": 80.0,
-                "phase4_score_100": 80.0,
-                "intraday_pct_change": 8.0,
-            },
-            {
-                "symbol": "600004",
-                "phase1_score_100": 40.0,
-                "phase2_score_100": 99.0,
-                "phase4_score_100": 100.0,
-                "intraday_pct_change": 1.0,
-            },
-            {
-                "symbol": "600005",
-                "phase1_score_100": 41.0,
-                "phase2_score_100": 41.0,
-                "phase4_score_100": 90.0,
-                "intraday_pct_change": 1.5,
-            },
-            {
-                "symbol": "600006",
-                "phase1_score_100": 95.0,
-                "phase2_score_100": 95.0,
-                "phase4_score_100": 80.0,
-                "intraday_pct_change": 1.0,
-            },
-            {
-                "symbol": "600007",
-                "phase1_score_100": 5.0,
-                "phase2_score_100": 5.0,
-                "phase4_score_100": 85.0,
-                "intraday_pct_change": 1.0,
-                "prev_pattern_match": True,
-            },
-        ]
-    )
-
-    top20 = _select_top20_focus(frame)
-
-    assert top20["symbol"].tolist() == ["600004", "600003", "600006", "600007"]
-    scores = dict(zip(top20["symbol"], top20["intraday_focus_score"]))
-    assert scores["600004"] == 109.04
-    assert scores["600003"] == 98.4
-    assert scores["600006"] == 94.0
-    assert scores["600007"] == 85.0
-
-
-def test_intraday_screening_appends_track_stock_to_top20(monkeypatch) -> None:
+def test_intraday_screening_appends_track_stock_to_pool(monkeypatch) -> None:
     tmp_path = _make_workspace_tmp_dir("intraday_track_stock")
     storage = _make_storage(tmp_path)
-    _write_watchlist(tmp_path)
+    _write_intraday_pool(tmp_path)
     storage.save_universe(
         pd.DataFrame(
             [
@@ -505,11 +446,11 @@ def test_intraday_screening_appends_track_stock_to_top20(monkeypatch) -> None:
         skip_intraday_update=True,
     )
 
-    top20 = pd.read_csv(result.top20_path, dtype={"symbol": str})
-    assert top20["symbol"].astype(str).str.zfill(6).tolist() == ["600001", "600002"]
-    assert top20["建议总仓位%"].notna().all()
-    assert top20.loc[top20["symbol"].eq("600002"), "intraday_selection_source"].iloc[0] == "track_stock"
-    assert bool(top20.loc[top20["symbol"].eq("600002"), "track_stock"].iloc[0]) is True
+    pool = pd.read_csv(result.output_path, dtype={"symbol": str})
+    assert pool["symbol"].astype(str).str.zfill(6).tolist() == ["600001", "600002"]
+    assert pool["建议总仓位%"].notna().all()
+    assert pool.loc[pool["symbol"].eq("600002"), "intraday_selection_source"].iloc[0] == "track_stock"
+    assert bool(pool.loc[pool["symbol"].eq("600002"), "track_stock"].iloc[0]) is True
     assert result.track_stock_path is not None
     track = pd.read_csv(result.track_stock_path, dtype={"symbol": str})
     assert track["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]

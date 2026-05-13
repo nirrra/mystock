@@ -4,7 +4,7 @@
 
 目标不是让 `选股.md` 变成技术结果原始转储，而是让它成为“基于当日 `watchlist`、结合主线与主观判断后的最终整理记录”。
 
-当前每日筛选已切换为 `Phase1/Phase2/Phase4/Phase5/Phase7/Phase8 + pattern` 口径。日常运行 `daily-screening` 后，主 `watchlist` 有三条入口：pattern 命中票不再按 Phase1/Phase2 分数过滤，只要求 Phase4 分数 `> 70`；Phase4 Top 补充票仍先用 Phase1 和 Phase2 各自排除最高风险 20%，再按 `centered_risk_score` 补入 Top20；Phase8 Top5 作为“三个交易日内涨停机会且控制大跌风险”的短线观察补充，独立展示，不参与主排序。所有入口都会在最终入选前排除当日涨幅超过 `9.9%` 的股票。最终人工筛选时，先用 centered Top20 建候选池，再优先挑其中同时进入五日 P4 均分 Top5 的股票；Phase8 高分只说明短线弹性值得看，不替代主线、P1/P2/P4 和技术结构判断。Phase7 的 `trade_permission` 是日期级买点环境判断，必须写在每天最上方；如果它是 `no_trade`，当日候选只作为观察池，不作为积极买入名单。Phase5 是长周期极端风险画像，只作为风险提示字段，不作为日内买点信号。旧口径里若写成 `pattern4`、`pattern5`、`pattern7`，写入 [选股.md](/C:/Users/wdyab/Desktop/wdy/stocks/选股.md) 时统一按 Phase4、Phase5、Phase7 字段处理。
+当前每日筛选已切换为 `Phase1/Phase2/Phase4/Phase5/Phase7/Phase8 + pattern` 口径。日常运行 `daily-screening` 后，主 `watchlist` 有三条入口：pattern 命中票不再按 Phase1/Phase2 分数过滤，只要求 Phase4 分数 `> 70`；Phase4 Top 补充票仍先用 Phase1 和 Phase2 各自排除最高风险 20%，再按 `centered_risk_score` 补入主候选；Phase8 Top5 作为“三个交易日内涨停机会且控制大跌风险”的短线观察补充，独立展示，不参与主排序。所有入口都会在最终入选前排除当日涨幅超过 `9.9%` 的股票。`daily-screening` 还会生成独立的 `intraday_pool_YYYY-MM-DD`，供下一交易日盘中快速扫描；它不是正式选股名单。Phase8 高分只说明短线弹性值得看，不替代主线、P1/P2/P4 和技术结构判断。Phase7 的 `trade_permission` 是日期级买点环境判断，必须写在每天最上方；如果它是 `no_trade`，当日候选只作为观察池，不作为积极买入名单。Phase5 是长周期极端风险画像，只作为风险提示字段，不作为日内买点信号。旧口径里若写成 `pattern4`、`pattern5`、`pattern7`，写入 [选股.md](/C:/Users/wdyab/Desktop/wdy/stocks/选股.md) 时统一按 Phase4、Phase5、Phase7 字段处理。
 
 ## 使用范围
 
@@ -21,7 +21,7 @@
 
 如果 [选股.md](/C:/Users/wdyab/Desktop/wdy/stocks/选股.md) 中已经有对应日期的选股列表，必须先删除该日期已有列表并完全忽略旧内容，只根据最新筛选结果、最新主线和本指导重新列出该日期选股列表。
 
-其中主 `watchlist` 是“Phase4 分数合格的 pattern 命中 + 通过 Phase1/Phase2 硬过滤后的 centered risk Top20 补充”的候选池，不等同于最终买入名单。`watchlist_pattern` 保留为兼容输出，不作为最终写作入口。
+其中主 `watchlist` 是“Phase4 分数合格的 pattern 命中 + 通过 Phase1/Phase2 硬过滤后的 centered risk 补充”的正式盘后候选池，不等同于最终买入名单。`intraday_pool_YYYY-MM-DD` 是次日盘中快速扫描池，不能替代主 `watchlist` 写入 [选股.md](/C:/Users/wdyab/Desktop/wdy/stocks/选股.md)。`watchlist_pattern` 保留为兼容输出，不作为最终写作入口。
 
 另外，写入表格时应尽量排除明显英文状态值：
 
@@ -46,7 +46,7 @@
 
 日中表格规则：
 
-- 不显示 `Focus` 或 `intraday_focus_score`
+- 不显示 `intraday_pool_score`
 - `P1/P2/P4` 放在同一列，写成 `80 / 78 / 86`
 - `P4五日均/std` 单独一列，紧跟在 `P1/P2/P4` 后面，写成 `88 / 5`
 - `P8` 单独一列，紧跟在 `P4五日均/std` 后面；如果 Phase8 模型尚未训练完成或当天未生成预测，写 `缺失`
@@ -54,7 +54,6 @@
 - `日中判断` 放在表格下方，用短文本逐只说明
 - 不需要写单独的 `主线判断`
 - 不需要写单独的 `盘中状态`
-- 不需要写 `上一轮重点股延续`
 - 不需要写 `不选或降级`
 
 日中判断写法只保留结论和关键原因，例如：
@@ -300,7 +299,7 @@ Phase8 Top5短线观察表字段固定如下：
 - 对应 `phase4_5d_mean / phase4_5d_std`
 - 主表和跟踪表都必须展示，写成 `均值 / 标准差`，例如 `88 / 5`
 - 五日 P4 均值衡量 Phase4 收益排序的连续性；标准差衡量该连续强度是否稳定
-- 同一主线内优先选择 centered Top20 中同时进入五日 P4 均分 Top5 的股票；如果当日 P4 很高但五日均值低、std 高，要写成“一日跳升，稳定性不足”
+- 同一主线内优先选择主 `watchlist` 中同时进入五日 P4 均分 Top5 的股票；如果当日 P4 很高但五日均值低、std 高，要写成“一日跳升，稳定性不足”
 
 `P8`
 

@@ -23,29 +23,18 @@ from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, add_recommended
 from .storage import DailyBarsReadError, Storage
 from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, TRACK_INPUT_SHEET
 from .watchlist import (
-    CENTERED_RISK_TOP_MIN_PHASE1_SCORE,
-    CENTERED_RISK_TOP_MIN_PHASE2_SCORE,
-    CENTERED_RISK_TOP_MIN_PHASE4_SCORE,
-    PATTERN_MIN_PHASE4_SCORE,
     _prepare_atr_frame,
     _prepare_macd_frame,
     _prepare_phase4_predictions,
     _prepare_phase8_predictions,
     _prepare_phase_risk_predictions,
     add_centered_risk_scores,
-    extract_watchlist_symbols,
-    find_latest_watchlist_before,
+    find_latest_intraday_pool_before,
 )
 
 DEFAULT_INTRADAY_REPORT_KEEP_DATES = 10
-INTRADAY_FOCUS_SIZE = 20
-INTRADAY_FOCUS_MAX_PCT_CHANGE = 8.0
 _DATED_REPORT_PATTERNS = (
-    re.compile(r"^intraday_screening_(\d{4}-\d{2}-\d{2})\.csv$"),
-    re.compile(r"^intraday_screening_focus_(\d{4}-\d{2}-\d{2})\.csv$"),
-    re.compile(r"^intraday_top10_(\d{4}-\d{2}-\d{2})\.csv$"),
-    re.compile(r"^intraday_top20_(\d{4}-\d{2}-\d{2})\.csv$"),
-    re.compile(r"^intraday_top20_previous_(\d{4}-\d{2}-\d{2})\.csv$"),
+    re.compile(r"^intraday_pool_screening_(\d{4}-\d{2}-\d{2})\.csv$"),
     re.compile(r"^intraday_track_stock_(\d{4}-\d{2}-\d{2})\.csv$"),
 )
 
@@ -53,13 +42,11 @@ _DATED_REPORT_PATTERNS = (
 @dataclass(slots=True)
 class IntradayScreeningResult:
     trade_date: date
-    source_watchlist_path: Path
+    source_pool_path: Path
     output_path: Path
-    focus_output_path: Path | None
-    top20_path: Path
     track_stock_path: Path | None
     candidate_count: int
-    focus_candidate_count: int
+    pool_candidate_count: int
     track_stock_count: int
     intraday_updated_count: int
     missing_intraday_symbols: list[str]
@@ -68,10 +55,6 @@ class IntradayScreeningResult:
     phase2_path: Path
     phase4_path: Path
     phase8_path: Path | None
-
-    @property
-    def top10_path(self) -> Path:
-        return self.top20_path
 
 
 @dataclass(slots=True)
@@ -98,23 +81,22 @@ def run_intraday_screening(
     trade_date: date,
     data_interface: str = "sina_raw",
     limit: int | None = None,
-    watchlist_only: bool = False,
     skip_intraday_update: bool = False,
     timeout_seconds: float = 15.0,
     chunk_size: int = 50,
     output: Path | None = None,
     report_keep_dates: int | None = DEFAULT_INTRADAY_REPORT_KEEP_DATES,
 ) -> IntradayScreeningResult:
-    source_watchlist_path, watchlist_payload = _load_previous_watchlist(project_root, trade_date)
-    previous_candidates = _previous_watchlist_candidates(watchlist_payload, limit=None)
-    candidates = previous_candidates if watchlist_only else _full_market_candidates(storage, previous_candidates)
+    source_pool_path, pool_payload = _load_previous_intraday_pool(project_root, trade_date)
+    pool_candidates = _previous_pool_candidates(pool_payload, limit=None)
+    candidates = pool_candidates
     if limit is not None:
         candidates = candidates[: max(int(limit), 0)]
     tracked_symbols = _load_tracked_symbols(project_root)
     candidates = _merge_tracked_candidates(storage=storage, candidates=candidates, tracked_symbols=tracked_symbols)
     symbols = [candidate["symbol"] for candidate in candidates]
     if not symbols:
-        raise RuntimeError(f"No previous-watchlist symbols found in {source_watchlist_path}")
+        raise RuntimeError(f"No previous intraday-pool symbols found in {source_pool_path}")
 
     updated_count = 0
     missing_update_symbols: list[str] = []
@@ -135,104 +117,33 @@ def run_intraday_screening(
     cache_dir = storage.paths.intraday_dir / "screening_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    focus_output_path: Path | None = None
-    focus_candidate_count = 0
-    focus_analysis: _AnalysisResult | None = None
-    remaining_candidates = candidates
-    if not watchlist_only:
-        focus_candidates = _load_focus_candidates(storage, candidates)
-        if focus_candidates:
-            focus_analysis = _run_candidate_analysis(
-                storage=storage,
-                project_root=project_root,
-                trade_date=trade_date,
-                candidates=focus_candidates,
-                output_dir=cache_dir,
-                file_tag="focus",
-            )
-            focus_output_path = output_dir / f"intraday_top20_previous_{trade_date.isoformat()}.csv"
-            focus_analysis.frame.to_csv(focus_output_path, index=False, encoding="utf-8-sig")
-            focus_candidate_count = len(focus_analysis.frame)
-            focus_symbols = {candidate["symbol"] for candidate in focus_candidates}
-            remaining_candidates = [candidate for candidate in candidates if candidate["symbol"] not in focus_symbols]
-
-    if focus_analysis is not None:
-        if remaining_candidates:
-            remaining_analysis = _run_candidate_analysis(
-                storage=storage,
-                project_root=project_root,
-                trade_date=trade_date,
-                candidates=remaining_candidates,
-                output_dir=cache_dir,
-                file_tag="remaining",
-            )
-            combined_intraday = _concat_frames(focus_analysis.intraday, remaining_analysis.intraday)
-            combined_phase1 = _concat_frames(focus_analysis.phase1, remaining_analysis.phase1)
-            combined_phase2 = _concat_frames(focus_analysis.phase2, remaining_analysis.phase2)
-            combined_phase4 = _concat_frames(focus_analysis.phase4, remaining_analysis.phase4)
-            combined_phase8 = _concat_frames(focus_analysis.phase8, remaining_analysis.phase8)
-            combined_macd = _concat_frames(focus_analysis.macd, remaining_analysis.macd)
-            combined_atr = _concat_frames(focus_analysis.atr, remaining_analysis.atr)
-            combined = _build_output_frame(
-                project_root=project_root,
-                trade_date=trade_date,
-                candidates=candidates,
-                intraday=combined_intraday,
-                phase1=combined_phase1,
-                phase2=combined_phase2,
-                phase4=combined_phase4,
-                phase8=combined_phase8,
-                macd=combined_macd,
-                atr=combined_atr,
-            )
-            analysis = _AnalysisResult(
-                frame=combined,
-                candidates=candidates,
-                intraday=combined_intraday,
-                phase1=combined_phase1,
-                phase2=combined_phase2,
-                phase4=combined_phase4,
-                phase8=combined_phase8,
-                macd=combined_macd,
-                atr=combined_atr,
-                phase1_path=remaining_analysis.phase1_path,
-                phase2_path=remaining_analysis.phase2_path,
-                phase4_path=remaining_analysis.phase4_path,
-                phase8_path=remaining_analysis.phase8_path or focus_analysis.phase8_path,
-            )
-        else:
-            analysis = focus_analysis
-    else:
-        analysis = _run_candidate_analysis(
-            storage=storage,
-            project_root=project_root,
-            trade_date=trade_date,
-            candidates=candidates,
-            output_dir=cache_dir,
-            file_tag="all" if not watchlist_only else "watchlist",
-        )
-    output_path = output if output is not None else output_dir / f"intraday_screening_{trade_date.isoformat()}.csv"
+    analysis = _run_candidate_analysis(
+        storage=storage,
+        project_root=project_root,
+        trade_date=trade_date,
+        candidates=candidates,
+        output_dir=cache_dir,
+        file_tag="pool",
+    )
+    output_path = output if output is not None else output_dir / f"intraday_pool_screening_{trade_date.isoformat()}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     analysis.frame.to_csv(output_path, index=False, encoding="utf-8-sig")
-    top20_path = _save_top20_focus(storage=storage, output_dir=output_dir, trade_date=trade_date, frame=analysis.frame)
     track_stock_path = _save_intraday_track_stock(output_dir=output_dir, trade_date=trade_date, frame=analysis.frame)
     cleaned_report_files = _cleanup_intraday_screening_reports(
         output_dir,
         keep_dates=report_keep_dates,
-        preserve_paths=(output_path, focus_output_path, top20_path, track_stock_path),
+        preserve_paths=(output_path, track_stock_path),
     )
 
     intraday = _load_intraday_snapshot_frame(storage, symbols=symbols)
     missing_intraday = [symbol for symbol in symbols if symbol not in set(intraday.get("symbol", pd.Series(dtype=str)).astype(str))]
     return IntradayScreeningResult(
         trade_date=trade_date,
-        source_watchlist_path=source_watchlist_path,
+        source_pool_path=source_pool_path,
         output_path=output_path,
-        focus_output_path=focus_output_path,
-        top20_path=top20_path,
         track_stock_path=track_stock_path,
         candidate_count=len(analysis.frame),
-        focus_candidate_count=focus_candidate_count,
+        pool_candidate_count=len(pool_candidates),
         track_stock_count=len(tracked_symbols),
         intraday_updated_count=updated_count,
         missing_intraday_symbols=sorted(set(missing_update_symbols + missing_intraday)),
@@ -276,17 +187,17 @@ class _IntradayOverlayStorage:
         return merged.sort_values("trade_date").reset_index(drop=True)
 
 
-def _load_previous_watchlist(project_root: Path, trade_date: date) -> tuple[Path, dict[str, object]]:
-    _, path = find_latest_watchlist_before(project_root=project_root, trade_date=trade_date)
+def _load_previous_intraday_pool(project_root: Path, trade_date: date) -> tuple[Path, dict[str, object]]:
+    _, path = find_latest_intraday_pool_before(project_root=project_root, trade_date=trade_date)
     return path, json.loads(path.read_text(encoding="utf-8"))
 
 
-def _previous_watchlist_candidates(payload: dict[str, object], *, limit: int | None) -> list[dict[str, object]]:
+def _previous_pool_candidates(payload: dict[str, object], *, limit: int | None) -> list[dict[str, object]]:
     raw_candidates = payload.get("candidates") if isinstance(payload, dict) else []
     if not isinstance(raw_candidates, list):
         return []
 
-    extracted_symbols = extract_watchlist_symbols(payload)
+    extracted_symbols = _extract_pool_symbols(payload)
     order = {symbol: index for index, symbol in enumerate(extracted_symbols)}
     candidates: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -322,6 +233,23 @@ def _previous_watchlist_candidates(payload: dict[str, object], *, limit: int | N
     return candidates
 
 
+def _extract_pool_symbols(payload: dict[str, object]) -> list[str]:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        return []
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        symbol = normalize_symbol(item.get("symbol", ""))
+        if not symbol or symbol in seen:
+            continue
+        symbols.append(symbol)
+        seen.add(symbol)
+    return symbols
+
+
 def _candidate_universe(candidates: list[dict[str, object]]) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -336,40 +264,6 @@ def _candidate_universe(candidates: list[dict[str, object]]) -> pd.DataFrame:
             for candidate in candidates
         ]
     )
-
-
-def _full_market_candidates(storage: Storage, previous_candidates: list[dict[str, object]]) -> list[dict[str, object]]:
-    universe = storage.load_universe().copy()
-    if "symbol" not in universe.columns:
-        raise RuntimeError("Universe file lacks symbol column.")
-    universe["symbol"] = universe["symbol"].map(normalize_symbol)
-    universe = universe[universe["symbol"].astype(str).str.len().gt(0)].drop_duplicates("symbol", keep="first")
-    previous_by_symbol = {str(candidate["symbol"]): candidate for candidate in previous_candidates}
-    rows: list[dict[str, object]] = []
-    for index, row in enumerate(universe.to_dict("records"), start=1):
-        symbol = str(row.get("symbol", ""))
-        previous = previous_by_symbol.get(symbol, {})
-        name = str(row.get("name", "") or previous.get("name", "") or "")
-        merged = {
-            "symbol": symbol,
-            "name": name,
-            "prev_rank": previous.get("prev_rank", pd.NA),
-            "universe_rank": index,
-            "prev_source": previous.get("prev_source", ""),
-            "prev_source_tags": previous.get("prev_source_tags", ""),
-            "prev_pattern_match": previous.get("prev_pattern_match", False),
-            "prev_pattern_id": previous.get("prev_pattern_id", ""),
-            "prev_pattern_ids": previous.get("prev_pattern_ids", ""),
-            "prev_patterns": previous.get("prev_patterns", ""),
-            "prev_reason": previous.get("prev_reason", ""),
-            "prev_phase1_score_100": previous.get("prev_phase1_score_100", pd.NA),
-            "prev_phase2_score_100": previous.get("prev_phase2_score_100", pd.NA),
-            "prev_phase4_score_100": previous.get("prev_phase4_score_100", pd.NA),
-            "prev_phase5_score_100": previous.get("prev_phase5_score_100", pd.NA),
-            "prev_watchlist_streak": previous.get("prev_watchlist_streak", pd.NA),
-        }
-        rows.append(merged)
-    return rows
 
 
 def _load_tracked_symbols(project_root: Path) -> list[str]:
@@ -582,38 +476,6 @@ def _predict_intraday_phase8_if_available(
     ).predictions
 
 
-def _load_focus_candidates(storage: Storage, candidates: list[dict[str, object]]) -> list[dict[str, object]]:
-    path = _existing_focus_symbols_path(storage)
-    if not path.exists():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, dict):
-        return []
-    symbols = [normalize_symbol(symbol) for symbol in payload.get("symbols", []) if normalize_symbol(symbol)]
-    if not symbols:
-        return []
-    by_symbol = {str(candidate["symbol"]): candidate for candidate in candidates}
-    return [by_symbol[symbol] for symbol in symbols if symbol in by_symbol]
-
-
-def _save_top20_focus(*, storage: Storage, output_dir: Path, trade_date: date, frame: pd.DataFrame) -> Path:
-    top20 = _select_top20_focus(frame)
-    target = output_dir / f"intraday_top20_{trade_date.isoformat()}.csv"
-    top20.to_csv(target, index=False, encoding="utf-8-sig")
-    payload = {
-        "trade_date": trade_date.isoformat(),
-        "source_file": str(target),
-        "symbols": top20["symbol"].astype(str).str.zfill(6).tolist() if "symbol" in top20.columns else [],
-    }
-    focus_path = _focus_symbols_path(storage)
-    focus_path.parent.mkdir(parents=True, exist_ok=True)
-    focus_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return target
-
-
 def _save_intraday_track_stock(*, output_dir: Path, trade_date: date, frame: pd.DataFrame) -> Path | None:
     track = _select_intraday_track_stock(frame)
     if track.empty:
@@ -623,135 +485,52 @@ def _save_intraday_track_stock(*, output_dir: Path, trade_date: date, frame: pd.
     return target
 
 
-def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty:
-        return frame.head(0).copy()
-    required = {"phase1_score_100", "phase2_score_100", "phase4_score_100", "intraday_pct_change"}
-    if not required.issubset(frame.columns):
-        return frame.head(0).copy()
-    result = _add_intraday_focus_score(frame.copy())
-    phase1 = pd.to_numeric(result["phase1_score_100"], errors="coerce")
-    phase2 = pd.to_numeric(result["phase2_score_100"], errors="coerce")
-    phase4 = pd.to_numeric(result["phase4_score_100"], errors="coerce")
-    pct_change = pd.to_numeric(result["intraday_pct_change"], errors="coerce")
-    if "prev_pattern_match" in result.columns:
-        prev_pattern_match = result["prev_pattern_match"].map(_truthy_flag).fillna(False)
-    else:
-        prev_pattern_match = pd.Series(False, index=result.index)
-    standard_pass = (
-        phase1.ge(CENTERED_RISK_TOP_MIN_PHASE1_SCORE)
-        & phase2.ge(CENTERED_RISK_TOP_MIN_PHASE2_SCORE)
-        & phase4.ge(CENTERED_RISK_TOP_MIN_PHASE4_SCORE)
-    )
-    pattern_pass = prev_pattern_match & phase4.gt(PATTERN_MIN_PHASE4_SCORE)
-    pct_change_ok = pct_change.le(INTRADAY_FOCUS_MAX_PCT_CHANGE) | pct_change.isna()
-    eligible_mask = (standard_pass | pattern_pass) & pct_change_ok
-    result = result[eligible_mask].copy()
-    pattern_symbols = (
-        set(result.loc[pattern_pass.reindex(result.index, fill_value=False), "symbol"].astype(str))
-        if "symbol" in result.columns
-        else set()
-    )
-    if result.empty:
-        selected = result
-    else:
-        pattern_selected = _sort_intraday_focus(result[result["symbol"].astype(str).isin(pattern_symbols)]).head(INTRADAY_FOCUS_SIZE)
-        remaining_size = max(INTRADAY_FOCUS_SIZE - len(pattern_selected), 0)
-        if remaining_size > 0:
-            selected_symbols = set(pattern_selected["symbol"].astype(str)) if "symbol" in pattern_selected.columns else set()
-            standard_selected = _sort_intraday_focus(result[~result["symbol"].astype(str).isin(selected_symbols)]).head(remaining_size)
-            selected = _concat_frames(pattern_selected, standard_selected)
-        else:
-            selected = pattern_selected
-    selected = selected.copy()
-    selected["intraday_selection_source"] = "top20"
-    p8_top5 = _select_intraday_p8_top5(frame)
-    if not p8_top5.empty:
-        p8_top5 = p8_top5.copy()
-        p8_top5["intraday_selection_source"] = "p8_top5"
-        selected_symbols = set(selected["symbol"].astype(str)) if "symbol" in selected.columns else set()
-        p8_only = p8_top5[~p8_top5["symbol"].astype(str).isin(selected_symbols)].copy()
-        selected.loc[selected["symbol"].astype(str).isin(set(p8_top5["symbol"].astype(str))), "intraday_selection_source"] = "top20+p8_top5"
-        selected = _concat_frames(selected, p8_only)
-    tracked = _select_intraday_track_stock(frame)
-    if not tracked.empty:
-        tracked = tracked.copy()
-        tracked["intraday_selection_source"] = "track_stock"
-        selected_symbols = set(selected["symbol"].astype(str)) if "symbol" in selected.columns else set()
-        tracked_only = tracked[~tracked["symbol"].astype(str).isin(selected_symbols)].copy()
-        selected.loc[selected["symbol"].astype(str).isin(set(tracked["symbol"].astype(str))), "intraday_selection_source"] = "top20+track_stock"
-        selected = _concat_frames(selected, tracked_only)
-    if selected.empty:
-        return selected.drop(columns=["_track_focus_sort"], errors="ignore").reset_index(drop=True)
-    selected = _add_intraday_focus_score(selected)
-    selected["_track_focus_sort"] = selected.get("intraday_selection_source", "").astype(str).eq("track_stock").astype(int)
-    selected = _sort_intraday_focus(selected, leading_columns=["_track_focus_sort"], leading_ascending=[True])
-    return selected.drop(columns=["_track_focus_sort"], errors="ignore").reset_index(drop=True)
-
-
-def _select_intraday_p8_top5(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty or "phase8_score_100" not in frame.columns:
-        return frame.head(0).copy()
-    result = frame.copy()
-    p8 = pd.to_numeric(result["phase8_score_100"], errors="coerce")
-    pct_change = pd.to_numeric(result.get("intraday_pct_change"), errors="coerce")
-    if "today_limit_up_excluded" in result.columns:
-        today_limit_up = result["today_limit_up_excluded"].map(_truthy_flag).fillna(False)
-    else:
-        today_limit_up = pd.Series(False, index=result.index)
-    result = result[p8.notna() & ~today_limit_up & (pct_change.le(9.9) | pct_change.isna())].copy()
-    if result.empty:
-        return result
-    result["phase8_score_100"] = pd.to_numeric(result["phase8_score_100"], errors="coerce")
-    return result.sort_values(["phase8_score_100", "phase4_score_100", "symbol"], ascending=[False, False, True], na_position="last").head(5)
-
-
 def _select_intraday_track_stock(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or "track_stock" not in frame.columns:
         return frame.head(0).copy()
     result = frame[frame["track_stock"].fillna(False).astype(bool)].copy()
     if result.empty:
         return result
-    result = _add_intraday_focus_score(result)
-    result = _sort_intraday_focus(result)
+    result = _add_intraday_pool_score(result)
+    result = _sort_intraday_pool(result)
     return result.reset_index(drop=True)
 
 
-def _add_intraday_focus_score(frame: pd.DataFrame) -> pd.DataFrame:
+def _add_intraday_pool_score(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
     required = {"phase1_score_100", "phase2_score_100", "phase4_score_100"}
     if not required.issubset(result.columns):
-        result["intraday_focus_score"] = pd.NA
+        result["intraday_pool_score"] = pd.NA
         return result
     result = add_centered_risk_scores(result)
-    result["intraday_focus_score"] = result["centered_risk_score"]
+    result["intraday_pool_score"] = result["centered_risk_score"]
     return result
 
 
-def _truthy_flag(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None or value is pd.NA:
-        return False
-    if isinstance(value, float) and math.isnan(value):
-        return False
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "是"}
+def _add_intraday_selection_source(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    base_source = result.get("prev_source", pd.Series("", index=result.index)).fillna("").astype(str)
+    source = base_source.where(base_source.str.strip().ne(""), "intraday_pool")
+    if "track_stock" in result.columns:
+        tracked = result["track_stock"].fillna(False).astype(bool)
+        source = source.mask(tracked & base_source.str.strip().ne(""), source + "+track_stock")
+        source = source.mask(tracked & base_source.str.strip().eq(""), "track_stock")
+    result["intraday_selection_source"] = source
+    return result
 
 
-def _sort_intraday_focus(
+def _sort_intraday_pool(
     frame: pd.DataFrame,
     *,
     leading_columns: list[str] | None = None,
     leading_ascending: list[bool] | None = None,
 ) -> pd.DataFrame:
-    result = _add_intraday_focus_score(frame)
+    result = _add_intraday_pool_score(frame)
     leading = leading_columns or []
     leading_directions = leading_ascending if leading_ascending is not None else [True] * len(leading)
     sort_columns = [
         *leading,
-        "intraday_focus_score",
+        "intraday_pool_score",
         "phase4_score_100",
         "phase1_center_score",
         "phase2_center_score",
@@ -774,25 +553,6 @@ def _sort_intraday_focus(
     if not available_columns:
         return result
     return result.sort_values(available_columns, ascending=available_ascending, na_position="last")
-
-
-def _focus_symbols_path(storage: Storage) -> Path:
-    return storage.paths.intraday_dir / "focus_top20.json"
-
-
-def _legacy_focus_symbols_path(storage: Storage) -> Path:
-    return storage.paths.intraday_dir / "focus_top10.json"
-
-
-def _existing_focus_symbols_path(storage: Storage) -> Path:
-    path = _focus_symbols_path(storage)
-    if path.exists():
-        return path
-    return _legacy_focus_symbols_path(storage)
-
-
-def _select_top10_focus(frame: pd.DataFrame) -> pd.DataFrame:
-    return _select_top20_focus(frame)
 
 
 def _cleanup_intraday_screening_reports(
@@ -1033,7 +793,8 @@ def _build_output_frame(
             result["phase5_score_100"].notna(),
             result.get("prev_phase5_score_100", pd.NA),
         )
-    result = _add_intraday_focus_score(result)
+    result = _add_intraday_pool_score(result)
+    result = _add_intraday_selection_source(result)
     result = add_recommended_position_percent(result)
     result = _drop_internal_score_columns(result)
     return _order_output_columns(result)
@@ -1114,7 +875,7 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "atr_volatility_regime",
     ]
     phase_detail_columns = [
-        "intraday_focus_score",
+        "intraday_pool_score",
         "centered_risk_score",
         "phase1_center_score",
         "phase2_center_score",
@@ -1194,7 +955,7 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
             seen_columns.add(column)
     columns.extend([column for column in frame.columns if column not in columns])
     ordered = frame.loc[:, columns].copy()
-    sort_columns = [column for column in ("phase4_rank", "phase1_rank", "phase2_rank", "prev_rank", "universe_rank", "symbol") if column in ordered.columns]
+    sort_columns = [column for column in ("prev_rank", "phase4_rank", "phase1_rank", "phase2_rank", "symbol") if column in ordered.columns]
     if sort_columns:
         ordered = ordered.sort_values(sort_columns, ascending=[True] * len(sort_columns), na_position="last")
     return ordered.reset_index(drop=True)

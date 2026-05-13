@@ -27,6 +27,9 @@ CENTERED_RISK_TOP_MIN_PHASE2_SCORE = 50.0
 CENTERED_RISK_TOP_MIN_PHASE4_SCORE = 70.0
 PATTERN_MIN_PHASE4_SCORE = 70.0
 PHASE8_TOP_N = 5
+INTRADAY_POOL_SIZE = 100
+INTRADAY_POOL_PATTERN_LIMIT = 30
+INTRADAY_POOL_P124_TOP_N = 50
 PATTERN_PRIORITY = {
     "5": 6.0,
     "1": 5.0,
@@ -171,6 +174,10 @@ def watchlist_path(project_root: Path, trade_date: date) -> Path:
 
 def watchlist_pattern_path(project_root: Path, trade_date: date) -> Path:
     return watchlists_dir(project_root) / f"watchlist_pattern_{trade_date.isoformat()}.json"
+
+
+def intraday_pool_path(project_root: Path, trade_date: date) -> Path:
+    return watchlists_dir(project_root) / f"intraday_pool_{trade_date.isoformat()}.json"
 
 
 def build_watchlist_candidates_from_patterns(
@@ -507,6 +514,219 @@ def build_phase_daily_watchlist_candidates(
             "phase8_rows": int(len(phase8)),
             "phase8_top5_symbols": p8_top_symbols,
             "phase8_top5_added_count": int(p8_added),
+        },
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def build_intraday_pool_candidates(
+    *,
+    trade_date: date,
+    pattern_frame: pd.DataFrame,
+    phase1_predictions: pd.DataFrame,
+    phase2_predictions: pd.DataFrame,
+    phase4_predictions: pd.DataFrame,
+    phase7_prediction: pd.DataFrame,
+    phase8_predictions: pd.DataFrame | None = None,
+    phase5_measures: pd.DataFrame | None = None,
+    macd_frame: pd.DataFrame | None = None,
+    atr_frame: pd.DataFrame | None = None,
+    source_files: dict[str, str] | None = None,
+    phase_filter_rate: float = 0.2,
+    pattern_limit: int = INTRADAY_POOL_PATTERN_LIMIT,
+    p124_top_n: int = INTRADAY_POOL_P124_TOP_N,
+    pool_size: int = INTRADAY_POOL_SIZE,
+) -> dict[str, object]:
+    phase1 = _prepare_phase_risk_predictions(
+        phase1_predictions,
+        score_column="risk_score",
+        output_score_column="phase1_risk_score",
+        prefix="phase1",
+        filter_rate=phase_filter_rate,
+        model_prefix="phase1",
+        extra_columns=("log_return_1d",),
+    )
+    phase2 = _prepare_phase_risk_predictions(
+        phase2_predictions,
+        score_column="barrier_risk_score",
+        output_score_column="phase2_barrier_risk_score",
+        prefix="phase2",
+        filter_rate=phase_filter_rate,
+        model_prefix="phase2",
+        extra_columns=("is_cusum_event", "mlfin_daily_vol", "mlfin_cusum_threshold"),
+    )
+    phase4 = _prepare_phase4_predictions(phase4_predictions)
+    phase4 = merge_phase4_rolling_frame(
+        phase4,
+        project_root=_project_root_from_source_files(source_files),
+        trade_date=trade_date,
+    )
+    phase8 = _prepare_phase8_predictions(phase8_predictions)
+    phase5 = _prepare_phase5_measures(phase5_measures, trade_date=trade_date)
+    macd = _prepare_macd_frame(macd_frame)
+    atr = _prepare_atr_frame(atr_frame)
+    pattern_groups = _prepare_pattern_groups(pattern_frame)
+    phase7 = _phase7_metadata(phase7_prediction)
+
+    if phase1.empty:
+        raise RuntimeError("Phase 1 predictions are empty; cannot build intraday pool.")
+    if phase2.empty:
+        raise RuntimeError("Phase 2 predictions are empty; cannot build intraday pool.")
+    if phase4.empty:
+        raise RuntimeError("Phase 4 predictions are empty; cannot build intraday pool.")
+
+    pool = phase1.merge(phase2, on="symbol", how="inner")
+    pool = pool.merge(phase4, on="symbol", how="left")
+    if not phase8.empty:
+        pool = pool.merge(phase8, on="symbol", how="left")
+    if not phase5.empty:
+        pool = pool.merge(phase5, on="symbol", how="left")
+    if not macd.empty:
+        pool = pool.merge(macd, on="symbol", how="left")
+    if not atr.empty:
+        pool = pool.merge(atr, on="symbol", how="left")
+
+    if "name" not in pool.columns:
+        pool["name"] = ""
+    if "phase4_name" in pool.columns:
+        pool["name"] = pool["name"].where(pool["name"].astype(str).str.strip().ne(""), pool["phase4_name"])
+    if pattern_groups:
+        pattern_names = {symbol: str(group.iloc[0].get("name", "")) for symbol, group in pattern_groups.items()}
+        pool["name"] = pool.apply(
+            lambda row: row["name"] if str(row.get("name", "")).strip() else pattern_names.get(str(row["symbol"]), ""),
+            axis=1,
+        )
+
+    evaluated = pool.copy()
+    evaluated["daily_return_1d"] = _derive_daily_return_1d(evaluated)
+    daily_return_values = pd.to_numeric(evaluated["daily_return_1d"], errors="coerce")
+    evaluated["涨幅%"] = (daily_return_values * 100.0).round(4)
+    evaluated["limit_up_excluded_by_daily_return"] = evaluated["daily_return_1d"].gt(LIMIT_UP_DAILY_RETURN_THRESHOLD).fillna(False)
+    for score_column in ("phase1_score_100", "phase2_score_100", "phase4_score_100"):
+        if score_column in evaluated.columns:
+            evaluated[score_column] = pd.to_numeric(evaluated[score_column], errors="coerce")
+        else:
+            evaluated[score_column] = pd.NA
+    evaluated = add_centered_risk_scores(evaluated)
+    evaluated["phase4_composite_score"] = evaluated["centered_risk_score"]
+    evaluated["phase4_top_score_filter_pass"] = False
+
+    p124_pool = evaluated[
+        evaluated["centered_risk_score"].notna()
+        & ~evaluated["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)
+    ].copy()
+    p124_pool = p124_pool.sort_values(
+        ["centered_risk_score", "phase4_score_100", "phase1_center_score", "phase2_center_score", "symbol"],
+        ascending=[False, False, False, False, True],
+        na_position="last",
+    )
+    p124_pool["phase4_composite_rank"] = range(1, len(p124_pool) + 1)
+    rank_by_symbol = p124_pool.set_index("symbol")["phase4_composite_rank"].to_dict()
+    evaluated["phase4_composite_rank"] = evaluated["symbol"].map(rank_by_symbol)
+    p124_pool["phase4_composite_rank"] = p124_pool["symbol"].map(rank_by_symbol)
+
+    pattern_rows: list[dict[str, object]] = []
+    evaluated_by_symbol = {str(row["symbol"]).zfill(6): row for row in evaluated.to_dict("records")}
+    for symbol, group in pattern_groups.items():
+        row = dict(evaluated_by_symbol.get(symbol, {}))
+        if not row:
+            row = group.iloc[0].to_dict()
+            row["symbol"] = symbol
+            row["name"] = str(row.get("name", "") or "")
+        row["_pattern_priority"] = max(PATTERN_PRIORITY.get(str(value), 0.0) for value in group["pattern_id"].dropna().astype(str).tolist()) if "pattern_id" in group.columns else 0.0
+        pattern_rows.append(row)
+    pattern_pool = pd.DataFrame(pattern_rows)
+    if not pattern_pool.empty:
+        if "phase4_score_100" not in pattern_pool.columns:
+            pattern_pool["phase4_score_100"] = pd.NA
+        pattern_pool["phase4_score_100"] = pd.to_numeric(pattern_pool["phase4_score_100"], errors="coerce")
+        pattern_pool = pattern_pool.sort_values(
+            ["phase4_score_100", "_pattern_priority", "symbol"],
+            ascending=[False, False, True],
+            na_position="last",
+        )
+
+    p8_pool = evaluated.copy()
+    if "phase8_score_100" in p8_pool.columns:
+        p8_pool["phase8_score_100"] = pd.to_numeric(p8_pool["phase8_score_100"], errors="coerce")
+        if "today_limit_up_excluded" in p8_pool.columns:
+            today_limit_up = p8_pool["today_limit_up_excluded"].map(_truthy_flag)
+        else:
+            today_limit_up = pd.Series(False, index=p8_pool.index)
+        p8_pool = p8_pool[
+            p8_pool["phase8_score_100"].notna()
+            & ~today_limit_up.fillna(False).astype(bool)
+            & ~p8_pool["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)
+        ].copy()
+        p8_pool = p8_pool.sort_values(["phase8_score_100", "phase4_score_100", "symbol"], ascending=[False, False, True], na_position="last")
+    else:
+        p8_pool = evaluated.head(0).copy()
+
+    candidates: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def add_candidate(row: dict[str, object], *, source: str, tag: str) -> bool:
+        symbol = _normalize_symbol(row.get("symbol", ""))
+        if not symbol:
+            return False
+        if symbol in seen:
+            _append_candidate_source_tag(candidates, symbol=symbol, tag=tag)
+            return False
+        candidate = _phase_watchlist_candidate(
+            row,
+            source=source,
+            source_tags=[tag],
+            pattern_group=pattern_groups.get(symbol),
+            phase7=phase7,
+        )
+        candidates.append(candidate)
+        seen.add(symbol)
+        return True
+
+    for row in pattern_pool.head(max(int(pattern_limit), 0)).to_dict("records") if not pattern_pool.empty else []:
+        add_candidate(row, source="pattern_pool", tag="pattern_pool")
+
+    for row in p124_pool.head(max(int(p124_top_n), 0)).to_dict("records"):
+        add_candidate(row, source="p124_top50", tag="p124_top50")
+
+    for row in p8_pool.to_dict("records"):
+        if len(candidates) >= max(int(pool_size), 0):
+            break
+        added = add_candidate(row, source="p8_fill", tag="p8_fill")
+        if added:
+            candidates[-1]["phase8_pool_rank"] = int(pd.to_numeric(row.get("phase8_rank"), errors="coerce")) if pd.notna(row.get("phase8_rank", pd.NA)) else pd.NA
+
+    for index, candidate in enumerate(candidates, start=1):
+        candidate["intraday_pool_rank"] = index
+
+    return {
+        "source_file": (source_files or {}).get("pattern"),
+        "model_source_files": source_files or {},
+        "selection_policy": {
+            "intraday_pool_size": int(pool_size),
+            "pattern_pool_limit": int(pattern_limit),
+            "pattern_pool_policy": "include all patterns_all hits; if over limit, keep highest phase4_score_100",
+            "p124_top_n": int(p124_top_n),
+            "p124_sort_formula": "phase4_score_100 + 0.08 * max(0, 100 - 2 * abs(phase1_score_100 - 80)) + 0.12 * max(0, 100 - 2 * abs(phase2_score_100 - 80))",
+            "phase8_fill_policy": "fill remaining slots by phase8_score_100 after pattern_pool and p124_top50, excluding same-day limit-up rows",
+            "limit_up_filter_threshold": float(LIMIT_UP_DAILY_RETURN_THRESHOLD),
+        },
+        "trade_permission": phase7.get("phase7_trade_permission", "unknown"),
+        "next_open_trade_permission": phase7.get("phase7_trade_permission", "unknown"),
+        "next_open_trade_warning": phase7.get("phase7_trade_permission") != "allow",
+        "trade_permission_note": _phase7_trade_permission_note(phase7),
+        **phase7,
+        "filter_summary": {
+            "phase1_rows": int(len(phase1)),
+            "phase2_rows": int(len(phase2)),
+            "phase4_rows": int(len(phase4)),
+            "phase8_rows": int(len(phase8)),
+            "pattern_symbols_total": int(len(pattern_groups)),
+            "pattern_pool_count": int(min(len(pattern_pool), max(int(pattern_limit), 0))) if not pattern_pool.empty else 0,
+            "p124_top50_count": int(min(len(p124_pool), max(int(p124_top_n), 0))),
+            "phase8_fill_available": int(len(p8_pool)),
+            "intraday_pool_count": int(len(candidates)),
         },
         "candidate_count": len(candidates),
         "candidates": candidates,
@@ -974,6 +1194,15 @@ def write_watchlist(
     return target
 
 
+def write_intraday_pool(*, project_root: Path, trade_date: date, picker_payload: dict[str, object]) -> Path:
+    target = intraday_pool_path(project_root, trade_date)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_watchlist_payload(trade_date=trade_date, picker_payload=picker_payload)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    _write_watchlist_csv(target.with_suffix(".csv"), payload)
+    return target
+
+
 def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
     candidates = payload.get("candidates")
     if not isinstance(candidates, list):
@@ -1178,6 +1407,13 @@ def load_watchlist(*, project_root: Path, trade_date: date, kind: str | None = N
     return json.loads(target.read_text(encoding="utf-8"))
 
 
+def load_intraday_pool(*, project_root: Path, trade_date: date) -> dict[str, object]:
+    target = intraday_pool_path(project_root, trade_date)
+    if not target.exists():
+        raise FileNotFoundError(f"Intraday pool not found for {trade_date.isoformat()}: {target}")
+    return json.loads(target.read_text(encoding="utf-8"))
+
+
 def find_latest_watchlist_before(*, project_root: Path, trade_date: date) -> tuple[date, Path]:
     candidates: list[tuple[date, Path]] = []
     for path in watchlists_dir(project_root).glob("watchlist_*.json"):
@@ -1188,6 +1424,20 @@ def find_latest_watchlist_before(*, project_root: Path, trade_date: date) -> tup
 
     if not candidates:
         raise FileNotFoundError(f"No watchlist found before {trade_date.isoformat()} in {watchlists_dir(project_root)}")
+
+    return max(candidates, key=lambda item: item[0])
+
+
+def find_latest_intraday_pool_before(*, project_root: Path, trade_date: date) -> tuple[date, Path]:
+    candidates: list[tuple[date, Path]] = []
+    for path in watchlists_dir(project_root).glob("intraday_pool_*.json"):
+        parsed = _parse_intraday_pool_date(path)
+        if parsed is None or parsed >= trade_date:
+            continue
+        candidates.append((parsed, path))
+
+    if not candidates:
+        raise FileNotFoundError(f"No intraday pool found before {trade_date.isoformat()} in {watchlists_dir(project_root)}")
 
     return max(candidates, key=lambda item: item[0])
 
@@ -1212,6 +1462,13 @@ def extract_watchlist_symbols(payload: dict[str, object]) -> list[str]:
 
 def _parse_watchlist_date(path: Path) -> date | None:
     match = WATCHLIST_FILENAME_RE.fullmatch(path.name)
+    if not match:
+        return None
+    return datetime.fromisoformat(match.group(1)).date()
+
+
+def _parse_intraday_pool_date(path: Path) -> date | None:
+    match = re.fullmatch(r"intraday_pool_(\d{4}-\d{2}-\d{2})\.json", path.name)
     if not match:
         return None
     return datetime.fromisoformat(match.group(1)).date()

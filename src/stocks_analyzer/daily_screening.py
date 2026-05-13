@@ -18,7 +18,15 @@ from .full_market_return import alpha158_qlib_return_predictions_path
 from .full_market_risk import barrier_risk_predictions_path, tail_risk_predictions_path
 from .full_market_trade_day import trade_day_gate_prediction_path
 from .trading_calendar import is_trading_day
-from .watchlist import build_phase_daily_watchlist_candidates, load_watchlist, watchlist_path, watchlist_pattern_path, write_watchlist
+from .watchlist import (
+    build_intraday_pool_candidates,
+    build_phase_daily_watchlist_candidates,
+    load_watchlist,
+    watchlist_path,
+    watchlist_pattern_path,
+    write_intraday_pool,
+    write_watchlist,
+)
 
 
 PICKS_FILENAME = "选股.md"
@@ -31,6 +39,7 @@ class ScreeningResult:
     message: str
     report_path: Path | None = None
     watchlist_path: Path | None = None
+    intraday_pool_path: Path | None = None
 
 
 def run_daily_screening(
@@ -42,7 +51,7 @@ def run_daily_screening(
 ) -> ScreeningResult:
     _ = picks_filename  # kept only for backward compatibility with existing callers
     config = load_config(project_root / "config" / "default.yaml")
-    total_stages = 12
+    total_stages = 13
     print(f"[0/{total_stages}] 检查 {trade_date.isoformat()} 是否为交易日...", flush=True)
     trading_day = is_trading_day(config.provider, trade_date)
     if not trading_day:
@@ -98,7 +107,8 @@ def run_daily_screening(
     )
     _run_project_stage(10, total_stages, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
     generated_watchlist_path, watchlist_payload = _run_phase_watchlist_stage(11, total_stages, project_root, trade_date)
-    _run_project_stage(12, total_stages, "track_stock", project_root, ["track-stock", "--date", trade_date.isoformat()])
+    generated_intraday_pool_path, _intraday_pool_payload = _run_intraday_pool_stage(12, total_stages, project_root, trade_date)
+    _run_project_stage(13, total_stages, "track_stock", project_root, ["track-stock", "--date", trade_date.isoformat()])
 
     watchlist_pattern = watchlist_pattern_path(project_root, trade_date)
     macd_path = _macd_report_path(project_root, trade_date)
@@ -116,6 +126,7 @@ def run_daily_screening(
         trade_date,
         watchlist_payload,
         generated_watchlist_path,
+        intraday_pool_path=generated_intraday_pool_path,
         watchlist_pattern_path=watchlist_pattern if watchlist_pattern.exists() else None,
         macd_path=macd_path if macd_path.exists() else None,
         atr_path=atr_path if atr_path.exists() else None,
@@ -132,9 +143,10 @@ def run_daily_screening(
     return ScreeningResult(
         trade_date=trade_date,
         skipped=False,
-        message=f"已完成 {trade_date.isoformat()} 每日筛选，并生成 {generated_watchlist_path}",
+        message=f"已完成 {trade_date.isoformat()} 每日筛选，并生成 {generated_watchlist_path} 和 {generated_intraday_pool_path}",
         report_path=report_path,
         watchlist_path=generated_watchlist_path,
+        intraday_pool_path=generated_intraday_pool_path,
     )
 
 
@@ -252,12 +264,61 @@ def _run_phase_watchlist_stage(
     return target, written_payload
 
 
+def _run_intraday_pool_stage(
+    stage_index: int,
+    total_stages: int,
+    project_root: Path,
+    trade_date: date,
+) -> tuple[Path, dict[str, object]]:
+    started_at = perf_counter()
+    print(f"[{stage_index}/{total_stages}] 开始 intraday_pool...", flush=True)
+    pattern_path = _pattern_report_path(project_root, trade_date)
+    phase1_path = tail_risk_predictions_path(project_root, trade_date)
+    phase2_path = barrier_risk_predictions_path(project_root, trade_date)
+    phase4_path = alpha158_qlib_return_predictions_path(project_root, trade_date)
+    phase8_path = limit_up_3d_predictions_path(project_root, trade_date)
+    phase5_path = _phase5_annual_measures_path(project_root)
+    phase7_path = trade_day_gate_prediction_path(project_root, trade_date)
+    macd_path = _macd_report_path(project_root, trade_date)
+    atr_path = _atr_report_path(project_root, trade_date)
+
+    payload = build_intraday_pool_candidates(
+        trade_date=trade_date,
+        pattern_frame=_read_required_csv(pattern_path),
+        phase1_predictions=_read_required_csv(phase1_path),
+        phase2_predictions=_read_required_csv(phase2_path),
+        phase4_predictions=_read_required_csv(phase4_path),
+        phase8_predictions=_read_optional_csv(phase8_path),
+        phase7_prediction=_read_required_csv(phase7_path),
+        phase5_measures=_read_optional_csv(phase5_path),
+        macd_frame=_read_optional_csv(macd_path),
+        atr_frame=_read_optional_csv(atr_path),
+        source_files={
+            "pattern": str(pattern_path),
+            "phase1": str(phase1_path),
+            "phase2": str(phase2_path),
+            "phase4": str(phase4_path),
+            "phase8": str(phase8_path),
+            "phase5": str(phase5_path),
+            "phase7": str(phase7_path),
+            "macd": str(macd_path),
+            "atr": str(atr_path),
+        },
+    )
+    target = write_intraday_pool(project_root=project_root, trade_date=trade_date, picker_payload=payload)
+    written_payload = json.loads(target.read_text(encoding="utf-8"))
+    elapsed = perf_counter() - started_at
+    print(f"[{stage_index}/{total_stages}] intraday_pool 完成，用时 {elapsed:.1f}s。", flush=True)
+    return target, written_payload
+
+
 def _write_run_report(
     project_root: Path,
     trade_date: date,
     watchlist_payload: dict[str, object],
     watchlist_path: Path,
     *,
+    intraday_pool_path: Path,
     watchlist_pattern_path: Path | None,
     macd_path: Path | None,
     atr_path: Path | None,
@@ -279,6 +340,8 @@ def _write_run_report(
         "source_file": watchlist_payload.get("source_file"),
         "watchlist_path": str(watchlist_path),
         "watchlist_csv_path": str(watchlist_path.with_suffix(".csv")),
+        "intraday_pool_path": str(intraday_pool_path),
+        "intraday_pool_csv_path": str(intraday_pool_path.with_suffix(".csv")),
         "watchlist_pattern_path": str(watchlist_pattern_path) if watchlist_pattern_path is not None else None,
         "macd_path": str(macd_path) if macd_path is not None else None,
         "atr_path": str(atr_path) if atr_path is not None else None,

@@ -8,6 +8,7 @@ from uuid import uuid4
 import pandas as pd
 
 from stocks_analyzer.watchlist import (
+    build_intraday_pool_candidates,
     build_phase_daily_watchlist_candidates,
     build_watchlist_candidates,
     build_watchlist_candidates_from_patterns,
@@ -303,6 +304,77 @@ def test_build_phase_daily_watchlist_filters_phase1_phase2_and_adds_phase4_top()
     assert payload["selection_policy"]["pattern_min_phase4_score"] == 70.0
     assert payload["filter_summary"]["pattern_symbols_after_filter"] == 1
     assert payload["filter_summary"]["phase4_top_candidates_after_score_floor"] == 1
+
+
+def test_build_intraday_pool_uses_pattern_then_p124_then_phase8_fill() -> None:
+    pattern_frame = pd.DataFrame(
+        [
+            {"symbol": "600000", "name": "低P4模式", "pattern_id": "1", "reason": "pattern low p4"},
+            {"symbol": "600001", "name": "高P4模式", "pattern_id": "5", "reason": "pattern high p4"},
+            {"symbol": "600002", "name": "中P4模式", "pattern_id": "6", "reason": "pattern mid p4"},
+        ]
+    )
+    phase1 = pd.DataFrame(
+        [
+            {"symbol": "600000", "name": "低P4模式", "risk_score": 0.90, "model_name": "tail"},
+            {"symbol": "600001", "name": "高P4模式", "risk_score": 0.80, "model_name": "tail"},
+            {"symbol": "600002", "name": "中P4模式", "risk_score": 0.70, "model_name": "tail"},
+            {"symbol": "600003", "name": "混合候选", "risk_score": 0.10, "model_name": "tail"},
+            {"symbol": "600004", "name": "P8候选甲", "risk_score": 0.20, "model_name": "tail"},
+            {"symbol": "600005", "name": "P8候选乙", "risk_score": 0.30, "model_name": "tail"},
+        ]
+    )
+    phase2 = pd.DataFrame(
+        [
+            {"symbol": "600000", "barrier_risk_score": 0.90, "model_name": "barrier"},
+            {"symbol": "600001", "barrier_risk_score": 0.80, "model_name": "barrier"},
+            {"symbol": "600002", "barrier_risk_score": 0.70, "model_name": "barrier"},
+            {"symbol": "600003", "barrier_risk_score": 0.10, "model_name": "barrier"},
+            {"symbol": "600004", "barrier_risk_score": 0.20, "model_name": "barrier"},
+            {"symbol": "600005", "barrier_risk_score": 0.30, "model_name": "barrier"},
+        ]
+    )
+    phase4 = pd.DataFrame(
+        [
+            {"symbol": "600000", "return_score": 0.01, "model_name": "return"},
+            {"symbol": "600001", "return_score": 0.60, "model_name": "return"},
+            {"symbol": "600002", "return_score": 0.50, "model_name": "return"},
+            {"symbol": "600003", "return_score": 0.40, "model_name": "return"},
+            {"symbol": "600004", "return_score": 0.30, "model_name": "return"},
+            {"symbol": "600005", "return_score": 0.20, "model_name": "return"},
+        ]
+    )
+    phase8 = pd.DataFrame(
+        [
+            {"symbol": "600005", "phase8_score_100": 99.0},
+            {"symbol": "600004", "phase8_score_100": 98.0},
+            {"symbol": "600003", "phase8_score_100": 97.0},
+        ]
+    )
+    phase7 = pd.DataFrame([{"trade_permission": "allow", "buy_day_risk_score": 0.1}])
+
+    payload = build_intraday_pool_candidates(
+        trade_date=date(2026, 5, 7),
+        pattern_frame=pattern_frame,
+        phase1_predictions=phase1,
+        phase2_predictions=phase2,
+        phase4_predictions=phase4,
+        phase8_predictions=phase8,
+        phase7_prediction=phase7,
+        pattern_limit=2,
+        p124_top_n=2,
+        pool_size=5,
+    )
+
+    symbols = [item["symbol"] for item in payload["candidates"]]
+    assert symbols[:2] == ["600001", "600002"]
+    assert "600000" not in symbols
+    assert len(symbols) == 5
+    assert "pattern_pool" in payload["candidates"][0]["source_tags"]
+    assert any("p8_fill" in item.get("source_tags", []) for item in payload["candidates"])
+    assert payload["filter_summary"]["pattern_symbols_total"] == 3
+    assert payload["filter_summary"]["pattern_pool_count"] == 2
+    assert payload["selection_policy"]["intraday_pool_size"] == 5
 
 
 def test_build_phase_daily_watchlist_excludes_same_day_limit_up_candidates() -> None:
