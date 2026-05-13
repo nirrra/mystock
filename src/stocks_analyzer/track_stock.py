@@ -37,6 +37,7 @@ TRACK_STOCK_COLUMNS = [
     "phase2_is_cusum_event",
     "phase4_score_100",
     "phase5_score_100",
+    "phase8_score_100",
     "phase7_score_100",
     "phase7_trade_permission",
     "pattern_match",
@@ -75,6 +76,7 @@ TRACK_STOCK_HEADERS_ZH = {
     "phase2_is_cusum_event": "Phase2是否CUSUM事件",
     "phase4_score_100": "Phase4买入分",
     "phase5_score_100": "Phase5买入分",
+    "phase8_score_100": "Phase8短线分",
     "phase7_score_100": "Phase7交易日分",
     "phase7_trade_permission": "Phase7交易许可",
     "pattern_match": "是否命中模式",
@@ -120,6 +122,7 @@ def update_track_stock_workbook(
     phase2 = _prepare_phase2(_read_csv(_phase2_path(project_root, trade_date)), filter_rate=0.2)
     phase4 = _prepare_phase4(_read_csv(_phase4_path(project_root, trade_date)))
     phase5 = _prepare_phase5(_read_csv(_phase5_path(project_root)), trade_date=trade_date)
+    phase8 = _prepare_phase8(_read_csv(_phase8_path(project_root, trade_date)))
     phase7 = _prepare_phase7(_read_csv(_phase7_path(project_root, trade_date)))
     patterns = _prepare_patterns(_read_csv(_patterns_path(project_root, trade_date)))
     macd = _prepare_symbol_lookup(_read_csv(_macd_path(project_root, trade_date)))
@@ -133,6 +136,7 @@ def update_track_stock_workbook(
             phase2=phase2,
             phase4=phase4,
             phase5=phase5,
+            phase8=phase8,
             phase7=phase7,
             patterns=patterns,
             macd=macd,
@@ -252,6 +256,10 @@ def _phase4_path(project_root: Path, trade_date: date) -> Path:
 
 def _phase5_path(project_root: Path) -> Path:
     return project_root / "reports" / "full_market_model" / "mcd_crash_annual_measures.csv"
+
+
+def _phase8_path(project_root: Path, trade_date: date) -> Path:
+    return project_root / "reports" / "full_market_model" / f"limit_up_3d_opportunity_predictions_{trade_date.isoformat()}.csv"
 
 
 def _phase7_path(project_root: Path, trade_date: date) -> Path:
@@ -400,6 +408,29 @@ def _prepare_phase5(frame: pd.DataFrame, *, trade_date: date) -> dict[str, dict[
     return records
 
 
+def _prepare_phase8(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    if frame.empty or "symbol" not in frame.columns:
+        return {}
+    data = frame.copy()
+    data["symbol"] = data["symbol"].map(_normalize_symbol)
+    if "phase8_score_100" not in data.columns:
+        source_column = "phase8_raw_score" if "phase8_raw_score" in data.columns else "limit_up_opportunity_score"
+        if source_column not in data.columns:
+            return {}
+        data["phase8_score_100"] = score_series_100(pd.to_numeric(data[source_column], errors="coerce"), higher_is_better=True)
+    if "phase8_raw_score" not in data.columns and "limit_up_opportunity_score" in data.columns:
+        data["phase8_raw_score"] = pd.to_numeric(data["limit_up_opportunity_score"], errors="coerce")
+    data["phase8_score_100"] = pd.to_numeric(data["phase8_score_100"], errors="coerce")
+    data = data.dropna(subset=["symbol", "phase8_score_100"]).sort_values(["phase8_score_100", "symbol"], ascending=[False, True])
+    data = data.drop_duplicates("symbol", keep="first").reset_index(drop=True)
+    if data.empty:
+        return {}
+    if "phase8_rank" not in data.columns:
+        data["phase8_rank"] = data.index + 1
+    keep = ["symbol", "phase8_score_100", "phase8_raw_score", "phase8_rank", "today_limit_up_excluded"]
+    return _records_by_symbol(data, keep)
+
+
 def _prepare_phase7(frame: pd.DataFrame) -> dict[str, Any]:
     if frame.empty:
         return {}
@@ -485,6 +516,7 @@ def _build_output_row(
     phase2: dict[str, dict[str, Any]],
     phase4: dict[str, dict[str, Any]],
     phase5: dict[str, dict[str, Any]],
+    phase8: dict[str, dict[str, Any]],
     phase7: dict[str, Any],
     patterns: dict[str, dict[str, Any]],
     macd: dict[str, dict[str, Any]],
@@ -493,7 +525,7 @@ def _build_output_row(
     row: dict[str, Any] = {column: "" for column in TRACK_STOCK_COLUMNS}
     row["trade_date"] = trade_date.isoformat()
     row["symbol"] = symbol
-    for source in (phase1, phase2, phase4, phase5, patterns, macd, atr):
+    for source in (phase1, phase2, phase4, phase5, phase8, patterns, macd, atr):
         row.update(source.get(symbol, {}))
     row.update(phase7)
     position_pct = recommended_position_percent_from_mapping(row)

@@ -26,6 +26,7 @@ CENTERED_RISK_TOP_MIN_PHASE1_SCORE = 40.0
 CENTERED_RISK_TOP_MIN_PHASE2_SCORE = 50.0
 CENTERED_RISK_TOP_MIN_PHASE4_SCORE = 70.0
 PATTERN_MIN_PHASE4_SCORE = 70.0
+PHASE8_TOP_N = 5
 PATTERN_PRIORITY = {
     "5": 6.0,
     "1": 5.0,
@@ -220,6 +221,9 @@ def build_watchlist_candidates_from_patterns(
             "phase4_score_100",
             *PHASE4_ROLLING_COLUMNS,
             *PHASE4_ROLLING_RANK_COLUMNS,
+            "phase8_score_100",
+            "phase8_rank",
+            "today_limit_up_excluded",
             "phase5_score_100",
             "phase7_score_100",
             "phase7_trade_permission",
@@ -245,6 +249,7 @@ def build_phase_daily_watchlist_candidates(
     phase2_predictions: pd.DataFrame,
     phase4_predictions: pd.DataFrame,
     phase7_prediction: pd.DataFrame,
+    phase8_predictions: pd.DataFrame | None = None,
     phase5_measures: pd.DataFrame | None = None,
     macd_frame: pd.DataFrame | None = None,
     atr_frame: pd.DataFrame | None = None,
@@ -276,6 +281,7 @@ def build_phase_daily_watchlist_candidates(
         project_root=_project_root_from_source_files(source_files),
         trade_date=trade_date,
     )
+    phase8 = _prepare_phase8_predictions(phase8_predictions)
     phase5 = _prepare_phase5_measures(phase5_measures, trade_date=trade_date)
     macd = _prepare_macd_frame(macd_frame)
     atr = _prepare_atr_frame(atr_frame)
@@ -291,6 +297,8 @@ def build_phase_daily_watchlist_candidates(
 
     pool = phase1.merge(phase2, on="symbol", how="inner")
     pool = pool.merge(phase4, on="symbol", how="left")
+    if not phase8.empty:
+        pool = pool.merge(phase8, on="symbol", how="left")
     if not phase5.empty:
         pool = pool.merge(phase5, on="symbol", how="left")
     if not macd.empty:
@@ -367,6 +375,19 @@ def build_phase_daily_watchlist_candidates(
     row_by_symbol = {str(row["symbol"]).zfill(6): row for row in row_pool.to_dict("records")}
     pattern_symbols = pattern_pool["symbol"].astype(str).str.zfill(6).tolist()
     phase4_top_symbols = phase4_top_pool.head(max(int(phase4_top_n), 0))["symbol"].astype(str).str.zfill(6).tolist()
+    p8_top_pool = evaluated.copy()
+    if "phase8_score_100" in p8_top_pool.columns:
+        p8_top_pool["phase8_score_100"] = pd.to_numeric(p8_top_pool["phase8_score_100"], errors="coerce")
+        p8_top_pool = p8_top_pool[
+            p8_top_pool["phase8_score_100"].notna()
+            & ~p8_top_pool.get("today_limit_up_excluded", pd.Series(False, index=p8_top_pool.index)).fillna(False).astype(bool)
+            & ~p8_top_pool["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)
+        ].copy()
+        p8_top_pool = p8_top_pool.sort_values(["phase8_score_100", "phase4_score_100", "symbol"], ascending=[False, False, True], na_position="last")
+    else:
+        p8_top_pool = evaluated.head(0).copy()
+    p8_top_symbols = p8_top_pool.head(PHASE8_TOP_N)["symbol"].astype(str).str.zfill(6).tolist()
+    p8_top_rank_by_symbol = {symbol: index + 1 for index, symbol in enumerate(p8_top_symbols)}
 
     candidates: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -406,10 +427,34 @@ def build_phase_daily_watchlist_candidates(
         seen.add(symbol)
         phase4_added += 1
 
+    p8_added = 0
+    for symbol in p8_top_symbols:
+        row = row_by_symbol.get(symbol)
+        if row is None:
+            row_matches = evaluated[evaluated["symbol"].astype(str).str.zfill(6).eq(symbol)]
+            if row_matches.empty:
+                continue
+            row = row_matches.iloc[0].to_dict()
+        if symbol in seen:
+            _append_candidate_source_tag(candidates, symbol=symbol, tag="p8_top5")
+            continue
+        candidate = _phase_watchlist_candidate(
+            row,
+            source="p8_top5",
+            source_tags=["p8_top5"],
+            pattern_group=pattern_groups.get(symbol),
+            phase7=phase7,
+        )
+        candidate["phase8_top5_rank"] = p8_top_rank_by_symbol.get(symbol)
+        candidates.append(candidate)
+        seen.add(symbol)
+        p8_added += 1
+
     candidates = sorted(
         candidates,
         key=lambda item: (
             0 if item.get("pattern_match") else 1,
+            0 if "p8_top5" in item.get("source_tags", []) else 1,
             -_float_or_default(
                 item.get("phase4_composite_score"),
                 _float_or_default(item.get("phase4_score_100"), -math.inf),
@@ -435,6 +480,7 @@ def build_phase_daily_watchlist_candidates(
             "pattern_filter": "pattern hits ignore phase1/phase2 floors; require phase4_score_100 > 70 and same-day return <= 9.9%",
             "centered_risk_sort_formula": "phase4_score_100 + 0.08 * max(0, 100 - 2 * abs(phase1_score_100 - 80)) + 0.12 * max(0, 100 - 2 * abs(phase2_score_100 - 80))",
             "phase4_top_sort_formula": "centered_risk_score",
+            "phase8_policy": "display-only; append Phase8 Top5 as extra candidates/source tags when prediction file exists",
             "phase7_no_trade_policy": "block highest-risk 20% trade days based on trained threshold",
             "limit_up_filter": "exclude both pattern and phase4_top candidates with same-day return > 9.9% before watchlist selection",
             "limit_up_filter_threshold": float(LIMIT_UP_DAILY_RETURN_THRESHOLD),
@@ -458,6 +504,9 @@ def build_phase_daily_watchlist_candidates(
             "pattern_symbols_phase4_gt_70": int(len(set(pattern_symbols))),
             "phase4_top_candidates_after_score_floor": int(len(phase4_top_pool)),
             "phase4_top_n_added_count": int(phase4_added),
+            "phase8_rows": int(len(phase8)),
+            "phase8_top5_symbols": p8_top_symbols,
+            "phase8_top5_added_count": int(p8_added),
         },
         "candidate_count": len(candidates),
         "candidates": candidates,
@@ -580,6 +629,50 @@ def _prepare_phase4_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
             frame[target] = frame[column]
             keep.append(target)
     return frame.loc[:, keep].copy()
+
+
+def _prepare_phase8_predictions(predictions: pd.DataFrame | None) -> pd.DataFrame:
+    if predictions is None or predictions.empty or "symbol" not in predictions.columns:
+        return pd.DataFrame(columns=["symbol"])
+    frame = predictions.copy()
+    frame["symbol"] = frame["symbol"].map(_normalize_symbol)
+    if "phase8_score_100" in frame.columns:
+        frame["phase8_score_100"] = pd.to_numeric(frame["phase8_score_100"], errors="coerce")
+    elif "phase8_raw_score" in frame.columns:
+        frame["phase8_raw_score"] = pd.to_numeric(frame["phase8_raw_score"], errors="coerce")
+        frame["phase8_score_100"] = score_series_100(frame["phase8_raw_score"], higher_is_better=True)
+    else:
+        return pd.DataFrame(columns=["symbol"])
+    if "phase8_raw_score" in frame.columns:
+        frame["phase8_raw_score"] = pd.to_numeric(frame["phase8_raw_score"], errors="coerce")
+    if "phase8_rank" in frame.columns:
+        frame["phase8_rank"] = pd.to_numeric(frame["phase8_rank"], errors="coerce")
+    else:
+        frame = frame.sort_values(["phase8_score_100", "symbol"], ascending=[False, True], na_position="last")
+        frame["phase8_rank"] = range(1, len(frame) + 1)
+    if "today_limit_up_excluded" in frame.columns:
+        frame["today_limit_up_excluded"] = frame["today_limit_up_excluded"].map(_truthy_flag)
+    else:
+        frame["today_limit_up_excluded"] = False
+    rename = {
+        "feature_trade_date": "phase8_feature_trade_date",
+        "model_name": "phase8_model_name",
+        "model_version": "phase8_model_version",
+    }
+    frame = frame.rename(columns={source: target for source, target in rename.items() if source in frame.columns})
+    keep = [
+        "symbol",
+        "phase8_score_100",
+        "phase8_raw_score",
+        "phase8_rank",
+        "today_limit_up_excluded",
+        "today_high_return_vs_prev_close",
+        "today_close_return_vs_prev_close",
+        "phase8_feature_trade_date",
+        "phase8_model_name",
+        "phase8_model_version",
+    ]
+    return frame.loc[:, [column for column in keep if column in frame.columns]].drop_duplicates("symbol", keep="first").copy()
 
 
 def _prepare_phase5_measures(measures: pd.DataFrame | None, *, trade_date: date) -> pd.DataFrame:
@@ -742,6 +835,16 @@ def _phase_watchlist_candidate(
         "phase4_score_percentile",
         "phase4_model_name",
         "phase4_model_version",
+        "phase8_score_100",
+        "phase8_raw_score",
+        "phase8_rank",
+        "phase8_top5_rank",
+        "today_limit_up_excluded",
+        "today_high_return_vs_prev_close",
+        "today_close_return_vs_prev_close",
+        "phase8_feature_trade_date",
+        "phase8_model_name",
+        "phase8_model_version",
         "phase5_score_100",
         "phase5_year",
         "phase5_weeks",
@@ -798,6 +901,29 @@ def _copy_candidate_field(candidate: dict[str, object], row: dict[str, object], 
     candidate[field] = _normalize_candidate_value(value)
 
 
+def _append_candidate_source_tag(candidates: list[dict[str, object]], *, symbol: str, tag: str) -> None:
+    normalized = _normalize_symbol(symbol)
+    for candidate in candidates:
+        if _normalize_symbol(candidate.get("symbol", "")) != normalized:
+            continue
+        tags = candidate.get("source_tags")
+        if isinstance(tags, list):
+            source_tags = [str(item) for item in tags]
+        elif tags:
+            source_tags = [str(tags)]
+        else:
+            source_tags = []
+        if tag not in source_tags:
+            source_tags.append(tag)
+        candidate["source_tags"] = source_tags
+        source = str(candidate.get("source", "") or "")
+        if source and tag not in source.split("+"):
+            candidate["source"] = f"{source}+{tag}"
+        elif not source:
+            candidate["source"] = tag
+        return
+
+
 def _is_missing_value(value: object) -> bool:
     if value is None:
         return True
@@ -808,6 +934,21 @@ def _is_missing_value(value: object) -> bool:
     if isinstance(result, bool):
         return result
     return False
+
+
+def _truthy_flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "是"}
 
 
 def build_watchlist_candidates(project_root: Path, limit: int = 30) -> dict[str, object]:
@@ -907,6 +1048,15 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "phase4_feature_trade_date",
             "phase4_model_name",
             "phase4_model_version",
+            "phase8_rank",
+            "phase8_top5_rank",
+            "phase8_raw_score",
+            "phase8_feature_trade_date",
+            "phase8_model_name",
+            "phase8_model_version",
+            "today_limit_up_excluded",
+            "today_high_return_vs_prev_close",
+            "today_close_return_vs_prev_close",
             "phase7_feature_trade_date",
             "phase7_model_name",
             "phase7_model_version",
@@ -935,6 +1085,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "phase2_score_100",
             "phase4_score_100",
             *PHASE4_ROLLING_COLUMNS,
+            "phase8_score_100",
             "phase5_score_100",
             "ATR%",
             RECOMMENDED_POSITION_PERCENT_FIELD,
@@ -963,6 +1114,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
                 "phase2_score_100",
                 "phase4_score_100",
                 *PHASE4_ROLLING_COLUMNS,
+                "phase8_score_100",
                 "phase5_score_100",
                 "phase7_score_100",
             ]

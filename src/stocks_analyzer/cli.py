@@ -24,6 +24,12 @@ from .exit_rule_optimization import (
     optimize_exit_rules,
 )
 from .full_market_crash import validate_mcd_crash_risk
+from .full_market_limit_up_3d import (
+    format_limit_up_3d_prediction_table,
+    predict_limit_up_3d_opportunity,
+    train_limit_up_3d_opportunity_model,
+    validate_limit_up_3d_opportunity,
+)
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
 from .full_market_return import (
     format_alpha158_qlib_return_prediction_table,
@@ -307,6 +313,18 @@ def main() -> None:
         _run_predict_alpha158_return(storage, project_root, args)
         return
 
+    if args.command == "validate-limit-up-3d-opportunity":
+        _run_validate_limit_up_3d(storage, project_root, args)
+        return
+
+    if args.command == "train-limit-up-3d-opportunity-model":
+        _run_train_limit_up_3d(storage, project_root, args)
+        return
+
+    if args.command == "predict-limit-up-3d-opportunity":
+        _run_predict_limit_up_3d(storage, project_root, args)
+        return
+
     if args.command == "validate-mcd-crash-risk":
         _run_validate_mcd_crash(storage, project_root, args)
         return
@@ -457,6 +475,7 @@ def _add_model_maintenance_parsers(subparsers: argparse._SubParsersAction) -> No
     _add_phase1_parsers(subparsers)
     _add_phase2_parsers(subparsers)
     _add_phase4_parsers(subparsers)
+    _add_phase8_parsers(subparsers)
     _add_phase5_parser(subparsers)
     _add_phase7_parsers(subparsers)
     _add_backtest_parser(subparsers)
@@ -612,6 +631,56 @@ def _add_phase4_parsers(subparsers: argparse._SubParsersAction) -> None:
     predict_return.add_argument("--latest-only", action="store_true", help="只计算最新一行 Alpha158 特征；用于日常预测加速")
     predict_return.add_argument("--feature-lookback-bars", type=int, default=61, help="latest-only 模式下使用的最近交易日数量")
     predict_return.add_argument("--compact-output", action="store_true", help="预测输出不保存 Alpha158 原始特征列")
+
+
+def _add_phase8_parsers(subparsers: argparse._SubParsersAction) -> None:
+    validate_limit_up = subparsers.add_parser("validate-limit-up-3d-opportunity", help="验证 Phase8 三日涨停机会模型")
+    validate_limit_up.add_argument("--start-date", default="2015-01-01")
+    validate_limit_up.add_argument("--test-start-date", default="2020-01-01")
+    validate_limit_up.add_argument("--end-date", default=date.today().isoformat())
+    validate_limit_up.add_argument("--limit", type=int, default=None)
+    validate_limit_up.add_argument("--top-ns", default="5,10,20,50")
+    validate_limit_up.add_argument("--test-window-days", type=int, default=60)
+    validate_limit_up.add_argument("--step-days", type=int, default=60)
+    validate_limit_up.add_argument("--embargo-days", type=int, default=3)
+    validate_limit_up.add_argument("--min-train-days", type=int, default=900)
+    validate_limit_up.add_argument("--max-windows", type=int, default=None)
+    validate_limit_up.add_argument("--limit-up-threshold", type=float, default=0.099)
+    validate_limit_up.add_argument("--down-threshold", type=float, default=-0.05)
+    validate_limit_up.add_argument("--down-penalty", type=float, default=1.2)
+    validate_limit_up.add_argument("--trap-penalty", type=float, default=1.5)
+    validate_limit_up.add_argument("--hit-reward", type=float, default=1.0)
+    validate_limit_up.add_argument("--min-training-rows", type=int, default=200)
+    validate_limit_up.add_argument("--output-dir", default="reports/limit_up_3d_opportunity_validation")
+    validate_limit_up.add_argument("--lgbm-device", choices=("cpu", "gpu", "cuda", "auto"), default="cpu")
+    validate_limit_up.add_argument("--lgbm-n-jobs", type=int, default=1)
+    validate_limit_up.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
+    validate_limit_up.add_argument("--lgbm-gpu-device-id", type=int, default=None)
+    validate_limit_up.add_argument("--progress", action="store_true")
+
+    train_limit_up = subparsers.add_parser("train-limit-up-3d-opportunity-model", help="训练 Phase8 三日涨停机会部署模型")
+    train_limit_up.add_argument("--start-date", default="2015-01-01")
+    train_limit_up.add_argument("--end-date", default=date.today().isoformat())
+    train_limit_up.add_argument("--limit", type=int, default=None)
+    train_limit_up.add_argument("--limit-up-threshold", type=float, default=0.099)
+    train_limit_up.add_argument("--down-threshold", type=float, default=-0.05)
+    train_limit_up.add_argument("--down-penalty", type=float, default=1.2)
+    train_limit_up.add_argument("--trap-penalty", type=float, default=1.5)
+    train_limit_up.add_argument("--hit-reward", type=float, default=1.0)
+    train_limit_up.add_argument("--min-training-rows", type=int, default=200)
+    train_limit_up.add_argument("--lgbm-device", choices=("cpu", "gpu", "cuda", "auto"), default="cpu")
+    train_limit_up.add_argument("--lgbm-n-jobs", type=int, default=1)
+    train_limit_up.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
+    train_limit_up.add_argument("--lgbm-gpu-device-id", type=int, default=None)
+
+    predict_limit_up = subparsers.add_parser("predict-limit-up-3d-opportunity", help="使用 Phase8 artifact 对指定日期全市场打分")
+    predict_limit_up.add_argument("--date", required=True)
+    predict_limit_up.add_argument("--limit", type=int, default=None)
+    predict_limit_up.add_argument("--top-n", type=int, default=20)
+    predict_limit_up.add_argument("--output", default=None)
+    predict_limit_up.add_argument("--latest-only", action="store_true", help="只计算最新一行 Alpha158 特征；用于日常预测加速")
+    predict_limit_up.add_argument("--feature-lookback-bars", type=int, default=61, help="latest-only 模式下使用的最近交易日数量")
+    predict_limit_up.add_argument("--compact-output", action="store_true", help="预测输出不保存 Alpha158 原始特征列")
 
 
 def _add_phase5_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -1040,6 +1109,83 @@ def _run_predict_alpha158_return(storage: Storage, project_root: Path, args: arg
     )
     print("Alpha158 Qlib return prediction complete.")
     print(format_alpha158_qlib_return_prediction_table(result.predictions, top_n=args.top_n))
+    print(f"Saved predictions: {result.output_path}")
+
+
+def _run_validate_limit_up_3d(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
+    result = validate_limit_up_3d_opportunity(
+        storage=storage,
+        project_root=project_root,
+        start_date=_parse_optional_date(args.start_date),
+        test_start_date=_parse_required_date(args.test_start_date),
+        end_date=_parse_optional_date(args.end_date),
+        limit=args.limit,
+        top_ns=tuple(_parse_int_list(args.top_ns)),
+        test_window_days=args.test_window_days,
+        step_days=args.step_days,
+        embargo_days=args.embargo_days,
+        min_train_days=args.min_train_days,
+        max_windows=args.max_windows,
+        limit_up_threshold=args.limit_up_threshold,
+        down_threshold=args.down_threshold,
+        down_penalty=args.down_penalty,
+        trap_penalty=args.trap_penalty,
+        hit_reward=args.hit_reward,
+        min_training_rows=args.min_training_rows,
+        output_dir=Path(args.output_dir).resolve() if args.output_dir else None,
+        lgbm_device=args.lgbm_device,
+        lgbm_n_jobs=args.lgbm_n_jobs,
+        lgbm_gpu_platform_id=args.lgbm_gpu_platform_id,
+        lgbm_gpu_device_id=args.lgbm_gpu_device_id,
+        progress=args.progress,
+    )
+    print("Phase8 limit-up 3D opportunity validation complete.")
+    print(result.summary.to_string(index=False))
+    print(f"Saved windows: {result.windows_path}")
+    print(f"Saved scored: {result.scored_path}")
+    print(f"Saved summary: {result.summary_path}")
+    print(f"Saved deciles: {result.deciles_path}")
+
+
+def _run_train_limit_up_3d(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
+    result = train_limit_up_3d_opportunity_model(
+        storage=storage,
+        project_root=project_root,
+        start_date=_parse_optional_date(args.start_date),
+        end_date=_parse_optional_date(args.end_date),
+        limit=args.limit,
+        limit_up_threshold=args.limit_up_threshold,
+        down_threshold=args.down_threshold,
+        down_penalty=args.down_penalty,
+        trap_penalty=args.trap_penalty,
+        hit_reward=args.hit_reward,
+        min_training_rows=args.min_training_rows,
+        lgbm_device=args.lgbm_device,
+        lgbm_n_jobs=args.lgbm_n_jobs,
+        lgbm_gpu_platform_id=args.lgbm_gpu_platform_id,
+        lgbm_gpu_device_id=args.lgbm_gpu_device_id,
+    )
+    print("Phase8 limit-up 3D opportunity deployment training complete.")
+    print(f"Rows: {result.train_rows}")
+    print(f"LightGBM device: {result.used_lgbm_device}")
+    print(f"Saved model: {result.model_path}")
+    print(f"Saved metadata: {result.metadata_path}")
+
+
+def _run_predict_limit_up_3d(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
+    result = predict_limit_up_3d_opportunity(
+        storage=storage,
+        project_root=project_root,
+        trade_date=_parse_required_date(args.date),
+        output=Path(args.output).resolve() if args.output else None,
+        limit=args.limit,
+        latest_only=args.latest_only,
+        feature_lookback_bars=args.feature_lookback_bars,
+        include_features=not args.compact_output,
+        prediction_scope="full_market_daily_fast" if args.latest_only else "full_market_daily",
+    )
+    print("Phase8 limit-up 3D opportunity prediction complete.")
+    print(format_limit_up_3d_prediction_table(result.predictions, top_n=args.top_n))
     print(f"Saved predictions: {result.output_path}")
 
 

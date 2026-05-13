@@ -102,7 +102,7 @@ def _save_intraday(storage: Storage) -> None:
                     "pre_close": 12.1,
                     "volume": 200000,
                     "amount": 2480000,
-                    "pct_change": 2.48,
+                    "pct_change": None,
                     "quote_datetime": "2026-05-08 13:30:00",
                     "quote_time": "13:30:00",
                     "source": "sina_raw",
@@ -131,7 +131,7 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
     for path in (old_intermediate, old_final, old_focus, old_top10, unrelated):
         path.write_text("x\n", encoding="utf-8")
 
-    def fake_tail(*, storage, project_root, trade_date, output, limit=None):
+    def fake_tail(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         bars = storage.load_daily_bars("600001")
         assert pd.Timestamp(bars.iloc[-1]["trade_date"]).date().isoformat() == "2026-05-08"
         assert float(bars.iloc[-1]["close"]) == 12.4
@@ -151,7 +151,7 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
         frame.to_csv(output, index=False)
         return FakePredictionResult(frame)
 
-    def fake_barrier(*, storage, project_root, trade_date, output, limit=None):
+    def fake_barrier(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         frame = pd.DataFrame(
             [
                 {
@@ -169,7 +169,7 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
         frame.to_csv(output, index=False)
         return FakePredictionResult(frame)
 
-    def fake_return(*, storage, project_root, trade_date, output, limit=None):
+    def fake_return(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         frame = pd.DataFrame(
             [
                 {
@@ -212,7 +212,7 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
     assert output.loc[0, "symbol"] == 600001
     assert output.loc[0, "name"] == "测试股份"
     assert output.loc[0, "intraday_source"] == "sina_raw"
-    assert output.loc[0, "intraday_pct_change"] == 2.48
+    assert round(float(output.loc[0, "intraday_pct_change"]), 2) == 2.48
     assert output.loc[0, "phase1_score_100"] == 100.0
     assert output.loc[0, "phase2_score_100"] == 100.0
     assert output.loc[0, "phase4_score_100"] == 100.0
@@ -223,7 +223,7 @@ def test_intraday_screening_combines_intraday_bar_and_previous_watchlist(monkeyp
     assert output.loc[0, "phase4_rank"] == 1
     assert output.loc[0, "prev_pattern_id"] == 5
     assert output.loc[0, "prev_reason"] == "previous pattern reason"
-    assert "phase5_score_100" not in output.columns
+    assert "phase5_score_100" in output.columns
     assert "phase7_score_100" not in output.columns
     assert "intraday_open" not in output.columns
     assert "intraday_high" not in output.columns
@@ -302,20 +302,20 @@ def test_intraday_screening_prioritizes_previous_focus_before_remaining(monkeypa
             ]
         )
 
-    def fake_tail(*, storage, project_root, trade_date, output, limit=None):
+    def fake_tail(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         symbols = storage.load_universe()["symbol"].astype(str).tolist()
         calls.append(symbols)
         frame = fake_frame(symbols, "risk_score")
         frame.to_csv(output, index=False)
         return FakePredictionResult(frame)
 
-    def fake_barrier(*, storage, project_root, trade_date, output, limit=None):
+    def fake_barrier(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         symbols = storage.load_universe()["symbol"].astype(str).tolist()
         frame = fake_frame(symbols, "barrier_risk_score")
         frame.to_csv(output, index=False)
         return FakePredictionResult(frame)
 
-    def fake_return(*, storage, project_root, trade_date, output, limit=None):
+    def fake_return(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         symbols = storage.load_universe()["symbol"].astype(str).tolist()
         frame = fake_frame(symbols, "return_score")
         frame.to_csv(output, index=False)
@@ -476,19 +476,19 @@ def test_intraday_screening_appends_track_stock_to_top20(monkeypatch) -> None:
             ]
         )
 
-    def fake_tail(*, storage, project_root, trade_date, output, limit=None):
+    def fake_tail(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         symbols = storage.load_universe()["symbol"].astype(str).tolist()
         frame = fake_frame(symbols, "risk_score")
         frame.to_csv(output, index=False)
         return FakePredictionResult(frame)
 
-    def fake_barrier(*, storage, project_root, trade_date, output, limit=None):
+    def fake_barrier(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         symbols = storage.load_universe()["symbol"].astype(str).tolist()
         frame = fake_frame(symbols, "barrier_risk_score")
         frame.to_csv(output, index=False)
         return FakePredictionResult(frame)
 
-    def fake_return(*, storage, project_root, trade_date, output, limit=None):
+    def fake_return(*, storage, project_root, trade_date, output, limit=None, **kwargs):
         symbols = storage.load_universe()["symbol"].astype(str).tolist()
         frame = fake_frame(symbols, "return_score")
         frame.to_csv(output, index=False)

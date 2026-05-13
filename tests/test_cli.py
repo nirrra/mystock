@@ -79,6 +79,9 @@ def test_build_parser_exposes_current_phase_commands_only() -> None:
     assert parser.parse_args(["predict-tail-risk", "--date", "2026-05-07"]).command == "predict-tail-risk"
     assert parser.parse_args(["predict-barrier-risk", "--date", "2026-05-07"]).command == "predict-barrier-risk"
     assert parser.parse_args(["predict-alpha158-qlib-return", "--date", "2026-05-07"]).command == "predict-alpha158-qlib-return"
+    assert parser.parse_args(["validate-limit-up-3d-opportunity", "--test-start-date", "2020-01-01"]).command == "validate-limit-up-3d-opportunity"
+    assert parser.parse_args(["train-limit-up-3d-opportunity-model", "--end-date", "2026-05-07"]).command == "train-limit-up-3d-opportunity-model"
+    assert parser.parse_args(["predict-limit-up-3d-opportunity", "--date", "2026-05-07"]).command == "predict-limit-up-3d-opportunity"
     assert parser.parse_args(["predict-trade-day-gate", "--date", "2026-05-07"]).command == "predict-trade-day-gate"
     assert parser.parse_args(["validate-mcd-crash-risk", "--end-date", "2026-05-07"]).command == "validate-mcd-crash-risk"
     assert parser.parse_args(

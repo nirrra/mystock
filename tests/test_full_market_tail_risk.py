@@ -8,6 +8,7 @@ import pandas as pd
 from stocks_analyzer.full_market_labels import build_barrier_risk_frame, build_mlfin_barrier_risk_frame, build_tail_risk_frame
 from stocks_analyzer.full_market_alpha158 import build_alpha158_feature_frame, build_alpha158_return_frame
 from stocks_analyzer.full_market_crash import build_crash_measures, build_symbol_weekly_return_frame, validate_mcd_crash_risk
+from stocks_analyzer.full_market_limit_up_3d import build_limit_up_3d_frame, build_limit_up_3d_walkforward_windows
 from stocks_analyzer.full_market_return import validate_alpha158_qlib_return
 from stocks_analyzer.full_market_risk import (
     build_risk_filter_impact,
@@ -100,6 +101,51 @@ def test_build_alpha158_return_frame_uses_qlib_label() -> None:
 
     assert abs(frame.loc[0, "LABEL0_raw"] - (12.1 / 11.0 - 1.0)) < 1e-6
     assert str(frame["LABEL0_raw"].dtype) == "float32"
+
+
+def test_build_limit_up_3d_frame_skips_today_limit_up_and_penalizes_traps() -> None:
+    bars = _bars([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+    bars.loc[1, "high"] = 11.1
+    bars.loc[3, "high"] = 11.1
+    bars.loc[3, "close"] = 9.4
+    bars.loc[3, "low"] = 9.3
+    bars.loc[4, "close"] = 9.8
+    bars.loc[5, "close"] = 9.4
+    bars.loc[5, "low"] = 9.3
+
+    frame = build_limit_up_3d_frame(
+        bars,
+        symbol="600000",
+        down_penalty=1.2,
+        trap_penalty=1.5,
+    )
+
+    assert pd.Timestamp("2024-01-02") not in set(frame["trade_date"])
+    first_row = frame[frame["trade_date"].eq(pd.Timestamp("2024-01-01"))].iloc[0]
+    assert first_row["limit_up_hit_3d"] == 1.0
+    assert first_row["down_3d"] == 1.0
+    assert first_row["trap_3d"] == 1.0
+    assert first_row["phase8_target"] < 0.0
+
+
+def test_build_limit_up_3d_walkforward_windows_respects_embargo() -> None:
+    dates = pd.bdate_range("2020-01-01", periods=30)
+    dataset = pd.DataFrame({"trade_date": dates, "symbol": ["600000"] * len(dates), "phase8_target": [0.0] * len(dates)})
+
+    windows = build_limit_up_3d_walkforward_windows(
+        dataset,
+        test_start_date=date(2020, 1, 22),
+        test_window_days=5,
+        step_days=5,
+        embargo_days=3,
+        min_train_days=10,
+        max_windows=1,
+    )
+
+    row = windows.iloc[0]
+    assert row["test_start"] == date(2020, 1, 22)
+    assert row["train_end"] < row["test_start"]
+    assert (pd.Timestamp(row["test_start"]) - pd.Timestamp(row["train_end"])).days >= 4
 
 
 def test_build_symbol_weekly_return_frame_uses_friday_close() -> None:

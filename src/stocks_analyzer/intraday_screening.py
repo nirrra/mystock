@@ -11,6 +11,7 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from .atr import build_atr_snapshot_row
+from .full_market_limit_up_3d import limit_up_3d_model_path, predict_limit_up_3d_opportunity
 from .full_market_return import predict_alpha158_qlib_return
 from .full_market_risk import predict_barrier_risk, predict_tail_risk
 from .indicators import add_indicators
@@ -29,6 +30,7 @@ from .watchlist import (
     _prepare_atr_frame,
     _prepare_macd_frame,
     _prepare_phase4_predictions,
+    _prepare_phase8_predictions,
     _prepare_phase_risk_predictions,
     add_centered_risk_scores,
     extract_watchlist_symbols,
@@ -65,6 +67,7 @@ class IntradayScreeningResult:
     phase1_path: Path
     phase2_path: Path
     phase4_path: Path
+    phase8_path: Path | None
 
     @property
     def top10_path(self) -> Path:
@@ -79,11 +82,13 @@ class _AnalysisResult:
     phase1: pd.DataFrame
     phase2: pd.DataFrame
     phase4: pd.DataFrame
+    phase8: pd.DataFrame
     macd: pd.DataFrame
     atr: pd.DataFrame
     phase1_path: Path
     phase2_path: Path
     phase4_path: Path
+    phase8_path: Path | None
 
 
 def run_intraday_screening(
@@ -165,6 +170,7 @@ def run_intraday_screening(
             combined_phase1 = _concat_frames(focus_analysis.phase1, remaining_analysis.phase1)
             combined_phase2 = _concat_frames(focus_analysis.phase2, remaining_analysis.phase2)
             combined_phase4 = _concat_frames(focus_analysis.phase4, remaining_analysis.phase4)
+            combined_phase8 = _concat_frames(focus_analysis.phase8, remaining_analysis.phase8)
             combined_macd = _concat_frames(focus_analysis.macd, remaining_analysis.macd)
             combined_atr = _concat_frames(focus_analysis.atr, remaining_analysis.atr)
             combined = _build_output_frame(
@@ -175,6 +181,7 @@ def run_intraday_screening(
                 phase1=combined_phase1,
                 phase2=combined_phase2,
                 phase4=combined_phase4,
+                phase8=combined_phase8,
                 macd=combined_macd,
                 atr=combined_atr,
             )
@@ -185,11 +192,13 @@ def run_intraday_screening(
                 phase1=combined_phase1,
                 phase2=combined_phase2,
                 phase4=combined_phase4,
+                phase8=combined_phase8,
                 macd=combined_macd,
                 atr=combined_atr,
                 phase1_path=remaining_analysis.phase1_path,
                 phase2_path=remaining_analysis.phase2_path,
                 phase4_path=remaining_analysis.phase4_path,
+                phase8_path=remaining_analysis.phase8_path or focus_analysis.phase8_path,
             )
         else:
             analysis = focus_analysis
@@ -231,6 +240,7 @@ def run_intraday_screening(
         phase1_path=analysis.phase1_path,
         phase2_path=analysis.phase2_path,
         phase4_path=analysis.phase4_path,
+        phase8_path=analysis.phase8_path,
     )
 
 
@@ -473,6 +483,7 @@ def _run_candidate_analysis(
     phase1_path = output_dir / f"intraday_{file_tag}_tail_risk_predictions_{trade_date.isoformat()}.csv"
     phase2_path = output_dir / f"intraday_{file_tag}_barrier_risk_predictions_{trade_date.isoformat()}.csv"
     phase4_path = output_dir / f"intraday_{file_tag}_alpha158_qlib_return_predictions_{trade_date.isoformat()}.csv"
+    phase8_path = output_dir / f"intraday_{file_tag}_limit_up_3d_opportunity_predictions_{trade_date.isoformat()}.csv"
 
     phase1 = predict_tail_risk(
         storage=overlay_storage,
@@ -504,6 +515,12 @@ def _run_candidate_analysis(
         include_features=False,
         prediction_scope="intraday_screening",
     ).predictions
+    phase8 = _predict_intraday_phase8_if_available(
+        storage=overlay_storage,
+        project_root=project_root,
+        trade_date=trade_date,
+        output=phase8_path,
+    )
 
     macd = _build_intraday_macd_summary(overlay_storage, trade_date=trade_date, symbols=symbols)
     atr = _build_intraday_atr_summary(overlay_storage, trade_date=trade_date, symbols=symbols)
@@ -516,6 +533,7 @@ def _run_candidate_analysis(
         phase1=phase1,
         phase2=phase2,
         phase4=phase4,
+        phase8=phase8,
         macd=macd,
         atr=atr,
     )
@@ -526,11 +544,13 @@ def _run_candidate_analysis(
         phase1=phase1,
         phase2=phase2,
         phase4=phase4,
+        phase8=phase8,
         macd=macd,
         atr=atr,
         phase1_path=phase1_path,
         phase2_path=phase2_path,
         phase4_path=phase4_path,
+        phase8_path=phase8_path if not phase8.empty else None,
     )
 
 
@@ -539,6 +559,27 @@ def _concat_frames(*frames: pd.DataFrame) -> pd.DataFrame:
     if not available:
         return pd.DataFrame()
     return pd.concat(available, ignore_index=True)
+
+
+def _predict_intraday_phase8_if_available(
+    *,
+    storage: _IntradayOverlayStorage,
+    project_root: Path,
+    trade_date: date,
+    output: Path,
+) -> pd.DataFrame:
+    if not limit_up_3d_model_path(project_root).exists():
+        return pd.DataFrame(columns=["symbol"])
+    return predict_limit_up_3d_opportunity(
+        storage=storage,
+        project_root=project_root,
+        trade_date=trade_date,
+        output=output,
+        latest_only=True,
+        feature_lookback_bars=61,
+        include_features=False,
+        prediction_scope="intraday_screening",
+    ).predictions
 
 
 def _load_focus_candidates(storage: Storage, candidates: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -624,6 +665,14 @@ def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
             selected = pattern_selected
     selected = selected.copy()
     selected["intraday_selection_source"] = "top20"
+    p8_top5 = _select_intraday_p8_top5(frame)
+    if not p8_top5.empty:
+        p8_top5 = p8_top5.copy()
+        p8_top5["intraday_selection_source"] = "p8_top5"
+        selected_symbols = set(selected["symbol"].astype(str)) if "symbol" in selected.columns else set()
+        p8_only = p8_top5[~p8_top5["symbol"].astype(str).isin(selected_symbols)].copy()
+        selected.loc[selected["symbol"].astype(str).isin(set(p8_top5["symbol"].astype(str))), "intraday_selection_source"] = "top20+p8_top5"
+        selected = _concat_frames(selected, p8_only)
     tracked = _select_intraday_track_stock(frame)
     if not tracked.empty:
         tracked = tracked.copy()
@@ -638,6 +687,23 @@ def _select_top20_focus(frame: pd.DataFrame) -> pd.DataFrame:
     selected["_track_focus_sort"] = selected.get("intraday_selection_source", "").astype(str).eq("track_stock").astype(int)
     selected = _sort_intraday_focus(selected, leading_columns=["_track_focus_sort"], leading_ascending=[True])
     return selected.drop(columns=["_track_focus_sort"], errors="ignore").reset_index(drop=True)
+
+
+def _select_intraday_p8_top5(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "phase8_score_100" not in frame.columns:
+        return frame.head(0).copy()
+    result = frame.copy()
+    p8 = pd.to_numeric(result["phase8_score_100"], errors="coerce")
+    pct_change = pd.to_numeric(result.get("intraday_pct_change"), errors="coerce")
+    if "today_limit_up_excluded" in result.columns:
+        today_limit_up = result["today_limit_up_excluded"].map(_truthy_flag).fillna(False)
+    else:
+        today_limit_up = pd.Series(False, index=result.index)
+    result = result[p8.notna() & ~today_limit_up & (pct_change.le(9.9) | pct_change.isna())].copy()
+    if result.empty:
+        return result
+    result["phase8_score_100"] = pd.to_numeric(result["phase8_score_100"], errors="coerce")
+    return result.sort_values(["phase8_score_100", "phase4_score_100", "symbol"], ascending=[False, False, True], na_position="last").head(5)
 
 
 def _select_intraday_track_stock(frame: pd.DataFrame) -> pd.DataFrame:
@@ -904,6 +970,14 @@ def _load_intraday_snapshot_frame(storage: Storage, *, symbols: list[str]) -> pd
     for column in ("trade_date", "quote_datetime"):
         if column in result.columns:
             result[column] = pd.to_datetime(result[column], errors="coerce")
+    if "pct_change" not in result.columns:
+        result["pct_change"] = pd.NA
+    pct_change = pd.to_numeric(result["pct_change"], errors="coerce")
+    if {"close", "pre_close"}.issubset(result.columns):
+        close = pd.to_numeric(result["close"], errors="coerce")
+        pre_close = pd.to_numeric(result["pre_close"], errors="coerce").replace(0, pd.NA)
+        derived_pct_change = close.div(pre_close).sub(1.0).mul(100.0)
+        result["pct_change"] = pct_change.where(pct_change.notna(), derived_pct_change)
     return result
 
 
@@ -916,6 +990,7 @@ def _build_output_frame(
     phase1: pd.DataFrame,
     phase2: pd.DataFrame,
     phase4: pd.DataFrame,
+    phase8: pd.DataFrame,
     macd: pd.DataFrame,
     atr: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -939,12 +1014,13 @@ def _build_output_frame(
     )
     phase4_prepared = _prepare_phase4_predictions(phase4)
     phase4_prepared = merge_phase4_rolling_frame(phase4_prepared, project_root=project_root, trade_date=trade_date)
+    phase8_prepared = _prepare_phase8_predictions(phase8)
     macd_prepared = _prepare_macd_frame(macd)
     atr_prepared = _prepare_atr_frame(atr).rename(columns={"trade_date": "atr_trade_date", "close": "atr_close"})
     intraday_prepared = _prepare_intraday_for_output(intraday)
 
     result = base.copy()
-    for frame in (intraday_prepared, phase1_prepared, phase2_prepared, phase4_prepared, macd_prepared, atr_prepared):
+    for frame in (intraday_prepared, phase1_prepared, phase2_prepared, phase4_prepared, phase8_prepared, macd_prepared, atr_prepared):
         if frame.empty or "symbol" not in frame.columns:
             continue
         frame = frame.drop(columns=["name"], errors="ignore")
@@ -1044,6 +1120,14 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "phase2_center_score",
         "phase4_rank",
         *PHASE4_ROLLING_RANK_COLUMNS,
+        "phase8_rank",
+        "phase8_raw_score",
+        "phase8_feature_trade_date",
+        "phase8_model_name",
+        "phase8_model_version",
+        "today_limit_up_excluded",
+        "today_high_return_vs_prev_close",
+        "today_close_return_vs_prev_close",
         "phase1_rank",
         "phase2_rank",
         "phase1_excluded_by_top20_risk",
@@ -1093,6 +1177,7 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "phase2_score_100",
         "phase4_score_100",
         *PHASE4_ROLLING_COLUMNS,
+        "phase8_score_100",
         "phase5_score_100",
         "atr_pct_14",
         RECOMMENDED_POSITION_PERCENT_FIELD,

@@ -57,9 +57,9 @@ def test_run_daily_screening_runs_current_pipeline_without_touching_picks(monkey
         ["update", "--start-date", "20240101", "--end-date", "20260411"],
         ["macd", "--date", "2026-04-11"],
         ["atr", "--date", "2026-04-11"],
-        ["predict-tail-risk", "--date", "2026-04-11"],
-        ["predict-barrier-risk", "--date", "2026-04-11"],
-        ["predict-alpha158-qlib-return", "--date", "2026-04-11"],
+        ["predict-tail-risk", "--date", "2026-04-11", "--latest-only", "--feature-lookback-bars", "61", "--compact-output"],
+        ["predict-barrier-risk", "--date", "2026-04-11", "--latest-only", "--feature-lookback-bars", "61", "--compact-output"],
+        ["predict-alpha158-qlib-return", "--date", "2026-04-11", "--latest-only", "--feature-lookback-bars", "61", "--compact-output"],
         ["predict-trade-day-gate", "--date", "2026-04-11"],
         ["validate-mcd-crash-risk", "--start-date", "2015-01-01", "--end-date", "2026-04-11"],
         ["pattern", "--as-of", "2026-04-11"],
@@ -75,10 +75,12 @@ def test_run_daily_screening_runs_current_pipeline_without_touching_picks(monkey
     assert report["phase1_path"].endswith("tail_risk_predictions_2026-04-11.csv")
     assert report["phase2_path"].endswith("barrier_risk_predictions_2026-04-11.csv")
     assert report["phase4_path"].endswith("alpha158_qlib_return_predictions_2026-04-11.csv")
+    assert report["phase8_path"] is None
     assert report["phase5_path"].endswith("mcd_crash_annual_measures.csv")
     assert report["phase7_path"].endswith("trade_day_gate_prediction_2026-04-11.csv")
-    assert "[0/11] 检查 2026-04-11 是否为交易日..." in output
-    assert "[9/11] pattern 完成" in output
+    assert "[0/12] 检查 2026-04-11 是否为交易日..." in output
+    assert "[7/12] phase8_limit_up_3d 跳过" in output
+    assert "[10/12] pattern 完成" in output
 
 
 def _write_stage_output(project_root: Path, args: list[str]) -> None:

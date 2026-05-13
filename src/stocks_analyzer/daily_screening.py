@@ -13,6 +13,7 @@ from time import perf_counter
 import pandas as pd
 
 from .config import load_config
+from .full_market_limit_up_3d import limit_up_3d_model_path, limit_up_3d_predictions_path
 from .full_market_return import alpha158_qlib_return_predictions_path
 from .full_market_risk import barrier_risk_predictions_path, tail_risk_predictions_path
 from .full_market_trade_day import trade_day_gate_prediction_path
@@ -41,7 +42,7 @@ def run_daily_screening(
 ) -> ScreeningResult:
     _ = picks_filename  # kept only for backward compatibility with existing callers
     config = load_config(project_root / "config" / "default.yaml")
-    total_stages = 11
+    total_stages = 12
     print(f"[0/{total_stages}] 检查 {trade_date.isoformat()} 是否为交易日...", flush=True)
     trading_day = is_trading_day(config.provider, trade_date)
     if not trading_day:
@@ -85,18 +86,19 @@ def run_daily_screening(
         project_root,
         ["predict-alpha158-qlib-return", "--date", trade_date.isoformat(), *fast_prediction_args],
     )
-    _run_project_stage(7, total_stages, "phase7_trade_day_gate", project_root, ["predict-trade-day-gate", "--date", trade_date.isoformat()])
+    _run_phase8_stage(7, total_stages, project_root, trade_date, fast_prediction_args)
+    _run_project_stage(8, total_stages, "phase7_trade_day_gate", project_root, ["predict-trade-day-gate", "--date", trade_date.isoformat()])
     _run_phase5_stage(
-        8,
+        9,
         total_stages,
         project_root,
         trade_date,
         refresh_needed=phase5_needed,
         reason=phase5_reason,
     )
-    _run_project_stage(9, total_stages, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
-    generated_watchlist_path, watchlist_payload = _run_phase_watchlist_stage(10, total_stages, project_root, trade_date)
-    _run_project_stage(11, total_stages, "track_stock", project_root, ["track-stock", "--date", trade_date.isoformat()])
+    _run_project_stage(10, total_stages, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
+    generated_watchlist_path, watchlist_payload = _run_phase_watchlist_stage(11, total_stages, project_root, trade_date)
+    _run_project_stage(12, total_stages, "track_stock", project_root, ["track-stock", "--date", trade_date.isoformat()])
 
     watchlist_pattern = watchlist_pattern_path(project_root, trade_date)
     macd_path = _macd_report_path(project_root, trade_date)
@@ -105,6 +107,7 @@ def run_daily_screening(
     phase1_path = tail_risk_predictions_path(project_root, trade_date)
     phase2_path = barrier_risk_predictions_path(project_root, trade_date)
     phase4_path = alpha158_qlib_return_predictions_path(project_root, trade_date)
+    phase8_path = limit_up_3d_predictions_path(project_root, trade_date)
     phase5_path = _phase5_annual_measures_path(project_root)
     phase7_path = trade_day_gate_prediction_path(project_root, trade_date)
     track_stock_path = project_root / "track_stock.xlsx"
@@ -120,6 +123,7 @@ def run_daily_screening(
         phase1_path=phase1_path if phase1_path.exists() else None,
         phase2_path=phase2_path if phase2_path.exists() else None,
         phase4_path=phase4_path if phase4_path.exists() else None,
+        phase8_path=phase8_path if phase8_path.exists() else None,
         phase5_path=phase5_path if phase5_path.exists() else None,
         phase7_path=phase7_path if phase7_path.exists() else None,
         track_stock_path=track_stock_path if track_stock_path.exists() else None,
@@ -185,6 +189,19 @@ def _run_phase5_stage(
     )
 
 
+def _run_phase8_stage(stage_index: int, total_stages: int, project_root: Path, trade_date: date, fast_prediction_args: list[str]) -> None:
+    if not limit_up_3d_model_path(project_root).exists():
+        print(f"[{stage_index}/{total_stages}] phase8_limit_up_3d 跳过：模型文件尚未训练完成。", flush=True)
+        return
+    _run_project_stage(
+        stage_index,
+        total_stages,
+        "phase8_limit_up_3d",
+        project_root,
+        ["predict-limit-up-3d-opportunity", "--date", trade_date.isoformat(), *fast_prediction_args],
+    )
+
+
 def _run_phase_watchlist_stage(
     stage_index: int,
     total_stages: int,
@@ -197,6 +214,7 @@ def _run_phase_watchlist_stage(
     phase1_path = tail_risk_predictions_path(project_root, trade_date)
     phase2_path = barrier_risk_predictions_path(project_root, trade_date)
     phase4_path = alpha158_qlib_return_predictions_path(project_root, trade_date)
+    phase8_path = limit_up_3d_predictions_path(project_root, trade_date)
     phase5_path = _phase5_annual_measures_path(project_root)
     phase7_path = trade_day_gate_prediction_path(project_root, trade_date)
     macd_path = _macd_report_path(project_root, trade_date)
@@ -208,6 +226,7 @@ def _run_phase_watchlist_stage(
         phase1_predictions=_read_required_csv(phase1_path),
         phase2_predictions=_read_required_csv(phase2_path),
         phase4_predictions=_read_required_csv(phase4_path),
+        phase8_predictions=_read_optional_csv(phase8_path),
         phase7_prediction=_read_required_csv(phase7_path),
         phase5_measures=_read_optional_csv(phase5_path),
         macd_frame=_read_optional_csv(macd_path),
@@ -217,6 +236,7 @@ def _run_phase_watchlist_stage(
             "phase1": str(phase1_path),
             "phase2": str(phase2_path),
             "phase4": str(phase4_path),
+            "phase8": str(phase8_path),
             "phase5": str(phase5_path),
             "phase7": str(phase7_path),
             "macd": str(macd_path),
@@ -245,6 +265,7 @@ def _write_run_report(
     phase1_path: Path | None,
     phase2_path: Path | None,
     phase4_path: Path | None,
+    phase8_path: Path | None,
     phase5_path: Path | None,
     phase7_path: Path | None,
     track_stock_path: Path | None,
@@ -265,6 +286,7 @@ def _write_run_report(
         "phase1_path": str(phase1_path) if phase1_path is not None else None,
         "phase2_path": str(phase2_path) if phase2_path is not None else None,
         "phase4_path": str(phase4_path) if phase4_path is not None else None,
+        "phase8_path": str(phase8_path) if phase8_path is not None else None,
         "phase5_path": str(phase5_path) if phase5_path is not None else None,
         "phase7_path": str(phase7_path) if phase7_path is not None else None,
         "track_stock_path": str(track_stock_path) if track_stock_path is not None else None,

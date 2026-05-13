@@ -15,6 +15,8 @@ PHASE_DISPLAY_COLUMNS = [
     "phase2_is_cusum_event",
     "phase4_score_100",
     *PHASE4_ROLLING_COLUMNS,
+    "phase8_score_100",
+    "phase8_rank",
     "phase5_score_100",
     "phase7_score_100",
     "phase7_trade_permission",
@@ -37,6 +39,7 @@ PHASE_TABLE_DROP_COLUMNS = [
     "phase2_mlfin_daily_vol",
     "phase2_mlfin_cusum_threshold",
     "phase4_return_score",
+    "phase8_raw_score",
     "phase4_top_score_filter_pass",
     "phase4_rank",
     "phase4_score_percentile",
@@ -92,6 +95,12 @@ def build_daily_phase_display_frame(*, project_root: Path, trade_date: date) -> 
     )
     phase4 = _prepare_phase4(_read_csv_columns(_phase4_path(project_root, trade_date), {"symbol", "return_score"}))
     phase4 = merge_phase4_rolling_frame(phase4, project_root=project_root, trade_date=trade_date)
+    phase8 = _prepare_phase8(
+        _read_csv_columns(
+            _phase8_path(project_root, trade_date),
+            {"symbol", "phase8_score_100", "phase8_raw_score", "phase8_rank", "today_limit_up_excluded"},
+        )
+    )
     phase5 = _prepare_phase5(
         _read_csv_columns(
             _phase5_path(project_root),
@@ -99,7 +108,7 @@ def build_daily_phase_display_frame(*, project_root: Path, trade_date: date) -> 
         ),
         trade_date=trade_date,
     )
-    frames = [item for item in (phase1, phase2, phase4, phase5) if not item.empty]
+    frames = [item for item in (phase1, phase2, phase4, phase8, phase5) if not item.empty]
     if not frames:
         result = pd.DataFrame(columns=["symbol"])
     else:
@@ -224,6 +233,32 @@ def _prepare_phase4(frame: pd.DataFrame) -> pd.DataFrame:
     return result.loc[:, ["symbol", "phase4_score_100", "phase4_return_score", "phase4_rank"]]
 
 
+def _prepare_phase8(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "symbol" not in frame.columns:
+        return pd.DataFrame(columns=["symbol"])
+    result = frame.copy()
+    result["symbol"] = result["symbol"].map(normalize_symbol)
+    if "phase8_score_100" in result.columns:
+        result["phase8_score_100"] = pd.to_numeric(result["phase8_score_100"], errors="coerce")
+    elif "phase8_raw_score" in result.columns:
+        result["phase8_raw_score"] = pd.to_numeric(result["phase8_raw_score"], errors="coerce")
+        result["phase8_score_100"] = score_series_100(result["phase8_raw_score"], higher_is_better=True)
+    else:
+        return pd.DataFrame(columns=["symbol"])
+    if "phase8_rank" in result.columns:
+        result["phase8_rank"] = pd.to_numeric(result["phase8_rank"], errors="coerce")
+    else:
+        result = result.sort_values(["phase8_score_100", "symbol"], ascending=[False, True], na_position="last").reset_index(drop=True)
+        result["phase8_rank"] = result.index + 1
+    keep = ["symbol", "phase8_score_100", "phase8_rank"]
+    if "phase8_raw_score" in result.columns:
+        result["phase8_raw_score"] = pd.to_numeric(result["phase8_raw_score"], errors="coerce")
+        keep.append("phase8_raw_score")
+    if "today_limit_up_excluded" in result.columns:
+        keep.append("today_limit_up_excluded")
+    return result.loc[:, [column for column in keep if column in result.columns]].drop_duplicates("symbol", keep="first")
+
+
 def _prepare_phase5(frame: pd.DataFrame, *, trade_date: date) -> pd.DataFrame:
     if frame.empty or "symbol" not in frame.columns or "year" not in frame.columns:
         return pd.DataFrame(columns=["symbol"])
@@ -303,6 +338,10 @@ def _phase2_path(project_root: Path, trade_date: date) -> Path:
 
 def _phase4_path(project_root: Path, trade_date: date) -> Path:
     return project_root / "reports" / "full_market_model" / f"alpha158_qlib_return_predictions_{trade_date.isoformat()}.csv"
+
+
+def _phase8_path(project_root: Path, trade_date: date) -> Path:
+    return project_root / "reports" / "full_market_model" / f"limit_up_3d_opportunity_predictions_{trade_date.isoformat()}.csv"
 
 
 def _phase5_path(project_root: Path) -> Path:
