@@ -211,6 +211,7 @@ def test_intraday_screening_combines_intraday_bar_and_previous_pool(monkeypatch)
     assert not old_track.exists()
     assert unrelated.exists()
     output = pd.read_csv(result.output_path)
+    assert list(output.columns[:5]) == ["intraday_trade_date", "symbol", "name", "intraday_selection_source", "intraday_pct_change"]
     assert output.loc[0, "symbol"] == 600001
     assert output.loc[0, "name"] == "测试股份"
     assert output.loc[0, "intraday_source"] == "sina_raw"

@@ -64,6 +64,7 @@ def test_write_intraday_pool_csv_prioritizes_intraday_review_columns() -> None:
             {
                 "symbol": "600000",
                 "name": "测试股份",
+                "source": "pattern_pool",
                 "涨幅%": 1.23,
                 "phase1_score_100": 71.0,
                 "phase2_score_100": 82.0,
@@ -83,10 +84,11 @@ def test_write_intraday_pool_csv_prioritizes_intraday_review_columns() -> None:
     target = write_intraday_pool(project_root=tmp_path, trade_date=date(2026, 4, 10), picker_payload=payload)
     csv_frame = pd.read_csv(target.with_suffix(".csv"))
 
-    assert list(csv_frame.columns[:14]) == [
+    assert list(csv_frame.columns[:15]) == [
         "trade_date",
         "symbol",
         "name",
+        "source",
         "涨幅%",
         "phase1_score_100",
         "phase2_score_100",

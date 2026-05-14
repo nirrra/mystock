@@ -1303,7 +1303,6 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
         if kind == "intraday_pool":
             phase_detail_columns = [
                 "candidate_index",
-                "source",
                 "phase5_score_100",
                 "phase4_5d_std",
                 *phase_detail_columns,
@@ -1312,6 +1311,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                 "trade_date",
                 "symbol",
                 "name",
+                "source",
                 "涨幅%",
                 "phase1_score_100",
                 "phase2_score_100",
@@ -1364,6 +1364,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                     "trade_date",
                     "symbol",
                     "name",
+                    "source",
                     "涨幅%",
                     "phase1_score_100",
                     "phase2_score_100",
