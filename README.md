@@ -56,10 +56,16 @@ python -m stocks_analyzer --project-root . daily-screening --date $DATE
 
 ## 接口受限时怎么跑
 
-盘中 `intraday-screening` 默认读取最近一个交易日的 `reports/watchlists/intraday_pool_YYYY-MM-DD.json`，再合并 `track_stock.xlsx` 里的手动跟踪股；它不再做全市场扫描。默认接口是新浪 `sina_raw`。如果需要临时改用东财：
+盘中 `intraday-screening` 默认读取最近一个交易日的 `reports/watchlists/intraday_pool_YYYY-MM-DD.json`，再合并 `track_stock.xlsx` 里的手动跟踪股。若当天已经用 `--refresh-full-market-pool` 生成过全市场 Top100 池，则同日后续运行会优先使用这个当天池，而不是上一交易日池。默认接口是新浪 `sina_raw`。如果需要临时改用东财：
 
 ```powershell
 python -m stocks_analyzer --project-root . intraday-screening --date $DATE --data-interface eastmoney_direct
+```
+
+如果盘中需要重新从全市场生成当天 Top100 池：
+
+```powershell
+python -m stocks_analyzer --project-root . intraday-screening --date $DATE --refresh-full-market-pool
 ```
 
 如果接口批量受限，可以降低批量大小：
@@ -104,9 +110,9 @@ python -m stocks_analyzer --project-root . update --start-date 20240101 --end-da
 
 所有入口都会在最终入选前排除当日涨幅 `> 9.9%` 的股票，避免把已经涨停或接近涨停的标的放入盘后候选。整理 [选股.md](选股.md) 时，最终选股表展示 `P1/P2/P4`、`P4五日均/std`、P8、Phase5、当日涨幅和连续上榜天数；建议总仓位、收盘价、ATR、止损止盈只放在交易辅助信息表。Phase8 模型文件尚未训练完成时，盘后和盘中流程会自动跳过 P8，不影响其他环节。即使 P8 已生成，也必须把它当成高风险短线提示，只能在主线、P1/P2/P4、ATR 仓位和结构都合格时作为加分项。
 
-`daily-screening` 还会额外生成 `intraday_pool_YYYY-MM-DD.json/csv`，供下一个交易日盘中快速扫描。这个 100 池不同于正式 `watchlist`：先纳入 `patterns_all` 里的 pattern 命中股，最多 30 只，超过时保留 P4 分数更高的；再加入 P1/P2/P4 混合分 `centered_risk_score` Top50；剩余名额用 P8 排名补足到最多 100 只。盘中 `intraday-screening` 只刷新这个池子和手动跟踪股，输出 `intraday_pool_screening_YYYY-MM-DD.csv`。
+`daily-screening` 还会额外生成 `intraday_pool_YYYY-MM-DD.json/csv`，供下一个交易日盘中快速扫描。这个 100 池不同于正式 `watchlist`：先纳入 `patterns_all` 里的 pattern 命中股，最多 30 只，超过时保留 P4 分数更高的；再加入 P1/P2/P4 混合分 `centered_risk_score` Top50；剩余名额用 P8 排名补足到最多 100 只。盘中 `intraday-screening` 默认只刷新这个池子和手动跟踪股，输出 `intraday_pool_screening_YYYY-MM-DD.csv`；若使用 `--refresh-full-market-pool`，会先用全市场临时日 K 重新生成当天 `intraday_pool_YYYY-MM-DD` Top100，后续同日盘中刷新会优先使用该池。
 
-`watchlist_YYYY-MM-DD.csv` 保持盘后正式候选的查看顺序。`intraday_pool_YYYY-MM-DD.csv` 和盘中 `intraday_pool_screening_YYYY-MM-DD.csv` 的前置列按盘中快速查看顺序排列：交易日期、股票代码、名称、盘中/当日涨幅、P1/P2/P4/P8、5日P4均分、pattern 命中情况、ATR%、建议总仓位、MACD 与其他技术指标、Phase 细节、pattern 细节。日常快速浏览优先看前 15-20 列即可。
+`watchlist_YYYY-MM-DD.csv` 保持盘后正式候选的查看顺序。`intraday_pool_YYYY-MM-DD.csv` 和盘中 `intraday_pool_screening_YYYY-MM-DD.csv` 的前置列按盘中快速查看顺序排列：交易日期、股票代码、名称、来源、盘中/当日涨幅、P1/P2/P4/P8、5日P4均分、pattern 命中情况、ATR%、建议总仓位、MACD 与其他技术指标、Phase 细节、pattern 细节。日常快速浏览优先看前 15-20 列即可。
 
 ## 六个 pattern 在识别什么
 

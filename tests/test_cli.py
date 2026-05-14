@@ -52,6 +52,8 @@ def test_build_parser_accepts_daily_screening_main_commands() -> None:
     assert intraday_screening.data_interface == "sina_raw"
     assert intraday_screening.skip_intraday_update is True
     assert intraday_screening.keep_report_dates == 10
+    refreshed = parser.parse_args(["intraday-screening", "--date", "2026-05-08", "--refresh-full-market-pool"])
+    assert refreshed.refresh_full_market_pool is True
 
     pattern = parser.parse_args(["pattern", "--1", "--5", "--as-of", "2026-05-07"])
     assert pattern.command == "pattern"

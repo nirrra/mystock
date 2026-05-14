@@ -20,13 +20,13 @@ reports/intraday_screening/intraday_track_stock_YYYY-MM-DD.csv
 track_stock.xlsx
 ```
 
-`reports/watchlists/intraday_pool_上一交易日.csv` 是盘后 `daily-screening` 为下一交易日盘中快速跟踪生成的固定 100 池。`intraday_pool_screening_YYYY-MM-DD.csv` 是这个 100 池在当天盘中临时日 K 下重新计算后的结果，并已额外合并 `track_stock.xlsx` 里的手动跟踪股。
+`reports/watchlists/intraday_pool_上一交易日.csv` 是盘后 `daily-screening` 为下一交易日盘中快速跟踪生成的固定 100 池。若当天已经执行过 `intraday-screening --refresh-full-market-pool`，则 `reports/watchlists/intraday_pool_YYYY-MM-DD.csv` 会变成当天全市场刷新得到的新 100 池，后续同日 `intraday-screening` 会优先使用它。`intraday_pool_screening_YYYY-MM-DD.csv` 是当前参考池在当天盘中临时日 K 下重新计算后的结果，并已额外合并 `track_stock.xlsx` 里的手动跟踪股。
 
-日中名单必须以 `intraday_pool_screening_YYYY-MM-DD.csv` 为主参考源，不从全市场临时重挑。`intraday_track_stock_YYYY-MM-DD.csv` 只用于手动跟踪股票总结。
+日中名单必须以 `intraday_pool_screening_YYYY-MM-DD.csv` 为主参考源。只有当 `intraday-screening --refresh-full-market-pool` 已经生成当天全市场 Top100 池时，才可以把这个新池视为当天参考池；写作时仍不要绕过 `intraday_pool_screening_YYYY-MM-DD.csv` 去其他全市场预测文件里临时重挑。`intraday_track_stock_YYYY-MM-DD.csv` 只用于手动跟踪股票总结。
 
 ## 数据口径
 
-`intraday-screening` 使用 `data/intraday` 下的盘中临时日 K，不写入 `data/daily`。它只扫描盘后生成的 `intraday_pool` 和手动跟踪股，不做全市场扫描。盘中流程只跑 MACD、ATR、Phase1、Phase2、Phase4 和 Phase8；Phase8 模型文件尚未训练完成时会自动跳过，不影响日中流程。它不跑 Phase5、Phase7，也不重新识别 pattern。
+`intraday-screening` 使用 `data/intraday` 下的盘中临时日 K，不写入 `data/daily`。默认只扫描盘后生成的 `intraday_pool` 和手动跟踪股；可选 `--refresh-full-market-pool` 会先全市场扫描一次并生成当天 Top100 池，后续同日运行自动复用该池。盘中流程只跑 MACD、ATR、Phase1、Phase2、Phase4 和 Phase8；Phase8 模型文件尚未训练完成时会自动跳过，不影响日中流程。它不跑 Phase5、Phase7，也不重新识别 pattern。
 
 因此日中名单必须遵守：
 
@@ -52,7 +52,7 @@ track_stock.xlsx
 
 如果股票技术分很高，但与当前主线无关，默认降级为“观察”，不要放在日中主表前列。
 
-### 2. 只看盘后 100 池和手动跟踪股，不从全市场随意重挑
+### 2. 只看当前 100 池和手动跟踪股，不从全市场随意重挑
 
 盘中参考源固定为：
 
@@ -61,7 +61,7 @@ track_stock.xlsx
 手动跟踪源 = reports/intraday_screening/intraday_track_stock_YYYY-MM-DD.csv
 ```
 
-这样做是为了提高日中效率：全市场发现工作已经在盘后完成，盘中只刷新最多 100 只池内股票和手动跟踪股。
+这样做是为了提高日中效率：默认情况下全市场发现工作已经在盘后完成，盘中只刷新最多 100 只池内股票和手动跟踪股。若当天已经通过 `--refresh-full-market-pool` 做过全市场刷新，则当前 100 池就是当天全市场结果的 Top100。
 
 盘后 `intraday_pool` 的组成口径：
 

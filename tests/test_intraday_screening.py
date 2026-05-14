@@ -355,6 +355,189 @@ def test_intraday_screening_uses_intraday_pool_without_full_market_remaining(mon
     assert output.loc[0, "intraday_selection_source"] == "p124_top50"
 
 
+def test_intraday_screening_prefers_same_day_full_market_pool(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("same_day_full_market_pool")
+    storage = _make_storage(tmp_path)
+    previous_pool = tmp_path / "reports" / "watchlists" / "intraday_pool_2026-05-07.json"
+    today_pool = tmp_path / "reports" / "watchlists" / "intraday_pool_2026-05-08.json"
+    today_pool.parent.mkdir(parents=True, exist_ok=True)
+    previous_pool.write_text(
+        json.dumps({"candidates": [{"symbol": "600001", "name": "旧池", "source": "p124_top50"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    today_pool.write_text(
+        json.dumps(
+            {
+                "selection_policy": {"source_scope": "intraday_full_market"},
+                "candidates": [{"symbol": "600002", "name": "全市场新池", "source": "p8_fill"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    storage.save_universe(
+        pd.DataFrame(
+            [
+                {"symbol": "600001", "name": "旧池"},
+                {"symbol": "600002", "name": "全市场新池"},
+            ]
+        )
+    )
+    for symbol in ("600001", "600002"):
+        storage.save_daily_bars(symbol, _daily_bars(symbol))
+        storage.save_intraday_bars(
+            symbol,
+            pd.DataFrame(
+                [
+                    {
+                        "trade_date": "2026-05-08",
+                        "symbol": symbol,
+                        "name": f"测试{symbol}",
+                        "open": 12.0,
+                        "high": 12.6,
+                        "low": 11.8,
+                        "close": 12.4,
+                        "pre_close": 12.1,
+                        "volume": 200000,
+                        "amount": 2480000,
+                        "pct_change": 2.48,
+                        "quote_datetime": "2026-05-08 13:30:00",
+                        "quote_time": "13:30:00",
+                        "source": "sina_raw",
+                        "fetched_at": "2026-05-08T13:31:00",
+                        "provisional": True,
+                    }
+                ]
+            ),
+        )
+    calls: list[list[str]] = []
+
+    def fake_frame(symbols: list[str], score_column: str) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-05-08",
+                    "feature_trade_date": "2026-05-08",
+                    "symbol": symbol,
+                    "name": f"测试{symbol}",
+                    score_column: 0.9,
+                    "is_cusum_event": 0,
+                    "model_name": score_column,
+                    "model_version": "v1",
+                }
+                for symbol in symbols
+            ]
+        )
+
+    def fake_tail(*, storage, project_root, trade_date, output, limit=None, **kwargs):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        calls.append(symbols)
+        frame = fake_frame(symbols, "risk_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    def fake_barrier(*, storage, project_root, trade_date, output, limit=None, **kwargs):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "barrier_risk_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    def fake_return(*, storage, project_root, trade_date, output, limit=None, **kwargs):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "return_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_tail_risk", fake_tail)
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_barrier_risk", fake_barrier)
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_alpha158_qlib_return", fake_return)
+
+    result = run_intraday_screening(
+        storage=storage,
+        project_root=tmp_path,
+        trade_date=pd.Timestamp("2026-05-08").date(),
+        skip_intraday_update=True,
+    )
+
+    assert result.source_pool_path == today_pool
+    assert calls[0] == ["600002"]
+    output = pd.read_csv(result.output_path)
+    assert output["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
+    assert output.loc[0, "intraday_selection_source"] == "p8_fill"
+
+
+def test_intraday_screening_refreshes_full_market_pool(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("refresh_full_market_pool")
+    storage = _make_storage(tmp_path)
+    storage.save_universe(
+        pd.DataFrame(
+            [
+                {"symbol": "600001", "name": "全市场甲"},
+                {"symbol": "600002", "name": "全市场乙"},
+            ]
+        )
+    )
+    for symbol in ("600001", "600002"):
+        storage.save_daily_bars(symbol, _daily_bars(symbol))
+
+    def fake_frame(symbols: list[str], score_column: str) -> pd.DataFrame:
+        values = {"600001": 0.1, "600002": 0.9}
+        return pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-05-08",
+                    "feature_trade_date": "2026-05-08",
+                    "symbol": symbol,
+                    "name": f"测试{symbol}",
+                    score_column: values[symbol],
+                    "is_cusum_event": 0,
+                    "model_name": score_column,
+                    "model_version": "v1",
+                }
+                for symbol in symbols
+            ]
+        )
+
+    def fake_tail(*, storage, project_root, trade_date, output, limit=None, **kwargs):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "risk_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    def fake_barrier(*, storage, project_root, trade_date, output, limit=None, **kwargs):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "barrier_risk_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    def fake_return(*, storage, project_root, trade_date, output, limit=None, **kwargs):
+        symbols = storage.load_universe()["symbol"].astype(str).tolist()
+        frame = fake_frame(symbols, "return_score")
+        frame.to_csv(output, index=False)
+        return FakePredictionResult(frame)
+
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_tail_risk", fake_tail)
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_barrier_risk", fake_barrier)
+    monkeypatch.setattr("stocks_analyzer.intraday_screening.predict_alpha158_qlib_return", fake_return)
+
+    result = run_intraday_screening(
+        storage=storage,
+        project_root=tmp_path,
+        trade_date=pd.Timestamp("2026-05-08").date(),
+        skip_intraday_update=True,
+        refresh_full_market_pool=True,
+    )
+
+    assert result.full_market_pool_refreshed is True
+    assert result.full_market_scanned_count == 2
+    assert result.source_pool_path == intraday_pool_path(tmp_path, pd.Timestamp("2026-05-08").date())
+    payload = json.loads(result.source_pool_path.read_text(encoding="utf-8"))
+    assert payload["selection_policy"]["source_scope"] == "intraday_full_market"
+    assert payload["filter_summary"]["full_market_scan_symbols"] == 2
+    output = pd.read_csv(result.output_path, dtype={"symbol": str})
+    assert set(output["symbol"].str.zfill(6)) == {"600001", "600002"}
+
+
 def test_intraday_screening_appends_track_stock_to_pool(monkeypatch) -> None:
     tmp_path = _make_workspace_tmp_dir("intraday_track_stock")
     storage = _make_storage(tmp_path)

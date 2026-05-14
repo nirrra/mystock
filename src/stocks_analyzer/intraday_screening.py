@@ -29,7 +29,10 @@ from .watchlist import (
     _prepare_phase8_predictions,
     _prepare_phase_risk_predictions,
     add_centered_risk_scores,
+    build_intraday_pool_candidates,
     find_latest_intraday_pool_before,
+    intraday_pool_path,
+    write_intraday_pool,
 )
 
 DEFAULT_INTRADAY_REPORT_KEEP_DATES = 10
@@ -55,6 +58,8 @@ class IntradayScreeningResult:
     phase2_path: Path
     phase4_path: Path
     phase8_path: Path | None
+    full_market_pool_refreshed: bool = False
+    full_market_scanned_count: int = 0
 
 
 @dataclass(slots=True)
@@ -86,8 +91,32 @@ def run_intraday_screening(
     chunk_size: int = 50,
     output: Path | None = None,
     report_keep_dates: int | None = DEFAULT_INTRADAY_REPORT_KEEP_DATES,
+    refresh_full_market_pool: bool = False,
 ) -> IntradayScreeningResult:
-    source_pool_path, pool_payload = _load_previous_intraday_pool(project_root, trade_date)
+    updated_count = 0
+    missing_update_symbols: list[str] = []
+    full_market_scanned_count = 0
+
+    if refresh_full_market_pool:
+        (
+            source_pool_path,
+            pool_payload,
+            updated_count,
+            missing_update_symbols,
+            full_market_scanned_count,
+        ) = _refresh_full_market_intraday_pool(
+            storage=storage,
+            project_root=project_root,
+            trade_date=trade_date,
+            data_interface=data_interface,
+            limit=limit,
+            skip_intraday_update=skip_intraday_update,
+            timeout_seconds=timeout_seconds,
+            chunk_size=chunk_size,
+        )
+    else:
+        source_pool_path, pool_payload = _load_intraday_pool_for_screening(project_root, trade_date)
+
     pool_candidates = _previous_pool_candidates(pool_payload, limit=None)
     candidates = pool_candidates
     if limit is not None:
@@ -98,9 +127,7 @@ def run_intraday_screening(
     if not symbols:
         raise RuntimeError(f"No previous intraday-pool symbols found in {source_pool_path}")
 
-    updated_count = 0
-    missing_update_symbols: list[str] = []
-    if not skip_intraday_update:
+    if not skip_intraday_update and not refresh_full_market_pool:
         update_result = run_intraday_update(
             storage=storage,
             project_root=project_root,
@@ -152,6 +179,8 @@ def run_intraday_screening(
         phase2_path=analysis.phase2_path,
         phase4_path=analysis.phase4_path,
         phase8_path=analysis.phase8_path,
+        full_market_pool_refreshed=refresh_full_market_pool,
+        full_market_scanned_count=full_market_scanned_count,
     )
 
 
@@ -190,6 +219,155 @@ class _IntradayOverlayStorage:
 def _load_previous_intraday_pool(project_root: Path, trade_date: date) -> tuple[Path, dict[str, object]]:
     _, path = find_latest_intraday_pool_before(project_root=project_root, trade_date=trade_date)
     return path, json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_intraday_pool_for_screening(project_root: Path, trade_date: date) -> tuple[Path, dict[str, object]]:
+    today_path = intraday_pool_path(project_root, trade_date)
+    if today_path.exists():
+        payload = json.loads(today_path.read_text(encoding="utf-8"))
+        if _is_intraday_full_market_pool(payload):
+            return today_path, payload
+    return _load_previous_intraday_pool(project_root, trade_date)
+
+
+def _is_intraday_full_market_pool(payload: dict[str, object]) -> bool:
+    policy = payload.get("selection_policy") if isinstance(payload, dict) else {}
+    if not isinstance(policy, dict):
+        return False
+    return str(policy.get("source_scope", "")).strip() == "intraday_full_market"
+
+
+def _refresh_full_market_intraday_pool(
+    *,
+    storage: Storage,
+    project_root: Path,
+    trade_date: date,
+    data_interface: str,
+    limit: int | None,
+    skip_intraday_update: bool,
+    timeout_seconds: float,
+    chunk_size: int,
+) -> tuple[Path, dict[str, object], int, list[str], int]:
+    full_market_candidates = _full_market_candidates(storage, limit=limit)
+    symbols = [candidate["symbol"] for candidate in full_market_candidates]
+    if not symbols:
+        raise RuntimeError("No full-market symbols found in local universe.")
+
+    updated_count = 0
+    missing_update_symbols: list[str] = []
+    if not skip_intraday_update:
+        update_result = run_intraday_update(
+            storage=storage,
+            project_root=project_root,
+            source=data_interface,
+            symbols=symbols,
+            timeout_seconds=timeout_seconds,
+            chunk_size=chunk_size,
+        )
+        updated_count = len(update_result.updated_symbols)
+        missing_update_symbols = update_result.failed_symbols
+
+    cache_dir = storage.paths.intraday_dir / "screening_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    analysis = _run_candidate_analysis(
+        storage=storage,
+        project_root=project_root,
+        trade_date=trade_date,
+        candidates=full_market_candidates,
+        output_dir=cache_dir,
+        file_tag="full_market",
+    )
+    phase5_path = project_root / "reports" / "full_market_model" / "mcd_crash_annual_measures.csv"
+    pattern_path, pattern_frame = _load_latest_pattern_frame(project_root=project_root, trade_date=trade_date)
+    payload = build_intraday_pool_candidates(
+        trade_date=trade_date,
+        pattern_frame=pattern_frame,
+        phase1_predictions=analysis.phase1,
+        phase2_predictions=analysis.phase2,
+        phase4_predictions=analysis.phase4,
+        phase8_predictions=analysis.phase8,
+        phase7_prediction=pd.DataFrame(),
+        phase5_measures=_read_optional_csv(phase5_path),
+        macd_frame=analysis.macd,
+        atr_frame=analysis.atr,
+        source_files={
+            "pattern": str(pattern_path) if pattern_path is not None else "",
+            "phase1": str(analysis.phase1_path),
+            "phase2": str(analysis.phase2_path),
+            "phase4": str(analysis.phase4_path),
+            "phase8": str(analysis.phase8_path) if analysis.phase8_path is not None else "",
+            "phase5": str(phase5_path),
+            "macd": "intraday_overlay",
+            "atr": "intraday_overlay",
+        },
+    )
+    selection_policy = dict(payload.get("selection_policy", {}))
+    selection_policy["source_scope"] = "intraday_full_market"
+    selection_policy["full_market_scan_symbols"] = int(len(full_market_candidates))
+    selection_policy["full_market_pool_date"] = trade_date.isoformat()
+    payload["selection_policy"] = selection_policy
+    filter_summary = dict(payload.get("filter_summary", {}))
+    filter_summary["full_market_scan_symbols"] = int(len(full_market_candidates))
+    filter_summary["full_market_intraday_updated"] = int(updated_count)
+    filter_summary["full_market_intraday_missing"] = int(len(missing_update_symbols))
+    payload["filter_summary"] = filter_summary
+
+    target = write_intraday_pool(project_root=project_root, trade_date=trade_date, picker_payload=payload)
+    written_payload = json.loads(target.read_text(encoding="utf-8"))
+    return target, written_payload, updated_count, missing_update_symbols, len(full_market_candidates)
+
+
+def _full_market_candidates(storage: Storage, *, limit: int | None) -> list[dict[str, object]]:
+    universe = storage.load_universe().copy()
+    if "symbol" not in universe.columns:
+        return []
+    universe["symbol"] = universe["symbol"].map(normalize_symbol)
+    universe = universe[universe["symbol"].astype(str).str.len().eq(6)].drop_duplicates("symbol", keep="first")
+    if "name" not in universe.columns:
+        universe["name"] = ""
+    if limit is not None:
+        universe = universe.head(max(int(limit), 0))
+    return [
+        {
+            "symbol": str(row.get("symbol", "")),
+            "name": str(row.get("name", "") or ""),
+            "universe_rank": index,
+            "prev_source": "full_market_scan",
+            "prev_source_tags": "",
+            "prev_pattern_match": False,
+            "prev_pattern_id": "",
+            "prev_pattern_ids": "",
+            "prev_patterns": "",
+            "prev_reason": "",
+            "track_stock": False,
+        }
+        for index, row in enumerate(universe.to_dict("records"), start=1)
+    ]
+
+
+def _load_latest_pattern_frame(*, project_root: Path, trade_date: date) -> tuple[Path | None, pd.DataFrame]:
+    pattern_dir = project_root / "reports" / "patterns"
+    dated: list[tuple[date, Path]] = []
+    for path in pattern_dir.glob("patterns_all_*.csv"):
+        match = re.fullmatch(r"patterns_all_(\d{4}-\d{2}-\d{2})\.csv", path.name)
+        if not match:
+            continue
+        try:
+            parsed = date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        if parsed <= trade_date:
+            dated.append((parsed, path))
+    if not dated:
+        return None, pd.DataFrame()
+    _, path = max(dated, key=lambda item: item[0])
+    return path, pd.read_csv(path)
+
+
+def _read_optional_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
 
 
 def _previous_pool_candidates(payload: dict[str, object], *, limit: int | None) -> list[dict[str, object]]:

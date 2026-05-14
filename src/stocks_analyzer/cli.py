@@ -216,10 +216,13 @@ def main() -> None:
             chunk_size=args.chunk_size,
             output=Path(args.output).resolve() if args.output else None,
             report_keep_dates=args.keep_report_dates,
+            refresh_full_market_pool=args.refresh_full_market_pool,
         )
         print("Intraday screening complete.")
         print(f"Trade date: {result.trade_date.isoformat()}")
         print(f"Source intraday pool: {result.source_pool_path}")
+        if result.full_market_pool_refreshed:
+            print(f"Full-market pool refreshed: {result.full_market_scanned_count} symbols scanned")
         print(f"Pool candidates: {result.pool_candidate_count}")
         print(f"Candidates: {result.candidate_count}")
         print(f"Intraday updated: {result.intraday_updated_count}")
@@ -414,8 +417,13 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
         default="sina_raw",
         help="盘中数据接口",
     )
-    intraday_screening.add_argument("--limit", type=int, default=None, help="仅分析 intraday_pool 前 N 只股票")
+    intraday_screening.add_argument("--limit", type=int, default=None, help="仅分析候选池前 N 只股票；全市场刷新时仅扫描 universe 前 N 只")
     intraday_screening.add_argument("--skip-intraday-update", action="store_true", help="不刷新盘中数据，直接使用 data/intraday")
+    intraday_screening.add_argument(
+        "--refresh-full-market-pool",
+        action="store_true",
+        help="先扫描全市场并生成当天 intraday_pool Top100；后续同日 intraday-screening 会优先使用该池",
+    )
     intraday_screening.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
     intraday_screening.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")
     intraday_screening.add_argument("--output", default=None, help="可选 CSV 输出路径")
