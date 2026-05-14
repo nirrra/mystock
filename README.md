@@ -106,7 +106,7 @@ python -m stocks_analyzer --project-root . update --start-date 20240101 --end-da
 
 `daily-screening` 还会额外生成 `intraday_pool_YYYY-MM-DD.json/csv`，供下一个交易日盘中快速扫描。这个 100 池不同于正式 `watchlist`：先纳入 `patterns_all` 里的 pattern 命中股，最多 30 只，超过时保留 P4 分数更高的；再加入 P1/P2/P4 混合分 `centered_risk_score` Top50；剩余名额用 P8 排名补足到最多 100 只。盘中 `intraday-screening` 只刷新这个池子和手动跟踪股，输出 `intraday_pool_screening_YYYY-MM-DD.csv`。
 
-`watchlist_YYYY-MM-DD.csv`、`intraday_pool_YYYY-MM-DD.csv` 和盘中 `intraday_pool_screening_YYYY-MM-DD.csv` 的前置列按人工查看顺序排列：交易日期、股票代码、名称、涨幅、来源、pattern 命中情况、P1/P2/P4、P4五日均/std、P8、P5、ATR%、建议总仓位、技术指标、Phase 细节、pattern 细节。日常快速浏览优先看前 15-20 列即可。
+`watchlist_YYYY-MM-DD.csv` 保持盘后正式候选的查看顺序。`intraday_pool_YYYY-MM-DD.csv` 和盘中 `intraday_pool_screening_YYYY-MM-DD.csv` 的前置列按盘中快速查看顺序排列：交易日期、股票代码、名称、盘中/当日涨幅、P1/P2/P4/P8、5日P4均分、pattern 命中情况、ATR%、建议总仓位、MACD 与其他技术指标、Phase 细节、pattern 细节。日常快速浏览优先看前 15-20 列即可。
 
 ## 六个 pattern 在识别什么
 

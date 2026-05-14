@@ -1199,11 +1199,11 @@ def write_intraday_pool(*, project_root: Path, trade_date: date, picker_payload:
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = build_watchlist_payload(trade_date=trade_date, picker_payload=picker_payload)
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
-    _write_watchlist_csv(target.with_suffix(".csv"), payload)
+    _write_watchlist_csv(target.with_suffix(".csv"), payload, kind="intraday_pool")
     return target
 
 
-def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
+def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str = "watchlist") -> None:
     candidates = payload.get("candidates")
     if not isinstance(candidates, list):
         candidates = []
@@ -1300,28 +1300,56 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
             "patterns",
             *PATTERN_CANDIDATE_FIELDS,
         ]
-        preferred = [
-            "trade_date",
-            "candidate_index",
-            "symbol",
-            "name",
-            "涨幅%",
-            "source",
-            "pattern_match",
-            "pattern_ids",
-            "pattern_id",
-            "phase1_score_100",
-            "phase2_score_100",
-            "phase4_score_100",
-            *PHASE4_ROLLING_COLUMNS,
-            "phase8_score_100",
-            "phase5_score_100",
-            "ATR%",
-            RECOMMENDED_POSITION_PERCENT_FIELD,
-            *technical_columns,
-            *phase_detail_columns,
-            *pattern_detail_columns,
-        ]
+        if kind == "intraday_pool":
+            phase_detail_columns = [
+                "candidate_index",
+                "source",
+                "phase5_score_100",
+                "phase4_5d_std",
+                *phase_detail_columns,
+            ]
+            preferred = [
+                "trade_date",
+                "symbol",
+                "name",
+                "涨幅%",
+                "phase1_score_100",
+                "phase2_score_100",
+                "phase4_score_100",
+                "phase8_score_100",
+                "phase4_5d_mean",
+                "pattern_match",
+                "pattern_ids",
+                "pattern_id",
+                "ATR%",
+                RECOMMENDED_POSITION_PERCENT_FIELD,
+                *technical_columns,
+                *phase_detail_columns,
+                *pattern_detail_columns,
+            ]
+        else:
+            preferred = [
+                "trade_date",
+                "candidate_index",
+                "symbol",
+                "name",
+                "涨幅%",
+                "source",
+                "pattern_match",
+                "pattern_ids",
+                "pattern_id",
+                "phase1_score_100",
+                "phase2_score_100",
+                "phase4_score_100",
+                *PHASE4_ROLLING_COLUMNS,
+                "phase8_score_100",
+                "phase5_score_100",
+                "ATR%",
+                RECOMMENDED_POSITION_PERCENT_FIELD,
+                *technical_columns,
+                *phase_detail_columns,
+                *pattern_detail_columns,
+            ]
         seen_columns: set[str] = set()
         ordered = []
         for column in preferred:
@@ -1330,24 +1358,42 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object]) -> None:
                 seen_columns.add(column)
         frame = frame.loc[:, ordered + [column for column in frame.columns if column not in ordered]]
     else:
-        frame = pd.DataFrame(
-            columns=[
-                "trade_date",
-                "candidate_index",
-                "symbol",
-                "name",
-                "涨幅%",
-                "source",
-                "pattern_match",
-                "phase1_score_100",
-                "phase2_score_100",
-                "phase4_score_100",
-                *PHASE4_ROLLING_COLUMNS,
-                "phase8_score_100",
-                "phase5_score_100",
-                "phase7_score_100",
-            ]
-        )
+        if kind == "intraday_pool":
+            frame = pd.DataFrame(
+                columns=[
+                    "trade_date",
+                    "symbol",
+                    "name",
+                    "涨幅%",
+                    "phase1_score_100",
+                    "phase2_score_100",
+                    "phase4_score_100",
+                    "phase8_score_100",
+                    "phase4_5d_mean",
+                    "pattern_match",
+                    "ATR%",
+                    RECOMMENDED_POSITION_PERCENT_FIELD,
+                ]
+            )
+        else:
+            frame = pd.DataFrame(
+                columns=[
+                    "trade_date",
+                    "candidate_index",
+                    "symbol",
+                    "name",
+                    "涨幅%",
+                    "source",
+                    "pattern_match",
+                    "phase1_score_100",
+                    "phase2_score_100",
+                    "phase4_score_100",
+                    *PHASE4_ROLLING_COLUMNS,
+                    "phase8_score_100",
+                    "phase5_score_100",
+                    "phase7_score_100",
+                ]
+            )
     target.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(target, index=False, encoding="utf-8-sig")
 

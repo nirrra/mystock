@@ -17,6 +17,7 @@ from stocks_analyzer.watchlist import (
     load_watchlist,
     watchlist_pattern_path,
     write_watchlist,
+    write_intraday_pool,
 )
 
 
@@ -53,6 +54,51 @@ def test_write_and_load_watchlist_round_trip() -> None:
     assert loaded["candidates"][1]["连续上榜天数"] == 1
     csv_frame = pd.read_csv(target.with_suffix(".csv"))
     assert list(csv_frame.columns[:5]) == ["trade_date", "candidate_index", "symbol", "name", "涨幅%"]
+
+
+def test_write_intraday_pool_csv_prioritizes_intraday_review_columns() -> None:
+    tmp_path = _make_workspace_tmp_dir("intraday_pool_column_order")
+    payload = {
+        "source_file": "demo.csv",
+        "candidates": [
+            {
+                "symbol": "600000",
+                "name": "测试股份",
+                "涨幅%": 1.23,
+                "phase1_score_100": 71.0,
+                "phase2_score_100": 82.0,
+                "phase4_score_100": 93.0,
+                "phase8_score_100": 64.0,
+                "phase4_5d_mean": 88.0,
+                "pattern_match": "是",
+                "pattern_ids": "5",
+                "ATR%": 3.21,
+                "建议总仓位%": 36.6,
+                "macd_cross_state": "above_signal",
+                "reason": "pattern detail",
+            }
+        ],
+    }
+
+    target = write_intraday_pool(project_root=tmp_path, trade_date=date(2026, 4, 10), picker_payload=payload)
+    csv_frame = pd.read_csv(target.with_suffix(".csv"))
+
+    assert list(csv_frame.columns[:14]) == [
+        "trade_date",
+        "symbol",
+        "name",
+        "涨幅%",
+        "phase1_score_100",
+        "phase2_score_100",
+        "phase4_score_100",
+        "phase8_score_100",
+        "phase4_5d_mean",
+        "pattern_match",
+        "pattern_ids",
+        "ATR%",
+        "建议总仓位%",
+        "macd_cross_state",
+    ]
 
 
 def test_write_and_load_pattern_watchlist_round_trip() -> None:
