@@ -1,0 +1,22 @@
+{
+  "trade_date":"2026-05-15",
+  "kind":"macd",
+  "rows":3001,
+  "columns":[
+    "trade_date",
+    "symbol",
+    "name",
+    "macd",
+    "macd_signal_line",
+    "macd_hist",
+    "macd_cross_state",
+    "macd_divergence_state",
+    "volume_price_divergence_state",
+    "macd_top_divergence_15d",
+    "macd_bottom_divergence_15d",
+    "macd_top_divergence_signal_date",
+    "macd_bottom_divergence_signal_date",
+    "bullish_volume_price_divergence_flag",
+    "bearish_volume_price_divergence_flag"
+  ]
+}
