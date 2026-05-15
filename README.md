@@ -1,6 +1,6 @@
 # A Share Analyzer
 
-这个项目用于辅助每日 A 股选股：盘后生成正式 `watchlist` 和次日盘中用的 `intraday_pool`，盘中只刷新 `intraday_pool + track_stock.xlsx` 的临时结果，再结合主线和人工判断整理到 `选股.md` / `选股-日中.md`。
+这个项目用于辅助每日 A 股选股：盘后生成正式 `watchlist` 和次日盘中用的 `intraday_pool`，盘中可先全市场刷新当天 Top100 池，再刷新 `intraday_pool + track_stock.xlsx` 的临时结果，最后结合主线和人工判断整理到 `选股.md` / `选股-日中.md`。
 
 注意：最终选股文字和表格会使用 ChatGPT 协助整理，只能作为候选参考，不是自动交易信号，也不能替代自己的买卖决策。
 
@@ -23,10 +23,10 @@
 
 ```powershell
 $DATE = "2026-05-11"
-python -m stocks_analyzer --project-root . intraday-screening --date $DATE
+python -m stocks_analyzer --project-root . intraday-screening --date $DATE --refresh-full-market-pool
 ```
 
-然后调用大模型，根据 [intraday-picks-writing-guide.md](docs/intraday-picks-writing-guide.md) 更新 [选股-日中.md](选股-日中.md)。
+这一步会先对全市场做盘中临时筛选，并生成当天新的 `intraday_pool` Top100。然后调用大模型，根据 [intraday-picks-writing-guide.md](docs/intraday-picks-writing-guide.md) 更新 [选股-日中.md](选股-日中.md)。
 
 ### 盘中 14:30
 
