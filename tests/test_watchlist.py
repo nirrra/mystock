@@ -53,7 +53,15 @@ def test_write_and_load_watchlist_round_trip() -> None:
     assert loaded["candidates"][0]["连续上榜天数"] == 1
     assert loaded["candidates"][1]["连续上榜天数"] == 1
     csv_frame = pd.read_csv(target.with_suffix(".csv"))
-    assert list(csv_frame.columns[:5]) == ["trade_date", "candidate_index", "symbol", "name", "涨幅%"]
+    assert list(csv_frame.columns[:7]) == [
+        "交易日期",
+        "序号",
+        "编号",
+        "名称",
+        "涨幅%",
+        "行业",
+        "概念",
+    ]
 
 
 def test_write_intraday_pool_csv_prioritizes_intraday_review_columns() -> None:
@@ -69,8 +77,8 @@ def test_write_intraday_pool_csv_prioritizes_intraday_review_columns() -> None:
                 "phase1_score_100": 71.0,
                 "phase2_score_100": 82.0,
                 "phase4_score_100": 93.0,
-                "phase8_score_100": 64.0,
                 "phase4_5d_mean": 88.0,
+                "phase4_5d_std": 4.2,
                 "pattern_match": "是",
                 "pattern_ids": "5",
                 "ATR%": 3.21,
@@ -84,22 +92,24 @@ def test_write_intraday_pool_csv_prioritizes_intraday_review_columns() -> None:
     target = write_intraday_pool(project_root=tmp_path, trade_date=date(2026, 4, 10), picker_payload=payload)
     csv_frame = pd.read_csv(target.with_suffix(".csv"))
 
-    assert list(csv_frame.columns[:15]) == [
-        "trade_date",
-        "symbol",
-        "name",
-        "source",
+    assert list(csv_frame.columns[:17]) == [
+        "交易日期",
+        "编号",
+        "名称",
+        "来源",
+        "行业",
+        "概念",
         "涨幅%",
-        "phase1_score_100",
-        "phase2_score_100",
-        "phase4_score_100",
-        "phase8_score_100",
-        "phase4_5d_mean",
-        "pattern_match",
-        "pattern_ids",
+        "P1风险质量分",
+        "P2交易风险分",
+        "P4上涨质量分",
+        "P4五日均分",
+        "P4五日std",
+        "Pattern命中",
+        "Pattern编号",
         "ATR%",
         "建议总仓位%",
-        "macd_cross_state",
+        "macd交叉",
     ]
 
 
@@ -328,29 +338,29 @@ def test_build_phase_daily_watchlist_filters_phase1_phase2_and_adds_phase4_top()
         phase4_top_n=2,
     )
 
-    assert payload["trade_permission"] == "allow"
     assert payload["filter_summary"]["phase1_excluded_top20"] == 1
     assert payload["filter_summary"]["phase2_excluded_top20"] == 1
-    assert [item["symbol"] for item in payload["candidates"]] == ["600002", "600003"]
+    assert [item["symbol"] for item in payload["candidates"]] == ["600002", "600000", "600003"]
     assert payload["candidates"][0]["source"] == "pattern"
     assert payload["candidates"][0]["pattern_ids"] == ["5"]
     assert payload["candidates"][0]["phase2_excluded_by_top20_risk"] is True
     assert payload["candidates"][0]["phase4_score_100"] == 100.0
-    assert payload["candidates"][1]["source"] == "phase4_top"
-    assert payload["candidates"][1]["phase4_score_100"] == 75.0
-    assert payload["candidates"][1]["phase1_center_score"] == 40.0
-    assert payload["candidates"][1]["phase2_center_score"] == 40.0
-    assert payload["candidates"][1]["centered_risk_score"] == 83.0
-    assert payload["candidates"][1]["phase4_composite_score"] == 83.0
-    assert payload["candidates"][1]["phase4_composite_rank"] == 1
-    assert payload["candidates"][1]["建议总仓位%"] == 23.53
-    assert payload["candidates"][1]["phase4_top_score_filter_pass"] is True
+    assert payload["candidates"][1]["source"] == "pattern"
+    assert payload["candidates"][1]["pattern_ids"] == ["1"]
+    assert payload["candidates"][2]["source"] == "phase4_top"
+    assert payload["candidates"][2]["phase4_score_100"] == 75.0
+    assert payload["candidates"][2]["phase1_center_score"] == 40.0
+    assert payload["candidates"][2]["phase2_center_score"] == 40.0
+    assert payload["candidates"][2]["centered_risk_score"] == 83.0
+    assert payload["candidates"][2]["phase4_composite_score"] == 83.0
+    assert payload["candidates"][2]["phase4_composite_rank"] == 1
+    assert payload["candidates"][2]["建议总仓位%"] == 23.53
+    assert payload["candidates"][2]["phase4_top_score_filter_pass"] is True
     assert "600004" not in [item["symbol"] for item in payload["candidates"]]
     assert payload["selection_policy"]["centered_risk_min_phase1_score"] == 40.0
     assert payload["selection_policy"]["centered_risk_min_phase2_score"] == 50.0
     assert payload["selection_policy"]["centered_risk_min_phase4_score"] == 70.0
-    assert payload["selection_policy"]["pattern_min_phase4_score"] == 70.0
-    assert payload["filter_summary"]["pattern_symbols_after_filter"] == 1
+    assert payload["filter_summary"]["pattern_symbols_after_filter"] == 2
     assert payload["filter_summary"]["phase4_top_candidates_after_score_floor"] == 1
 
 

@@ -309,12 +309,12 @@ python -m stocks_analyzer --project-root . analyze-sector-leaders --date 2026-05
 2. 检查长期绝对龙头榜是否符合市场常识。
 3. 检查波段领涨榜是否捕捉到历史上涨阶段中的弹性票。
 4. 检查 `双重龙头` 是否数量合理，不应每个板块都有很多。
-5. 对比 P9/P10 高分板块：如果某板块买入分高，但龙头票全部弱，说明该板块可能只是低位反抽而非强主线。
+5. 对比 P9 高分板块：如果某板块买入分高，但龙头票全部弱，说明该板块可能只是低位反抽而非强主线。
 
 后续如需量化验证，可以测试：
 
 ```text
-板块进入 P9/P10 TopN 后，优先买入该板块长期/波段龙头是否优于随机买入该板块成分。
+板块进入 P9 TopN 后，优先买入该板块长期/波段龙头是否优于随机买入该板块成分。
 ```
 
 该验证不纳入初版实现。
@@ -325,14 +325,14 @@ python -m stocks_analyzer --project-root . analyze-sector-leaders --date 2026-05
 
 - 依赖 `update-sector-membership` 维护的板块成分。
 - 依赖 `data/daily` 的本地股票日线。
-- 不依赖 P1/P2/P4/P8/P9/P10 模型。
+- 不依赖 P1/P2/P4/P8/P9/P10 模型；其中 P10 已废弃。
 - 不改变 `watchlist` 入选逻辑。
 - 不改变 `intraday-screening`。
 - 不改变 `选股.md` 写作指南。
 
 后续可选接入路径：
 
-1. 在 `sector_pullback_metrics`、P9、P10 结果旁边展示每个板块的双重龙头。
+1. 在 `sector_pullback_metrics` 和 P9 结果旁边展示每个板块的双重龙头。
 2. 在 `watchlist` 中为候选股增加 `sector_leader_tags`。
 3. 在 `选股.md` 中，当某只候选股属于当前主线且也是该板块龙头时，作为人工加分理由。
 
@@ -351,4 +351,3 @@ python -m stocks_analyzer --project-root . analyze-sector-leaders --date 2026-05
    - 波段领涨分聚合。
    - 小板块和历史不足股票跳过。
    - CLI 参数解析。
-

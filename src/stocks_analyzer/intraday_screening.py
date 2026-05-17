@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -11,7 +12,6 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from .atr import build_atr_snapshot_row
-from .full_market_limit_up_3d import limit_up_3d_model_path, predict_limit_up_3d_opportunity
 from .full_market_return import predict_alpha158_qlib_return
 from .full_market_risk import predict_barrier_risk, predict_tail_risk
 from .indicators import add_indicators
@@ -20,17 +20,21 @@ from .macd_divergence import summarize_recent_macd_divergence
 from .phase4_rolling import PHASE4_ROLLING_COLUMNS, PHASE4_ROLLING_RANK_COLUMNS, merge_phase4_rolling_frame
 from .phase_display import normalize_symbol
 from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, add_recommended_position_percent
+from .sector_phase9 import predict_sector_phase9_buy_score, sector_phase9_model_path, sector_phase9_predictions_path
+from .sector_membership import append_sector_display_columns
+from .sector_tracking_workbook import write_sector_intraday_tracking_workbook
+from .sector_watchlist import build_sector_tracking_payload_from_files
 from .storage import DailyBarsReadError, Storage
-from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, TRACK_INPUT_SHEET
+from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, TRACK_INPUT_SHEET, update_track_stock_workbook
 from .watchlist import (
     _prepare_atr_frame,
     _prepare_macd_frame,
     _prepare_phase4_predictions,
-    _prepare_phase8_predictions,
     _prepare_phase_risk_predictions,
     add_centered_risk_scores,
     build_intraday_pool_candidates,
     find_latest_intraday_pool_before,
+    find_latest_watchlist_stocks_before,
     intraday_pool_path,
     write_intraday_pool,
 )
@@ -39,6 +43,7 @@ DEFAULT_INTRADAY_REPORT_KEEP_DATES = 10
 _DATED_REPORT_PATTERNS = (
     re.compile(r"^intraday_pool_screening_(\d{4}-\d{2}-\d{2})\.csv$"),
     re.compile(r"^intraday_track_stock_(\d{4}-\d{2}-\d{2})\.csv$"),
+    re.compile(r"^intraday_sector_strength_(\d{4}-\d{2}-\d{2})\.csv$"),
 )
 
 
@@ -48,6 +53,8 @@ class IntradayScreeningResult:
     source_pool_path: Path
     output_path: Path
     track_stock_path: Path | None
+    track_workbook_path: Path | None
+    sector_strength_path: Path | None
     candidate_count: int
     pool_candidate_count: int
     track_stock_count: int
@@ -57,7 +64,6 @@ class IntradayScreeningResult:
     phase1_path: Path
     phase2_path: Path
     phase4_path: Path
-    phase8_path: Path | None
     full_market_pool_refreshed: bool = False
     full_market_scanned_count: int = 0
 
@@ -70,13 +76,11 @@ class _AnalysisResult:
     phase1: pd.DataFrame
     phase2: pd.DataFrame
     phase4: pd.DataFrame
-    phase8: pd.DataFrame
     macd: pd.DataFrame
     atr: pd.DataFrame
     phase1_path: Path
     phase2_path: Path
     phase4_path: Path
-    phase8_path: Path | None
 
 
 def run_intraday_screening(
@@ -154,12 +158,24 @@ def run_intraday_screening(
     )
     output_path = output if output is not None else output_dir / f"intraday_pool_screening_{trade_date.isoformat()}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    analysis.frame.to_csv(output_path, index=False, encoding="utf-8-sig")
+    _format_intraday_output_for_csv(analysis.frame).to_csv(output_path, index=False, encoding="utf-8-sig")
+    sector_strength_path = _save_intraday_sector_strength(
+        output_dir=output_dir,
+        project_root=project_root,
+        trade_date=trade_date,
+        frame=analysis.frame,
+    )
     track_stock_path = _save_intraday_track_stock(output_dir=output_dir, trade_date=trade_date, frame=analysis.frame)
+    track_workbook = update_track_stock_workbook(
+        project_root=project_root,
+        trade_date=trade_date,
+        mode="intraday",
+        intraday_frame=analysis.frame,
+    )
     cleaned_report_files = _cleanup_intraday_screening_reports(
         output_dir,
         keep_dates=report_keep_dates,
-        preserve_paths=(output_path, track_stock_path),
+        preserve_paths=(output_path, track_stock_path, sector_strength_path),
     )
 
     intraday = _load_intraday_snapshot_frame(storage, symbols=symbols)
@@ -169,6 +185,8 @@ def run_intraday_screening(
         source_pool_path=source_pool_path,
         output_path=output_path,
         track_stock_path=track_stock_path,
+        track_workbook_path=track_workbook.workbook_path,
+        sector_strength_path=sector_strength_path,
         candidate_count=len(analysis.frame),
         pool_candidate_count=len(pool_candidates),
         track_stock_count=len(tracked_symbols),
@@ -178,7 +196,6 @@ def run_intraday_screening(
         phase1_path=analysis.phase1_path,
         phase2_path=analysis.phase2_path,
         phase4_path=analysis.phase4_path,
-        phase8_path=analysis.phase8_path,
         full_market_pool_refreshed=refresh_full_market_pool,
         full_market_scanned_count=full_market_scanned_count,
     )
@@ -217,7 +234,10 @@ class _IntradayOverlayStorage:
 
 
 def _load_previous_intraday_pool(project_root: Path, trade_date: date) -> tuple[Path, dict[str, object]]:
-    _, path = find_latest_intraday_pool_before(project_root=project_root, trade_date=trade_date)
+    try:
+        _, path = find_latest_intraday_pool_before(project_root=project_root, trade_date=trade_date)
+    except FileNotFoundError:
+        _, path = find_latest_watchlist_stocks_before(project_root=project_root, trade_date=trade_date)
     return path, json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -277,7 +297,6 @@ def _refresh_full_market_intraday_pool(
         output_dir=cache_dir,
         file_tag="full_market",
     )
-    phase5_path = project_root / "reports" / "full_market_model" / "mcd_crash_annual_measures.csv"
     pattern_path, pattern_frame = _load_latest_pattern_frame(project_root=project_root, trade_date=trade_date)
     payload = build_intraday_pool_candidates(
         trade_date=trade_date,
@@ -285,9 +304,7 @@ def _refresh_full_market_intraday_pool(
         phase1_predictions=analysis.phase1,
         phase2_predictions=analysis.phase2,
         phase4_predictions=analysis.phase4,
-        phase8_predictions=analysis.phase8,
         phase7_prediction=pd.DataFrame(),
-        phase5_measures=_read_optional_csv(phase5_path),
         macd_frame=analysis.macd,
         atr_frame=analysis.atr,
         source_files={
@@ -295,8 +312,6 @@ def _refresh_full_market_intraday_pool(
             "phase1": str(analysis.phase1_path),
             "phase2": str(analysis.phase2_path),
             "phase4": str(analysis.phase4_path),
-            "phase8": str(analysis.phase8_path) if analysis.phase8_path is not None else "",
-            "phase5": str(phase5_path),
             "macd": "intraday_overlay",
             "atr": "intraday_overlay",
         },
@@ -401,7 +416,6 @@ def _previous_pool_candidates(payload: dict[str, object], *, limit: int | None) 
                 "prev_phase1_score_100": raw.get("phase1_score_100"),
                 "prev_phase2_score_100": raw.get("phase2_score_100"),
                 "prev_phase4_score_100": raw.get("phase4_score_100"),
-                "prev_phase5_score_100": raw.get("phase5_score_100"),
                 "prev_watchlist_streak": raw.get("连续上榜天数"),
             }
         )
@@ -517,7 +531,6 @@ def _merge_tracked_candidates(
                 "prev_phase1_score_100": pd.NA,
                 "prev_phase2_score_100": pd.NA,
                 "prev_phase4_score_100": pd.NA,
-                "prev_phase5_score_100": pd.NA,
                 "prev_watchlist_streak": pd.NA,
                 "track_stock": True,
             }
@@ -555,7 +568,6 @@ def _run_candidate_analysis(
     phase1_path = output_dir / f"intraday_{file_tag}_tail_risk_predictions_{trade_date.isoformat()}.csv"
     phase2_path = output_dir / f"intraday_{file_tag}_barrier_risk_predictions_{trade_date.isoformat()}.csv"
     phase4_path = output_dir / f"intraday_{file_tag}_alpha158_qlib_return_predictions_{trade_date.isoformat()}.csv"
-    phase8_path = output_dir / f"intraday_{file_tag}_limit_up_3d_opportunity_predictions_{trade_date.isoformat()}.csv"
 
     phase1 = predict_tail_risk(
         storage=overlay_storage,
@@ -587,13 +599,6 @@ def _run_candidate_analysis(
         include_features=False,
         prediction_scope="intraday_screening",
     ).predictions
-    phase8 = _predict_intraday_phase8_if_available(
-        storage=overlay_storage,
-        project_root=project_root,
-        trade_date=trade_date,
-        output=phase8_path,
-    )
-
     macd = _build_intraday_macd_summary(overlay_storage, trade_date=trade_date, symbols=symbols)
     atr = _build_intraday_atr_summary(overlay_storage, trade_date=trade_date, symbols=symbols)
     intraday = _load_intraday_snapshot_frame(storage, symbols=symbols)
@@ -605,7 +610,6 @@ def _run_candidate_analysis(
         phase1=phase1,
         phase2=phase2,
         phase4=phase4,
-        phase8=phase8,
         macd=macd,
         atr=atr,
     )
@@ -616,13 +620,11 @@ def _run_candidate_analysis(
         phase1=phase1,
         phase2=phase2,
         phase4=phase4,
-        phase8=phase8,
         macd=macd,
         atr=atr,
         phase1_path=phase1_path,
         phase2_path=phase2_path,
         phase4_path=phase4_path,
-        phase8_path=phase8_path if not phase8.empty else None,
     )
 
 
@@ -633,27 +635,6 @@ def _concat_frames(*frames: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(available, ignore_index=True)
 
 
-def _predict_intraday_phase8_if_available(
-    *,
-    storage: _IntradayOverlayStorage,
-    project_root: Path,
-    trade_date: date,
-    output: Path,
-) -> pd.DataFrame:
-    if not limit_up_3d_model_path(project_root).exists():
-        return pd.DataFrame(columns=["symbol"])
-    return predict_limit_up_3d_opportunity(
-        storage=storage,
-        project_root=project_root,
-        trade_date=trade_date,
-        output=output,
-        latest_only=True,
-        feature_lookback_bars=61,
-        include_features=False,
-        prediction_scope="intraday_screening",
-    ).predictions
-
-
 def _save_intraday_track_stock(*, output_dir: Path, trade_date: date, frame: pd.DataFrame) -> Path | None:
     track = _select_intraday_track_stock(frame)
     if track.empty:
@@ -661,6 +642,127 @@ def _save_intraday_track_stock(*, output_dir: Path, trade_date: date, frame: pd.
     target = output_dir / f"intraday_track_stock_{trade_date.isoformat()}.csv"
     track.to_csv(target, index=False, encoding="utf-8-sig")
     return target
+
+
+def _save_intraday_sector_strength(
+    *,
+    output_dir: Path,
+    project_root: Path,
+    trade_date: date,
+    frame: pd.DataFrame,
+) -> Path | None:
+    sector_payload = _load_latest_sector_watchlist(project_root=project_root, trade_date=trade_date)
+    sector_date = _sector_payload_date(sector_payload, fallback=trade_date)
+    _ensure_intraday_sector_phase9_predictions(project_root=project_root, trade_date=sector_date)
+    tracking_payload = build_sector_tracking_payload_from_files(project_root=project_root, trade_date=sector_date)
+    sectors = tracking_payload.get("sectors") if isinstance(tracking_payload, dict) else []
+    if not isinstance(sectors, list) or not sectors:
+        return None
+    if frame.empty or "symbol" not in frame.columns:
+        return None
+
+    working = frame.copy()
+    working["symbol"] = working["symbol"].map(normalize_symbol)
+    pct = pd.to_numeric(working.get("intraday_pct_change"), errors="coerce")
+    pct_by_symbol = dict(zip(working["symbol"], pct, strict=False))
+    rows: list[dict[str, object]] = []
+    for item in sectors:
+        if not isinstance(item, dict):
+            continue
+        leader_symbols = item.get("leader_symbols")
+        if not isinstance(leader_symbols, list):
+            leader_symbols = []
+        normalized_symbols = [normalize_symbol(symbol) for symbol in leader_symbols if normalize_symbol(symbol)]
+        leader_pct = [pct_by_symbol[symbol] for symbol in normalized_symbols if symbol in pct_by_symbol and pd.notna(pct_by_symbol[symbol])]
+        rows.append(
+            {
+                "日期": trade_date.isoformat(),
+                "板块类型": _sector_type_cn(item.get("sector_type")),
+                "板块名称": item.get("sector_name"),
+                "长期主线指数": item.get("long_mainline_score_100"),
+                "短期主线指数": item.get("short_mainline_score_100"),
+                "P9买入分": item.get("phase9_score_100"),
+                "龙头编号": "/".join(normalized_symbols),
+                "龙头名称": "/".join(item.get("leader_names", []) if isinstance(item.get("leader_names"), list) else []),
+                "龙头盘中平均涨幅%": round(float(pd.Series(leader_pct).mean()), 4) if leader_pct else pd.NA,
+                "有效龙头数": len(leader_pct),
+            }
+        )
+    if not rows:
+        return None
+    target = output_dir / f"intraday_sector_strength_{trade_date.isoformat()}.csv"
+    output_frame = pd.DataFrame(rows).sort_values(
+        ["龙头盘中平均涨幅%", "短期主线指数"],
+        ascending=[False, False],
+        na_position="last",
+    )
+    output_frame.to_csv(
+        target,
+        index=False,
+        encoding="utf-8-sig",
+    )
+    write_sector_intraday_tracking_workbook(
+        project_root=project_root,
+        trade_date=trade_date,
+        sector_payload=tracking_payload,
+        intraday_strength=output_frame,
+    )
+    return target
+
+
+def _load_latest_sector_watchlist(*, project_root: Path, trade_date: date) -> dict[str, object]:
+    candidates: list[tuple[date, Path]] = []
+    for path in (project_root / "reports" / "watchlists").glob("watchlist_sectors_*.json"):
+        match = re.fullmatch(r"watchlist_sectors_(\d{4}-\d{2}-\d{2})\.json", path.name)
+        if not match:
+            continue
+        try:
+            parsed = date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        if parsed <= trade_date:
+            candidates.append((parsed, path))
+    if not candidates:
+        return {}
+    _, path = max(candidates, key=lambda item: item[0])
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _sector_payload_date(payload: dict[str, object], *, fallback: date) -> date:
+    text = str(payload.get("trade_date") or "").strip() if isinstance(payload, dict) else ""
+    if text:
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            pass
+    return fallback
+
+
+def _ensure_intraday_sector_phase9_predictions(*, project_root: Path, trade_date: date) -> Path | None:
+    output_path = sector_phase9_predictions_path(project_root, trade_date)
+    if output_path.exists():
+        return output_path
+    if not sector_phase9_model_path(project_root).exists():
+        logging.warning("Sector Phase9 model artifact missing; intraday sector P9 scores stay blank: %s", sector_phase9_model_path(project_root))
+        return None
+    try:
+        result = predict_sector_phase9_buy_score(project_root=project_root, trade_date=trade_date)
+    except Exception as exc:  # pragma: no cover - defensive around local data/model availability.
+        logging.warning("Sector Phase9 intraday prediction failed for %s: %s", trade_date.isoformat(), exc)
+        return None
+    return result.output_path
+
+
+def _sector_type_cn(value: object) -> str:
+    text = str(value or "")
+    if text == "industry":
+        return "行业"
+    if text == "concept":
+        return "概念"
+    return text
 
 
 def _select_intraday_track_stock(frame: pd.DataFrame) -> pd.DataFrame:
@@ -928,7 +1030,6 @@ def _build_output_frame(
     phase1: pd.DataFrame,
     phase2: pd.DataFrame,
     phase4: pd.DataFrame,
-    phase8: pd.DataFrame,
     macd: pd.DataFrame,
     atr: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -952,25 +1053,18 @@ def _build_output_frame(
     )
     phase4_prepared = _prepare_phase4_predictions(phase4)
     phase4_prepared = merge_phase4_rolling_frame(phase4_prepared, project_root=project_root, trade_date=trade_date)
-    phase8_prepared = _prepare_phase8_predictions(phase8)
     macd_prepared = _prepare_macd_frame(macd)
     atr_prepared = _prepare_atr_frame(atr).rename(columns={"trade_date": "atr_trade_date", "close": "atr_close"})
     intraday_prepared = _prepare_intraday_for_output(intraday)
 
     result = base.copy()
-    for frame in (intraday_prepared, phase1_prepared, phase2_prepared, phase4_prepared, phase8_prepared, macd_prepared, atr_prepared):
+    for frame in (intraday_prepared, phase1_prepared, phase2_prepared, phase4_prepared, macd_prepared, atr_prepared):
         if frame.empty or "symbol" not in frame.columns:
             continue
         frame = frame.drop(columns=["name"], errors="ignore")
         result = result.merge(frame, on="symbol", how="left")
     result = _add_phase_display_ranks(result)
-    if "phase5_score_100" not in result.columns:
-        result["phase5_score_100"] = result.get("prev_phase5_score_100", pd.NA)
-    else:
-        result["phase5_score_100"] = result["phase5_score_100"].where(
-            result["phase5_score_100"].notna(),
-            result.get("prev_phase5_score_100", pd.NA),
-        )
+    result = append_sector_display_columns(result, project_root=project_root)
     result = _add_intraday_pool_score(result)
     result = _add_intraday_selection_source(result)
     result = add_recommended_position_percent(result)
@@ -1060,14 +1154,6 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "phase2_center_score",
         "phase4_rank",
         *PHASE4_ROLLING_RANK_COLUMNS,
-        "phase8_rank",
-        "phase8_raw_score",
-        "phase8_feature_trade_date",
-        "phase8_model_name",
-        "phase8_model_version",
-        "today_limit_up_excluded",
-        "today_high_return_vs_prev_close",
-        "today_close_return_vs_prev_close",
         "phase1_rank",
         "phase2_rank",
         "phase1_excluded_by_top20_risk",
@@ -1101,19 +1187,20 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "prev_phase1_score_100",
         "prev_phase2_score_100",
         "prev_phase4_score_100",
-        "prev_phase5_score_100",
     ]
     preferred = [
         "intraday_trade_date",
         "symbol",
         "name",
         "intraday_selection_source",
+        "industry_names",
+        "concept_names",
         "intraday_pct_change",
         "phase1_score_100",
         "phase2_score_100",
         "phase4_score_100",
-        "phase8_score_100",
         "phase4_5d_mean",
+        "phase4_5d_std",
         "prev_pattern_match",
         "prev_pattern_ids",
         "prev_pattern_id",
@@ -1121,7 +1208,6 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         RECOMMENDED_POSITION_PERCENT_FIELD,
         *technical_columns,
         "prev_source",
-        "phase5_score_100",
         "intraday_source",
         *phase_detail_columns,
         *pattern_detail_columns,
@@ -1138,6 +1224,117 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
     if sort_columns:
         ordered = ordered.sort_values(sort_columns, ascending=[True] * len(sort_columns), na_position="last")
     return ordered.reset_index(drop=True)
+
+
+def _format_intraday_output_for_csv(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(
+            columns=[
+                "日期",
+                "编号",
+                "股票名称",
+                "来源",
+                "盘中涨幅%",
+                "P1风险质量分",
+                "P2交易风险分",
+                "P4上涨质量分",
+                "P4五日均分",
+                "Pattern命中",
+                "ATR%",
+                RECOMMENDED_POSITION_PERCENT_FIELD,
+            ]
+        )
+    result = frame.copy()
+    result = result.loc[
+        :,
+        [
+            column
+            for column in result.columns
+            if not str(column).startswith(("phase5", "phase7", "phase8", "prev_phase5"))
+            and column not in {"today_limit_up_excluded", "today_high_return_vs_prev_close", "today_close_return_vs_prev_close"}
+        ],
+    ]
+    if "symbol" in result.columns:
+        result["symbol"] = result["symbol"].map(lambda value: f'="{normalize_symbol(value)}"')
+    rename_map = {
+        "intraday_trade_date": "日期",
+        "symbol": "编号",
+        "name": "股票名称",
+        "intraday_selection_source": "来源",
+        "intraday_pct_change": "盘中涨幅%",
+        "phase1_score_100": "P1风险质量分",
+        "phase2_score_100": "P2交易风险分",
+        "phase4_score_100": "P4上涨质量分",
+        "phase4_5d_mean": "P4五日均分",
+        "phase4_5d_std": "P4五日std",
+        "prev_pattern_match": "Pattern命中",
+        "prev_pattern_ids": "Pattern编号",
+        "atr_pct_14": "ATR%",
+        "macd_cross_state": "macd交叉",
+        "macd_divergence_state": "macd背离",
+        "volume_price_divergence_state": "量价背离",
+        "intraday_pool_score": "P1/P2/P4综合分",
+        "centered_risk_score": "P1/P2/P4综合分",
+        "industry_names": "行业",
+        "concept_names": "概念",
+        "prev_source": "上一轮来源",
+        "prev_reason": "Pattern理由",
+        "prev_patterns": "Pattern详细",
+        "track_stock": "跟踪股票",
+        "intraday_source": "行情源",
+        "intraday_quote_datetime": "行情时间",
+        "atr_close": "最新价格",
+        "atr_trade_date": "ATR日期",
+        "atr_14": "ATR14",
+        "atr_stop_loss_1x": "1ATR止损参考",
+        "atr_stop_loss_2x": "2ATR止损参考",
+        "atr_take_profit_2x": "2ATR止盈参考",
+        "atr_take_profit_3x": "3ATR止盈参考",
+        "atr_volatility_regime": "波动分层",
+    }
+    result = result.rename(columns={key: value for key, value in rename_map.items() if key in result.columns})
+    preferred = [
+        "日期",
+        "编号",
+        "股票名称",
+        "来源",
+        "盘中涨幅%",
+        "P1风险质量分",
+        "P2交易风险分",
+        "P4上涨质量分",
+        "P4五日均分",
+        "P4五日std",
+        "Pattern命中",
+        "Pattern编号",
+        "ATR%",
+        RECOMMENDED_POSITION_PERCENT_FIELD,
+        "macd交叉",
+        "macd背离",
+        "量价背离",
+        "macd_top_divergence_15d",
+        "macd_bottom_divergence_15d",
+        "bullish_volume_price_divergence_flag",
+        "bearish_volume_price_divergence_flag",
+        "macd",
+        "macd_signal_line",
+        "macd_hist",
+        "最新价格",
+        "ATR14",
+        "1ATR止损参考",
+        "2ATR止损参考",
+        "2ATR止盈参考",
+        "3ATR止盈参考",
+        "波动分层",
+        "行业",
+        "概念",
+        "P1/P2/P4综合分",
+        "上一轮来源",
+        "Pattern理由",
+        "Pattern详细",
+    ]
+    ordered = [column for column in preferred if column in result.columns]
+    ordered.extend([column for column in result.columns if column not in ordered])
+    return result.loc[:, ordered].loc[:, lambda df: ~df.columns.duplicated()].copy()
 
 
 def _prepare_daily_macd_frame(dataframe: pd.DataFrame) -> pd.DataFrame:

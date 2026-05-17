@@ -13,9 +13,11 @@ from .atr import ATR_WATCHLIST_FIELD_MAP, normalize_atr_summary_frame
 from .phase4_rolling import PHASE4_ROLLING_COLUMNS, PHASE4_ROLLING_RANK_COLUMNS, merge_phase4_rolling_frame
 from .phase_display import PHASE_TABLE_DROP_COLUMNS, add_phase5_score_100, phase7_score_100, score_series_100
 from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, recommended_position_percent_from_mapping
+from .sector_membership import append_sector_display_columns
 
 
 WATCHLIST_FILENAME_RE = re.compile(r"watchlist_(\d{4}-\d{2}-\d{2})\.json$")
+WATCHLIST_STOCKS_FILENAME_RE = re.compile(r"watchlist_stocks_(\d{4}-\d{2}-\d{2})\.json$")
 WATCHLIST_STREAK_FIELD = "连续上榜天数"
 LIMIT_UP_DAILY_RETURN_THRESHOLD = 0.099
 CENTERED_RISK_PHASE_TARGET = 80.0
@@ -26,10 +28,9 @@ CENTERED_RISK_TOP_MIN_PHASE1_SCORE = 40.0
 CENTERED_RISK_TOP_MIN_PHASE2_SCORE = 50.0
 CENTERED_RISK_TOP_MIN_PHASE4_SCORE = 70.0
 PATTERN_MIN_PHASE4_SCORE = 70.0
-PHASE8_TOP_N = 5
-INTRADAY_POOL_SIZE = 100
-INTRADAY_POOL_PATTERN_LIMIT = 30
-INTRADAY_POOL_P124_TOP_N = 50
+INTRADAY_POOL_SIZE = 200
+INTRADAY_POOL_PATTERN_LIMIT = 0
+INTRADAY_POOL_P124_TOP_N = 200
 PATTERN_PRIORITY = {
     "5": 6.0,
     "1": 5.0,
@@ -172,6 +173,10 @@ def watchlist_path(project_root: Path, trade_date: date) -> Path:
     return watchlists_dir(project_root) / f"watchlist_{trade_date.isoformat()}.json"
 
 
+def watchlist_stocks_path(project_root: Path, trade_date: date) -> Path:
+    return watchlists_dir(project_root) / f"watchlist_stocks_{trade_date.isoformat()}.json"
+
+
 def watchlist_pattern_path(project_root: Path, trade_date: date) -> Path:
     return watchlists_dir(project_root) / f"watchlist_pattern_{trade_date.isoformat()}.json"
 
@@ -255,7 +260,7 @@ def build_phase_daily_watchlist_candidates(
     phase1_predictions: pd.DataFrame,
     phase2_predictions: pd.DataFrame,
     phase4_predictions: pd.DataFrame,
-    phase7_prediction: pd.DataFrame,
+    phase7_prediction: pd.DataFrame | None = None,
     phase8_predictions: pd.DataFrame | None = None,
     phase5_measures: pd.DataFrame | None = None,
     macd_frame: pd.DataFrame | None = None,
@@ -288,12 +293,10 @@ def build_phase_daily_watchlist_candidates(
         project_root=_project_root_from_source_files(source_files),
         trade_date=trade_date,
     )
-    phase8 = _prepare_phase8_predictions(phase8_predictions)
-    phase5 = _prepare_phase5_measures(phase5_measures, trade_date=trade_date)
+    _ = phase7_prediction, phase8_predictions, phase5_measures
     macd = _prepare_macd_frame(macd_frame)
     atr = _prepare_atr_frame(atr_frame)
     pattern_groups = _prepare_pattern_groups(pattern_frame)
-    phase7 = _phase7_metadata(phase7_prediction)
 
     if phase1.empty:
         raise RuntimeError("Phase 1 predictions are empty; cannot build phase watchlist.")
@@ -304,10 +307,6 @@ def build_phase_daily_watchlist_candidates(
 
     pool = phase1.merge(phase2, on="symbol", how="inner")
     pool = pool.merge(phase4, on="symbol", how="left")
-    if not phase8.empty:
-        pool = pool.merge(phase8, on="symbol", how="left")
-    if not phase5.empty:
-        pool = pool.merge(phase5, on="symbol", how="left")
     if not macd.empty:
         pool = pool.merge(macd, on="symbol", how="left")
     if not atr.empty:
@@ -340,7 +339,6 @@ def build_phase_daily_watchlist_candidates(
     pattern_symbol_set = set(pattern_groups)
     evaluated["pattern_score_filter_pass_before_limit_up"] = (
         evaluated["symbol"].astype(str).str.zfill(6).isin(pattern_symbol_set)
-        & evaluated["phase4_score_100"].gt(PATTERN_MIN_PHASE4_SCORE)
     )
     evaluated["pattern_score_filter_pass"] = (
         evaluated["pattern_score_filter_pass_before_limit_up"].fillna(False).astype(bool)
@@ -382,20 +380,6 @@ def build_phase_daily_watchlist_candidates(
     row_by_symbol = {str(row["symbol"]).zfill(6): row for row in row_pool.to_dict("records")}
     pattern_symbols = pattern_pool["symbol"].astype(str).str.zfill(6).tolist()
     phase4_top_symbols = phase4_top_pool.head(max(int(phase4_top_n), 0))["symbol"].astype(str).str.zfill(6).tolist()
-    p8_top_pool = evaluated.copy()
-    if "phase8_score_100" in p8_top_pool.columns:
-        p8_top_pool["phase8_score_100"] = pd.to_numeric(p8_top_pool["phase8_score_100"], errors="coerce")
-        p8_top_pool = p8_top_pool[
-            p8_top_pool["phase8_score_100"].notna()
-            & ~p8_top_pool.get("today_limit_up_excluded", pd.Series(False, index=p8_top_pool.index)).fillna(False).astype(bool)
-            & ~p8_top_pool["limit_up_excluded_by_daily_return"].fillna(False).astype(bool)
-        ].copy()
-        p8_top_pool = p8_top_pool.sort_values(["phase8_score_100", "phase4_score_100", "symbol"], ascending=[False, False, True], na_position="last")
-    else:
-        p8_top_pool = evaluated.head(0).copy()
-    p8_top_symbols = p8_top_pool.head(PHASE8_TOP_N)["symbol"].astype(str).str.zfill(6).tolist()
-    p8_top_rank_by_symbol = {symbol: index + 1 for index, symbol in enumerate(p8_top_symbols)}
-
     candidates: list[dict[str, object]] = []
     seen: set[str] = set()
     for symbol in pattern_symbols:
@@ -410,7 +394,6 @@ def build_phase_daily_watchlist_candidates(
                 source="pattern",
                 source_tags=["pattern"],
                 pattern_group=pattern_groups.get(symbol),
-                phase7=phase7,
             )
         )
         seen.add(symbol)
@@ -428,40 +411,15 @@ def build_phase_daily_watchlist_candidates(
                 source="phase4_top",
                 source_tags=["phase4_top"],
                 pattern_group=pattern_groups.get(symbol),
-                phase7=phase7,
             )
         )
         seen.add(symbol)
         phase4_added += 1
 
-    p8_added = 0
-    for symbol in p8_top_symbols:
-        row = row_by_symbol.get(symbol)
-        if row is None:
-            row_matches = evaluated[evaluated["symbol"].astype(str).str.zfill(6).eq(symbol)]
-            if row_matches.empty:
-                continue
-            row = row_matches.iloc[0].to_dict()
-        if symbol in seen:
-            _append_candidate_source_tag(candidates, symbol=symbol, tag="p8_top5")
-            continue
-        candidate = _phase_watchlist_candidate(
-            row,
-            source="p8_top5",
-            source_tags=["p8_top5"],
-            pattern_group=pattern_groups.get(symbol),
-            phase7=phase7,
-        )
-        candidate["phase8_top5_rank"] = p8_top_rank_by_symbol.get(symbol)
-        candidates.append(candidate)
-        seen.add(symbol)
-        p8_added += 1
-
     candidates = sorted(
         candidates,
         key=lambda item: (
             0 if item.get("pattern_match") else 1,
-            0 if "p8_top5" in item.get("source_tags", []) else 1,
             -_float_or_default(
                 item.get("phase4_composite_score"),
                 _float_or_default(item.get("phase4_score_100"), -math.inf),
@@ -483,21 +441,14 @@ def build_phase_daily_watchlist_candidates(
             "centered_risk_min_phase1_score": float(CENTERED_RISK_TOP_MIN_PHASE1_SCORE),
             "centered_risk_min_phase2_score": float(CENTERED_RISK_TOP_MIN_PHASE2_SCORE),
             "centered_risk_min_phase4_score": float(CENTERED_RISK_TOP_MIN_PHASE4_SCORE),
-            "pattern_min_phase4_score": float(PATTERN_MIN_PHASE4_SCORE),
-            "pattern_filter": "pattern hits ignore phase1/phase2 floors; require phase4_score_100 > 70 and same-day return <= 9.9%",
+            "pattern_filter": "pattern hits enter directly; only same-day return > 9.9% is excluded",
             "centered_risk_sort_formula": "phase4_score_100 + 0.08 * max(0, 100 - 2 * abs(phase1_score_100 - 80)) + 0.12 * max(0, 100 - 2 * abs(phase2_score_100 - 80))",
             "phase4_top_sort_formula": "centered_risk_score",
-            "phase8_policy": "display-only; append Phase8 Top5 as extra candidates/source tags when prediction file exists",
-            "phase7_no_trade_policy": "block highest-risk 20% trade days based on trained threshold",
             "limit_up_filter": "exclude both pattern and phase4_top candidates with same-day return > 9.9% before watchlist selection",
             "limit_up_filter_threshold": float(LIMIT_UP_DAILY_RETURN_THRESHOLD),
             "position_size_formula": "D = 2 * ATR14; effective average stop distance before third add = 0.85D; total planned position = min(40%, 2% / (0.85 * 2 * ATR14 / close))",
+            "deprecated_phases": ["P3", "P5", "P7", "P8", "P10"],
         },
-        "trade_permission": phase7.get("phase7_trade_permission", "unknown"),
-        "next_open_trade_permission": phase7.get("phase7_trade_permission", "unknown"),
-        "next_open_trade_warning": phase7.get("phase7_trade_permission") != "allow",
-        "trade_permission_note": _phase7_trade_permission_note(phase7),
-        **phase7,
         "filter_summary": {
             "phase1_rows": int(len(phase1)),
             "phase1_excluded_top20": phase1_excluded,
@@ -508,12 +459,9 @@ def build_phase_daily_watchlist_candidates(
             "limit_up_excluded_gt_9_9pct": limit_up_excluded,
             "hard_filter_pass_count": int(len(passed)),
             "pattern_symbols_after_filter": int(len(set(pattern_symbols))),
-            "pattern_symbols_phase4_gt_70": int(len(set(pattern_symbols))),
+            "pattern_symbols_direct": int(len(set(pattern_symbols))),
             "phase4_top_candidates_after_score_floor": int(len(phase4_top_pool)),
             "phase4_top_n_added_count": int(phase4_added),
-            "phase8_rows": int(len(phase8)),
-            "phase8_top5_symbols": p8_top_symbols,
-            "phase8_top5_added_count": int(p8_added),
         },
         "candidate_count": len(candidates),
         "candidates": candidates,
@@ -678,7 +626,6 @@ def build_intraday_pool_candidates(
             source=source,
             source_tags=[tag],
             pattern_group=pattern_groups.get(symbol),
-            phase7=phase7,
         )
         candidates.append(candidate)
         seen.add(symbol)
@@ -687,8 +634,9 @@ def build_intraday_pool_candidates(
     for row in pattern_pool.head(max(int(pattern_limit), 0)).to_dict("records") if not pattern_pool.empty else []:
         add_candidate(row, source="pattern_pool", tag="pattern_pool")
 
+    p124_tag = f"p124_top{max(int(p124_top_n), 0)}"
     for row in p124_pool.head(max(int(p124_top_n), 0)).to_dict("records"):
-        add_candidate(row, source="p124_top50", tag="p124_top50")
+        add_candidate(row, source=p124_tag, tag=p124_tag)
 
     for row in p8_pool.to_dict("records"):
         if len(candidates) >= max(int(pool_size), 0):
@@ -709,7 +657,7 @@ def build_intraday_pool_candidates(
             "pattern_pool_policy": "include all patterns_all hits; if over limit, keep highest phase4_score_100",
             "p124_top_n": int(p124_top_n),
             "p124_sort_formula": "phase4_score_100 + 0.08 * max(0, 100 - 2 * abs(phase1_score_100 - 80)) + 0.12 * max(0, 100 - 2 * abs(phase2_score_100 - 80))",
-            "phase8_fill_policy": "fill remaining slots by phase8_score_100 after pattern_pool and p124_top50, excluding same-day limit-up rows",
+            "phase8_fill_policy": "fill remaining slots by phase8_score_100 after pattern_pool and p124_top pool, excluding same-day limit-up rows",
             "limit_up_filter_threshold": float(LIMIT_UP_DAILY_RETURN_THRESHOLD),
         },
         "trade_permission": phase7.get("phase7_trade_permission", "unknown"),
@@ -724,7 +672,7 @@ def build_intraday_pool_candidates(
             "phase8_rows": int(len(phase8)),
             "pattern_symbols_total": int(len(pattern_groups)),
             "pattern_pool_count": int(min(len(pattern_pool), max(int(pattern_limit), 0))) if not pattern_pool.empty else 0,
-            "p124_top50_count": int(min(len(p124_pool), max(int(p124_top_n), 0))),
+            "p124_top_count": int(min(len(p124_pool), max(int(p124_top_n), 0))),
             "phase8_fill_available": int(len(p8_pool)),
             "intraday_pool_count": int(len(candidates)),
         },
@@ -1005,7 +953,6 @@ def _phase_watchlist_candidate(
     source: str,
     source_tags: list[str],
     pattern_group: pd.DataFrame | None,
-    phase7: dict[str, object],
 ) -> dict[str, object]:
     symbol = _normalize_symbol(row.get("symbol", ""))
     candidate: dict[str, object] = {
@@ -1015,7 +962,6 @@ def _phase_watchlist_candidate(
         "name": str(row.get("name", "") or ""),
         "pattern_match": pattern_group is not None and not pattern_group.empty,
     }
-    candidate.update(phase7)
     for field in (
         "phase1_score_100",
         "phase1_risk_score",
@@ -1055,27 +1001,6 @@ def _phase_watchlist_candidate(
         "phase4_score_percentile",
         "phase4_model_name",
         "phase4_model_version",
-        "phase8_score_100",
-        "phase8_raw_score",
-        "phase8_rank",
-        "phase8_top5_rank",
-        "today_limit_up_excluded",
-        "today_high_return_vs_prev_close",
-        "today_close_return_vs_prev_close",
-        "phase8_feature_trade_date",
-        "phase8_model_name",
-        "phase8_model_version",
-        "phase5_score_100",
-        "phase5_year",
-        "phase5_weeks",
-        "phase5_NEGOUTLIER",
-        "phase5_CRASH",
-        "phase5_CRASH_count",
-        "phase5_NCSKEW",
-        "phase5_DUVOL",
-        "phase5_RET",
-        "phase5_SIGMA",
-        "phase5_MINRET",
         "macd",
         "macd_signal_line",
         "macd_hist",
@@ -1187,6 +1112,7 @@ def write_watchlist(
     target = _resolve_watchlist_target(project_root, trade_date, kind=kind)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = build_watchlist_payload(trade_date=trade_date, picker_payload=picker_payload)
+    payload = _attach_sector_display_fields(project_root=project_root, payload=payload)
     if kind in {None, "pattern"}:
         payload = _attach_main_watchlist_streaks(project_root=project_root, trade_date=trade_date, payload=payload)
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
@@ -1194,32 +1120,50 @@ def write_watchlist(
     return target
 
 
+def write_watchlist_stocks(
+    *,
+    project_root: Path,
+    trade_date: date,
+    picker_payload: dict[str, object],
+) -> Path:
+    target = watchlist_stocks_path(project_root, trade_date)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_watchlist_payload(trade_date=trade_date, picker_payload=picker_payload)
+    payload = _attach_sector_display_fields(project_root=project_root, payload=payload)
+    payload = _attach_main_watchlist_streaks(project_root=project_root, trade_date=trade_date, payload=payload)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    _write_watchlist_csv(target.with_suffix(".csv"), payload, kind="stocks")
+    return target
+
+
 def write_intraday_pool(*, project_root: Path, trade_date: date, picker_payload: dict[str, object]) -> Path:
     target = intraday_pool_path(project_root, trade_date)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = build_watchlist_payload(trade_date=trade_date, picker_payload=picker_payload)
+    payload = _attach_sector_display_fields(project_root=project_root, payload=payload)
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
     _write_watchlist_csv(target.with_suffix(".csv"), payload, kind="intraday_pool")
     return target
+
+
+def _attach_sector_display_fields(*, project_root: Path, payload: dict[str, object]) -> dict[str, object]:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return payload
+    frame = pd.DataFrame([item for item in candidates if isinstance(item, dict)])
+    if frame.empty or "symbol" not in frame.columns:
+        return payload
+    enriched = append_sector_display_columns(frame, project_root=project_root)
+    result = dict(payload)
+    result["candidates"] = enriched.to_dict("records")
+    return result
 
 
 def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str = "watchlist") -> None:
     candidates = payload.get("candidates")
     if not isinstance(candidates, list):
         candidates = []
-    top_level_fields = [
-        "trade_date",
-        "trade_permission",
-        "next_open_trade_permission",
-        "next_open_trade_warning",
-        "trade_permission_note",
-        "phase7_score_100",
-        "phase7_buy_day_risk_score",
-        "phase7_selected_threshold",
-        "phase7_trade_permission",
-        "phase7_suggested_action",
-        "phase7_reason",
-    ]
+    top_level_fields = ["trade_date"]
     rows: list[dict[str, object]] = []
     for index, item in enumerate(candidates, start=1):
         if not isinstance(item, dict):
@@ -1266,8 +1210,6 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
             "centered_risk_score",
             "phase4_composite_score",
             "phase4_composite_rank",
-            "phase7_score_100",
-            "phase7_trade_permission",
             "phase1_feature_trade_date",
             "phase1_model_name",
             "phase1_model_version",
@@ -1277,33 +1219,19 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
             "phase4_feature_trade_date",
             "phase4_model_name",
             "phase4_model_version",
-            "phase8_rank",
-            "phase8_top5_rank",
-            "phase8_raw_score",
-            "phase8_feature_trade_date",
-            "phase8_model_name",
-            "phase8_model_version",
-            "today_limit_up_excluded",
-            "today_high_return_vs_prev_close",
-            "today_close_return_vs_prev_close",
-            "phase7_feature_trade_date",
-            "phase7_model_name",
-            "phase7_model_version",
-            "trade_permission",
-            "next_open_trade_permission",
-            "next_open_trade_warning",
-            "trade_permission_note",
-            "phase7_reason",
         ]
         pattern_detail_columns = [
             "reason",
             "patterns",
             *PATTERN_CANDIDATE_FIELDS,
         ]
+        sector_columns = [
+            "industry_names",
+            "concept_names",
+        ]
         if kind == "intraday_pool":
             phase_detail_columns = [
                 "candidate_index",
-                "phase5_score_100",
                 "phase4_5d_std",
                 *phase_detail_columns,
             ]
@@ -1312,12 +1240,13 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                 "symbol",
                 "name",
                 "source",
+                *sector_columns,
                 "涨幅%",
                 "phase1_score_100",
                 "phase2_score_100",
                 "phase4_score_100",
-                "phase8_score_100",
                 "phase4_5d_mean",
+                "phase4_5d_std",
                 "pattern_match",
                 "pattern_ids",
                 "pattern_id",
@@ -1335,6 +1264,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                 "name",
                 "涨幅%",
                 "source",
+                *sector_columns,
                 "pattern_match",
                 "pattern_ids",
                 "pattern_id",
@@ -1342,8 +1272,6 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                 "phase2_score_100",
                 "phase4_score_100",
                 *PHASE4_ROLLING_COLUMNS,
-                "phase8_score_100",
-                "phase5_score_100",
                 "ATR%",
                 RECOMMENDED_POSITION_PERCENT_FIELD,
                 *technical_columns,
@@ -1365,12 +1293,14 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                     "symbol",
                     "name",
                     "source",
+                    "industry_names",
+                    "concept_names",
                     "涨幅%",
                     "phase1_score_100",
                     "phase2_score_100",
                     "phase4_score_100",
-                    "phase8_score_100",
                     "phase4_5d_mean",
+                    "phase4_5d_std",
                     "pattern_match",
                     "ATR%",
                     RECOMMENDED_POSITION_PERCENT_FIELD,
@@ -1385,18 +1315,81 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                     "name",
                     "涨幅%",
                     "source",
+                    "industry_names",
+                    "concept_names",
                     "pattern_match",
                     "phase1_score_100",
                     "phase2_score_100",
                     "phase4_score_100",
                     *PHASE4_ROLLING_COLUMNS,
-                    "phase8_score_100",
-                    "phase5_score_100",
-                    "phase7_score_100",
                 ]
             )
+    frame = _drop_deprecated_phase_columns(frame)
+    frame = _rename_watchlist_csv_columns(frame)
     target.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(target, index=False, encoding="utf-8-sig")
+
+
+def _drop_deprecated_phase_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    deprecated_prefixes = ("phase5", "phase7", "phase8")
+    deprecated_exact = {
+        "trade_permission",
+        "next_open_trade_permission",
+        "next_open_trade_warning",
+        "trade_permission_note",
+        "today_limit_up_excluded",
+        "today_high_return_vs_prev_close",
+        "today_close_return_vs_prev_close",
+    }
+    keep = [
+        column
+        for column in frame.columns
+        if not str(column).startswith(deprecated_prefixes) and column not in deprecated_exact
+    ]
+    return frame.loc[:, keep].copy()
+
+
+def _rename_watchlist_csv_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    rename_map = {
+        "trade_date": "交易日期",
+        "candidate_index": "序号",
+        "symbol": "编号",
+        "name": "名称",
+        "source": "来源",
+        "source_tags": "来源标签",
+        "industry_names": "行业",
+        "concept_names": "概念",
+        "pattern_match": "Pattern命中",
+        "pattern_ids": "Pattern编号",
+        "pattern_id": "Pattern主编号",
+        "phase1_score_100": "P1风险质量分",
+        "phase2_score_100": "P2交易风险分",
+        "phase4_score_100": "P4上涨质量分",
+        "phase4_5d_mean": "P4五日均分",
+        "phase4_5d_std": "P4五日std",
+        "phase1_center_score": "P1接近80分",
+        "phase2_center_score": "P2接近80分",
+        "centered_risk_score": "P1/P2/P4综合分",
+        "phase4_composite_score": "综合排序分",
+        "phase4_composite_rank": "综合排名",
+        "phase2_is_cusum_event": "CUSUM触发",
+        "phase1_excluded_by_top20_risk": "P1最高风险20%",
+        "phase2_excluded_by_top20_risk": "P2最高风险20%",
+        "phase1_risk_score": "P1原始风险",
+        "phase2_barrier_risk_score": "P2原始风险",
+        "phase4_return_score": "P4原始收益",
+        "macd_cross_state": "macd交叉",
+        "macd_divergence_state": "macd背离",
+        "volume_price_divergence_state": "量价背离",
+        "reason": "Pattern理由",
+        "patterns": "Pattern详细",
+        "limit_up_excluded_by_daily_return": "涨停剔除",
+        "daily_return_1d": "当日涨幅小数",
+        WATCHLIST_STREAK_FIELD: WATCHLIST_STREAK_FIELD,
+    }
+    columns = {column: rename_map[column] for column in frame.columns if column in rename_map}
+    renamed = frame.rename(columns=columns)
+    return renamed.loc[:, ~renamed.columns.duplicated()].copy()
 
 
 def _format_symbol_for_excel(value: object) -> object:
@@ -1423,19 +1416,6 @@ def build_watchlist_payload(*, trade_date: date, picker_payload: dict[str, objec
         "model_source_files",
         "selection_policy",
         "filter_summary",
-        "trade_permission",
-        "next_open_trade_permission",
-        "next_open_trade_warning",
-        "trade_permission_note",
-        "phase7_buy_day_risk_score",
-        "phase7_score_100",
-        "phase7_feature_trade_date",
-        "phase7_selected_threshold",
-        "phase7_trade_permission",
-        "phase7_suggested_action",
-        "phase7_reason",
-        "phase7_model_name",
-        "phase7_model_version",
     }
     passthrough = {key: payload[key] for key in passthrough_fields if key in payload}
     return {
@@ -1451,6 +1431,13 @@ def load_watchlist(*, project_root: Path, trade_date: date, kind: str | None = N
     target = _resolve_watchlist_target(project_root, trade_date, kind=kind)
     if not target.exists():
         raise FileNotFoundError(f"Watchlist not found for {trade_date.isoformat()}: {target}")
+    return json.loads(target.read_text(encoding="utf-8"))
+
+
+def load_watchlist_stocks(*, project_root: Path, trade_date: date) -> dict[str, object]:
+    target = watchlist_stocks_path(project_root, trade_date)
+    if not target.exists():
+        raise FileNotFoundError(f"Stock watchlist not found for {trade_date.isoformat()}: {target}")
     return json.loads(target.read_text(encoding="utf-8"))
 
 
@@ -1473,6 +1460,22 @@ def find_latest_watchlist_before(*, project_root: Path, trade_date: date) -> tup
         raise FileNotFoundError(f"No watchlist found before {trade_date.isoformat()} in {watchlists_dir(project_root)}")
 
     return max(candidates, key=lambda item: item[0])
+
+
+def find_latest_watchlist_stocks_before(*, project_root: Path, trade_date: date) -> tuple[date, Path]:
+    candidates: list[tuple[date, Path]] = []
+    for path in watchlists_dir(project_root).glob("watchlist_stocks_*.json"):
+        parsed = _parse_watchlist_stocks_date(path)
+        if parsed is None or parsed >= trade_date:
+            continue
+        candidates.append((parsed, path))
+
+    if candidates:
+        return max(candidates, key=lambda item: item[0])
+    try:
+        return find_latest_watchlist_before(project_root=project_root, trade_date=trade_date)
+    except FileNotFoundError:
+        return find_latest_intraday_pool_before(project_root=project_root, trade_date=trade_date)
 
 
 def find_latest_intraday_pool_before(*, project_root: Path, trade_date: date) -> tuple[date, Path]:
@@ -1509,6 +1512,13 @@ def extract_watchlist_symbols(payload: dict[str, object]) -> list[str]:
 
 def _parse_watchlist_date(path: Path) -> date | None:
     match = WATCHLIST_FILENAME_RE.fullmatch(path.name)
+    if not match:
+        return None
+    return datetime.fromisoformat(match.group(1)).date()
+
+
+def _parse_watchlist_stocks_date(path: Path) -> date | None:
+    match = WATCHLIST_STOCKS_FILENAME_RE.fullmatch(path.name)
     if not match:
         return None
     return datetime.fromisoformat(match.group(1)).date()
@@ -1579,6 +1589,8 @@ def _is_true_index_name(name: object) -> bool:
 def _resolve_watchlist_target(project_root: Path, trade_date: date, kind: str | None) -> Path:
     if kind == "pattern":
         return watchlist_pattern_path(project_root, trade_date)
+    if kind == "stocks":
+        return watchlist_stocks_path(project_root, trade_date)
     return watchlist_path(project_root, trade_date)
 
 

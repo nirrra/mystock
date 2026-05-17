@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from stocks_analyzer.config import load_config
 from stocks_analyzer.intraday_screening import run_intraday_screening
@@ -32,6 +32,17 @@ def _make_workspace_tmp_dir(name: str) -> Path:
 def _make_storage(tmp_path: Path) -> Storage:
     config = load_config(ROOT / "config" / "default.yaml")
     return Storage(ProjectPaths(tmp_path, config.storage))
+
+
+def _csv_symbols(frame: pd.DataFrame) -> pd.Series:
+    column = "编号" if "编号" in frame.columns else "symbol"
+    return (
+        frame[column]
+        .astype(str)
+        .str.replace('="', "", regex=False)
+        .str.replace('"', "", regex=False)
+        .str.zfill(6)
+    )
 
 
 def _daily_bars(symbol: str) -> pd.DataFrame:
@@ -211,23 +222,31 @@ def test_intraday_screening_combines_intraday_bar_and_previous_pool(monkeypatch)
     assert not old_track.exists()
     assert unrelated.exists()
     output = pd.read_csv(result.output_path)
-    assert list(output.columns[:5]) == ["intraday_trade_date", "symbol", "name", "intraday_selection_source", "intraday_pct_change"]
-    assert output.loc[0, "symbol"] == 600001
-    assert output.loc[0, "name"] == "测试股份"
-    assert output.loc[0, "intraday_source"] == "sina_raw"
-    assert round(float(output.loc[0, "intraday_pct_change"]), 2) == 2.48
-    assert output.loc[0, "phase1_score_100"] == 100.0
-    assert output.loc[0, "phase2_score_100"] == 100.0
-    assert output.loc[0, "phase4_score_100"] == 100.0
-    assert output.loc[0, "intraday_pool_score"] == 112.0
-    assert output.loc[0, "intraday_selection_source"] == "pattern_pool"
+    assert list(output.columns[:7]) == [
+        "日期",
+        "编号",
+        "股票名称",
+        "来源",
+        "盘中涨幅%",
+        "P1风险质量分",
+        "P2交易风险分",
+    ]
+    assert _csv_symbols(output).iloc[0] == "600001"
+    assert output.loc[0, "股票名称"] == "测试股份"
+    assert output.loc[0, "行情源"] == "sina_raw"
+    assert round(float(output.loc[0, "盘中涨幅%"]), 2) == 2.48
+    assert output.loc[0, "P1风险质量分"] == 100.0
+    assert output.loc[0, "P2交易风险分"] == 100.0
+    assert output.loc[0, "P4上涨质量分"] == 100.0
+    assert output.loc[0, "P1/P2/P4综合分"] == 112.0
+    assert output.loc[0, "来源"] == "pattern_pool"
     assert 0 < output.loc[0, "建议总仓位%"] <= 40.0
     assert output.loc[0, "phase1_rank"] == 1
     assert output.loc[0, "phase2_rank"] == 1
     assert output.loc[0, "phase4_rank"] == 1
     assert output.loc[0, "prev_pattern_id"] == 5
-    assert output.loc[0, "prev_reason"] == "previous pattern reason"
-    assert "phase5_score_100" in output.columns
+    assert output.loc[0, "Pattern理由"] == "previous pattern reason"
+    assert "phase5_score_100" not in output.columns
     assert "phase7_score_100" not in output.columns
     assert "intraday_open" not in output.columns
     assert "intraday_high" not in output.columns
@@ -253,8 +272,8 @@ def test_intraday_screening_uses_intraday_pool_without_full_market_remaining(mon
                     {
                         "symbol": "600002",
                         "name": "池内股份",
-                        "source": "p124_top50",
-                        "source_tags": ["p124_top50"],
+                        "source": "p124_top200",
+                        "source_tags": ["p124_top200"],
                         "intraday_pool_rank": 1,
                     }
                 ]
@@ -351,8 +370,8 @@ def test_intraday_screening_uses_intraday_pool_without_full_market_remaining(mon
     assert len(calls) == 1
     assert result.source_pool_path == pool_path
     output = pd.read_csv(result.output_path)
-    assert output["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
-    assert output.loc[0, "intraday_selection_source"] == "p124_top50"
+    assert _csv_symbols(output).tolist() == ["600002"]
+    assert output.loc[0, "来源"] == "p124_top200"
 
 
 def test_intraday_screening_prefers_same_day_full_market_pool(monkeypatch) -> None:
@@ -362,7 +381,7 @@ def test_intraday_screening_prefers_same_day_full_market_pool(monkeypatch) -> No
     today_pool = tmp_path / "reports" / "watchlists" / "intraday_pool_2026-05-08.json"
     today_pool.parent.mkdir(parents=True, exist_ok=True)
     previous_pool.write_text(
-        json.dumps({"candidates": [{"symbol": "600001", "name": "旧池", "source": "p124_top50"}]}, ensure_ascii=False),
+        json.dumps({"candidates": [{"symbol": "600001", "name": "旧池", "source": "p124_top200"}]}, ensure_ascii=False),
         encoding="utf-8",
     )
     today_pool.write_text(
@@ -462,8 +481,8 @@ def test_intraday_screening_prefers_same_day_full_market_pool(monkeypatch) -> No
     assert result.source_pool_path == today_pool
     assert calls[0] == ["600002"]
     output = pd.read_csv(result.output_path)
-    assert output["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
-    assert output.loc[0, "intraday_selection_source"] == "p8_fill"
+    assert _csv_symbols(output).tolist() == ["600002"]
+    assert output.loc[0, "来源"] == "p8_fill"
 
 
 def test_intraday_screening_refreshes_full_market_pool(monkeypatch) -> None:
@@ -534,8 +553,8 @@ def test_intraday_screening_refreshes_full_market_pool(monkeypatch) -> None:
     payload = json.loads(result.source_pool_path.read_text(encoding="utf-8"))
     assert payload["selection_policy"]["source_scope"] == "intraday_full_market"
     assert payload["filter_summary"]["full_market_scan_symbols"] == 2
-    output = pd.read_csv(result.output_path, dtype={"symbol": str})
-    assert set(output["symbol"].str.zfill(6)) == {"600001", "600002"}
+    output = pd.read_csv(result.output_path)
+    assert set(_csv_symbols(output)) == {"600001", "600002"}
 
 
 def test_intraday_screening_appends_track_stock_to_pool(monkeypatch) -> None:
@@ -630,12 +649,20 @@ def test_intraday_screening_appends_track_stock_to_pool(monkeypatch) -> None:
         skip_intraday_update=True,
     )
 
-    pool = pd.read_csv(result.output_path, dtype={"symbol": str})
-    assert pool["symbol"].astype(str).str.zfill(6).tolist() == ["600001", "600002"]
+    pool = pd.read_csv(result.output_path)
+    assert _csv_symbols(pool).tolist() == ["600001", "600002"]
     assert pool["建议总仓位%"].notna().all()
-    assert pool.loc[pool["symbol"].eq("600002"), "intraday_selection_source"].iloc[0] == "track_stock"
-    assert bool(pool.loc[pool["symbol"].eq("600002"), "track_stock"].iloc[0]) is True
+    tracked = pool[_csv_symbols(pool).eq("600002")]
+    assert tracked["来源"].iloc[0] == "track_stock"
+    assert bool(tracked["跟踪股票"].iloc[0]) is True
     assert result.track_stock_path is not None
+    assert result.track_workbook_path == tmp_path / "track_stock.xlsx"
     track = pd.read_csv(result.track_stock_path, dtype={"symbol": str})
     assert track["symbol"].astype(str).str.zfill(6).tolist() == ["600002"]
     assert track["建议总仓位%"].notna().all()
+    workbook_result = load_workbook(tmp_path / "track_stock.xlsx")
+    assert workbook_result.sheetnames[:3] == ["Sheet1", "Sheet2", "Sheet3"]
+    sheet3 = workbook_result["Sheet3"]
+    assert sheet3["A1"].value == "交易日期"
+    assert sheet3["B1"].value == "股票代码"
+    assert sheet3["B2"].value == "600002"

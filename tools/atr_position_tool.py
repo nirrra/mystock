@@ -26,6 +26,40 @@ PHASE5_SCORE_COMPONENTS = (
     ("MINRET", True),
 )
 
+IGNORED_SECTOR_NAMES = {
+    "2025年报预增",
+    "2026一季报预增",
+    "摘帽",
+    "新股与次新股",
+    "注册制次新股",
+}
+IGNORED_SECTOR_KEYWORDS = (
+    "同花顺",
+    "预增",
+    "年报",
+    "一季报",
+    "中报",
+    "半年报",
+    "三季报",
+    "摘帽",
+)
+DESCRIPTIVE_SECTOR_KEYWORDS = (
+    "公司",
+    "主营",
+    "研发",
+    "生产",
+    "销售",
+    "产品",
+    "业务",
+    "专注",
+    "行业",
+    "体系",
+    "设立以来",
+    "主要包括",
+    "发展成为",
+    "报告披露",
+)
+
 MACD_TEXT = {
     "golden_cross": "金叉",
     "dead_cross": "死叉",
@@ -63,6 +97,25 @@ class PatternValue:
 
 
 @dataclass(frozen=True)
+class SectorMetric:
+    sector_type: str
+    sector_name: str
+    sector_label: str
+    long_mainline_score: float | None = None
+    short_mainline_score: float | None = None
+    phase9_score: float | None = None
+    leader_score: float | None = None
+    leader_tags: str = ""
+
+
+@dataclass(frozen=True)
+class SectorExposure:
+    industries: list[str] = field(default_factory=list)
+    concepts: list[str] = field(default_factory=list)
+    metrics: list[SectorMetric] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class IntradayLookupResult:
     trade_date: str
     quote_datetime: str
@@ -95,6 +148,7 @@ class PostMarketLookupResult:
     phase5: PhaseValue
     phase8: PhaseValue
     pattern: PatternValue
+    sectors: SectorExposure
     source_files: dict[str, Path | None]
 
 
@@ -256,10 +310,12 @@ def candidate_name_sources(root: Path) -> list[tuple[Path | None, str]]:
     sources: list[tuple[Path | None, str]] = []
     for directory, prefix, label in (
         (root / "reports" / "atr", "atr", "最新ATR全市场"),
+        (root / "reports" / "intraday_screening", "intraday_pool_screening", "最新日中候选池"),
         (root / "reports" / "intraday_screening", "intraday_top20", "最新日中Top20"),
         (root / "reports" / "intraday_screening", "intraday_top20_previous", "上一轮日中Top20"),
         (root / "reports" / "intraday_screening", "intraday_track_stock", "日中跟踪股"),
         (root / "reports" / "intraday_screening", "intraday_screening", "日中全市场"),
+        (root / "reports" / "watchlists", "watchlist_stocks", "最新股票候选池"),
         (root / "reports" / "watchlists", "watchlist", "最新watchlist"),
         (root / "reports" / "watchlists", "watchlist_pattern", "最新pattern watchlist"),
         (root / "reports" / "patterns", "patterns_all", "最新pattern结果"),
@@ -293,8 +349,6 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         "Phase1": root / "reports" / "full_market_model" / f"tail_risk_predictions_{trade_date}.csv",
         "Phase2": root / "reports" / "full_market_model" / f"barrier_risk_predictions_{trade_date}.csv",
         "Phase4": root / "reports" / "full_market_model" / f"alpha158_qlib_return_predictions_{trade_date}.csv",
-        "Phase5": root / "reports" / "full_market_model" / "mcd_crash_annual_measures.csv",
-        "Phase8": root / "reports" / "full_market_model" / f"limit_up_3d_opportunity_predictions_{trade_date}.csv",
         "Pattern": root / "reports" / "patterns" / f"patterns_all_{trade_date}.csv",
     }
 
@@ -330,9 +384,8 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
             rank=phase4.rank,
             extra={**phase4.extra, **phase4_rolling},
         )
-    phase5 = lookup_phase5(paths["Phase5"], symbol, trade_date)
-    phase8 = lookup_phase8(paths["Phase8"], symbol)
     pattern = lookup_patterns(paths["Pattern"], symbol)
+    sectors = lookup_sector_exposure(root, symbol)
 
     return PostMarketLookupResult(
         trade_date=trade_date,
@@ -344,9 +397,10 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         phase1=phase1,
         phase2=phase2,
         phase4=phase4,
-        phase5=phase5,
-        phase8=phase8,
+        phase5=PhaseValue(),
+        phase8=PhaseValue(),
         pattern=pattern,
+        sectors=sectors,
         source_files={key: path if path.exists() else None for key, path in paths.items()},
     )
 
@@ -354,6 +408,7 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
 def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
     intraday_dir = root / "reports" / "intraday_screening"
     source_defs = (
+        ("intraday_pool_screening", "日中候选池"),
         ("intraday_top20", "Top20"),
         ("intraday_top20_previous", "上一轮Top20"),
         ("intraday_track_stock", "跟踪股"),
@@ -681,6 +736,191 @@ def lookup_patterns(path: Path | None, symbol: str) -> PatternValue:
     return PatternValue(pattern_ids=ids, reasons=reasons[:3])
 
 
+def lookup_sector_exposure(root: Path, symbol: str) -> SectorExposure:
+    membership_path = root / "data" / "sector_membership" / "stock_sector_membership.csv"
+    membership_rows = [
+        row
+        for row in iter_csv_rows(membership_path)
+        if normalize_symbol(row.get("symbol")) == symbol and not is_ignored_sector_name(row.get("sector_name"))
+    ]
+    if not membership_rows:
+        return SectorExposure()
+
+    score_map = load_sector_score_map(root)
+    leader_map = load_symbol_leader_map(root, symbol)
+    industries: list[str] = []
+    concepts: list[str] = []
+    metrics: list[SectorMetric] = []
+    seen: set[tuple[str, str]] = set()
+
+    for row in membership_rows:
+        sector_type = normalize_sector_type(row.get("sector_type"))
+        sector_name = str(row.get("sector_name") or "").strip()
+        sector_label = str(row.get("sector_label") or "").strip()
+        if not sector_type or not sector_name:
+            continue
+        if sector_type == "industry":
+            append_unique(industries, sector_name)
+        elif sector_type == "concept":
+            append_unique(concepts, sector_name)
+        key = sector_key(sector_type, sector_label, sector_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        score_row = score_map.get(key, {})
+        leader_row = leader_map.get(key, {})
+        metrics.append(
+            SectorMetric(
+                sector_type=sector_type,
+                sector_name=sector_name,
+                sector_label=sector_label,
+                long_mainline_score=safe_float(score_row.get("long_mainline_score_100")),
+                short_mainline_score=safe_float(score_row.get("short_mainline_score_100")),
+                phase9_score=safe_float(score_row.get("phase9_score_100")),
+                leader_score=safe_float(leader_row.get("combined_leader_score") or leader_row.get("leader_score")),
+                leader_tags=str(leader_row.get("leader_tags") or ""),
+            )
+        )
+
+    return SectorExposure(industries=industries, concepts=concepts, metrics=metrics)
+
+
+def load_sector_score_map(root: Path) -> dict[tuple[str, str], dict[str, object]]:
+    rows_by_key: dict[tuple[str, str], dict[str, object]] = {}
+
+    for path in (
+        find_latest_optional_report_path(root / "reports" / "sectors", "sector_phase9_buy_score_predictions"),
+        find_latest_optional_report_path(root / "reports" / "sectors", "sector_mainline_scores"),
+        find_latest_optional_report_path(root / "reports" / "sectors", "sector_performance"),
+        find_latest_optional_report_path(root / "reports" / "watchlists", "watchlist_sectors"),
+    ):
+        if path is None:
+            continue
+        for row in iter_csv_rows(path):
+            key = row_sector_key(row)
+            if key is None:
+                continue
+            current = rows_by_key.setdefault(key, {})
+            current.update(normalize_sector_score_row(row))
+
+    for row in rows_by_key.values():
+        if not is_valid_number(row.get("short_mainline_score_100")):
+            short_score = compute_short_mainline_score(row)
+            if short_score is not None:
+                row["short_mainline_score_100"] = short_score
+    return rows_by_key
+
+
+def load_symbol_leader_map(root: Path, symbol: str) -> dict[tuple[str, str], dict[str, object]]:
+    path = find_latest_optional_report_path(root / "reports" / "sectors", "sector_leader_scores_all")
+    if path is None:
+        path = find_latest_optional_report_path(root / "reports" / "sectors", "sector_leaders")
+    if path is None:
+        return {}
+    leaders: dict[tuple[str, str], dict[str, object]] = {}
+    for row in iter_csv_rows(path):
+        if normalize_symbol(row.get("symbol")) != symbol:
+            continue
+        key = row_sector_key(row)
+        if key is None:
+            continue
+        score = safe_float(row.get("combined_leader_score") or row.get("leader_score"))
+        current_score = safe_float(leaders.get(key, {}).get("combined_leader_score") or leaders.get(key, {}).get("leader_score"))
+        if current_score is None or (score is not None and score > current_score):
+            leaders[key] = {
+                "combined_leader_score": row.get("combined_leader_score"),
+                "leader_score": row.get("leader_score"),
+                "leader_tags": row.get("leader_tags"),
+            }
+    return leaders
+
+
+def row_sector_key(row: dict[str, str]) -> tuple[str, str] | None:
+    sector_type = normalize_sector_type(first_present(row, ("sector_type", "板块类型")))
+    sector_label = str(first_present(row, ("sector_label", "板块代码")) or "").strip()
+    sector_name = str(first_present(row, ("sector_name", "板块名称")) or "").strip()
+    if not sector_type or not (sector_label or sector_name):
+        return None
+    return sector_key(sector_type, sector_label, sector_name)
+
+
+def sector_key(sector_type: str, sector_label: str, sector_name: str) -> tuple[str, str]:
+    identity = str(sector_label or sector_name or "").strip()
+    return (sector_type, identity)
+
+
+def normalize_sector_type(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"industry", "行业"}:
+        return "industry"
+    if text in {"concept", "概念"}:
+        return "concept"
+    return text
+
+
+def normalize_sector_score_row(row: dict[str, str]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    column_map = {
+        "long_mainline_score_100": ("长期主线指数", "long_mainline_score_100", "long_mainline_score"),
+        "short_mainline_score_100": ("短期主线指数", "short_mainline_score_100"),
+        "phase9_score_100": ("P9买入分", "phase9_score_100"),
+        "return_5d": ("return_5d",),
+        "return_20d": ("return_20d",),
+        "amount_weighted_pct_change": ("成交额加权涨幅%", "amount_weighted_pct_change"),
+        "up_ratio": ("上涨家数占比", "up_ratio"),
+        "ma5_slope_pct": ("ma5_slope_pct",),
+    }
+    for target, columns in column_map.items():
+        value = first_present(row, columns)
+        if value not in (None, ""):
+            result[target] = value
+    return result
+
+
+def compute_short_mainline_score(row: dict[str, object]) -> float | None:
+    components = [
+        linear_score(safe_float(row.get("return_5d")), low=-3.0, high=8.0, weight=0.25),
+        linear_score(safe_float(row.get("return_20d")), low=-8.0, high=18.0, weight=0.25),
+        linear_score(safe_float(row.get("amount_weighted_pct_change")), low=-2.0, high=5.0, weight=0.20),
+        linear_score(safe_float(row.get("up_ratio")), low=0.35, high=0.80, weight=0.15),
+        linear_score(safe_float(row.get("ma5_slope_pct")), low=-0.8, high=1.2, weight=0.15),
+    ]
+    valid = [value for value in components if value is not None]
+    if not valid:
+        return None
+    return round(sum(valid), 2)
+
+
+def linear_score(value: float | None, *, low: float, high: float, weight: float) -> float | None:
+    if value is None or high <= low:
+        return None
+    score = (value - low) / (high - low) * 100.0
+    return min(100.0, max(0.0, score)) * weight
+
+
+def is_ignored_sector_name(value: object) -> bool:
+    name = str(value or "").strip()
+    if not name:
+        return True
+    if name in IGNORED_SECTOR_NAMES:
+        return True
+    if any(keyword in name for keyword in IGNORED_SECTOR_KEYWORDS):
+        return True
+    return is_descriptive_sector_name(name)
+
+
+def is_descriptive_sector_name(name: str) -> bool:
+    if len(name) < 30:
+        return False
+    keyword_count = sum(1 for keyword in DESCRIPTIVE_SECTOR_KEYWORDS if keyword in name)
+    return keyword_count >= 3
+
+
+def append_unique(values: list[str], value: str) -> None:
+    if value and value not in values:
+        values.append(value)
+
+
 def percentile_score(values: list[float], target: float, *, higher_is_better: bool) -> float:
     valid = [value for value in values if math.isfinite(value)]
     if not valid:
@@ -771,17 +1011,14 @@ def build_six_dimension_scores(result: StockLookupResult) -> list[tuple[str, flo
     p1 = latest_phase_score(result, "phase1")
     p2 = latest_phase_score(result, "phase2")
     p4 = latest_phase_score(result, "phase4")
-    p5 = result.post_market.phase5.score_100
-    p8 = latest_phase_score(result, "phase8")
-    phase4_mean = latest_phase4_mean(result)
     position_pct = latest_position_pct(result)
     return [
         ("风险质量", average_scores(p1, p2)),
         ("上涨预期", clamp_score(p4)),
-        ("趋势稳定", clamp_score(phase4_mean)),
-        ("长期稳健", clamp_score(p5)),
-        ("短线爆发", clamp_score(p8)),
         ("仓位空间", position_space_score(position_pct)),
+        ("板块预期", best_sector_score(result.post_market.sectors, "phase9_score")),
+        ("板块热度", best_sector_score(result.post_market.sectors, "short_mainline_score")),
+        ("龙头指数", best_sector_score(result.post_market.sectors, "leader_score")),
     ]
 
 
@@ -801,6 +1038,31 @@ def latest_phase4_mean(result: StockLookupResult) -> float | None:
             return value
     value = safe_float(result.post_market.phase4.extra.get("phase4_5d_mean"))
     return value if is_valid_number(value) else None
+
+
+def best_sector_score(exposure: SectorExposure, field_name: str) -> float | None:
+    values: list[float] = []
+    for metric in exposure.metrics:
+        value = getattr(metric, field_name)
+        if is_valid_number(value):
+            values.append(float(value))
+    if not values:
+        return None
+    return clamp_score(max(values))
+
+
+def best_sector_metric(exposure: SectorExposure, field_name: str) -> tuple[float | None, str]:
+    best_score: float | None = None
+    best_name = ""
+    for metric in exposure.metrics:
+        value = getattr(metric, field_name)
+        if not is_valid_number(value):
+            continue
+        score = float(value)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_name = metric.sector_name
+    return (clamp_score(best_score), best_name)
 
 
 def latest_position_pct(result: StockLookupResult) -> float | None:
@@ -859,13 +1121,13 @@ def format_result(result: StockLookupResult) -> str:
             f"日期    {post.trade_date}",
             f"收盘    {format_number(post.close, 2)}",
             f"ATR     {format_number(post.atr14, 4)}    ATR% {format_number(post.atr_pct, 2)}%    仓位 {format_number(post.max_position_pct, 2)}%",
-            f"Phase   P1 {format_number(post.phase1.score_100, 1)}   P2 {format_number(post.phase2.score_100, 1)}   P4 {format_number(post.phase4.score_100, 1)}   P5 {format_number(post.phase5.score_100, 1)}   P8 {format_number(post.phase8.score_100, 1)}",
-            f"P4五日   均值 {format_number(safe_float(post.phase4.extra.get('phase4_5d_mean')), 1)}   波动 {format_number(safe_float(post.phase4.extra.get('phase4_5d_std')), 1)}",
-            f"事件    CUSUM {format_flag(post.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(post.phase4.rank)}   P8排名 {format_rank(post.phase8.rank)}",
+            f"Phase   P1 {format_number(post.phase1.score_100, 1)}   P2 {format_number(post.phase2.score_100, 1)}   P4 {format_number(post.phase4.score_100, 1)}",
+            f"事件    CUSUM {format_flag(post.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(post.phase4.rank)}",
             f"技术    MACD {translate_macd(post.macd.get('macd_cross_state'))}   背离 {translate_macd(post.macd.get('macd_divergence_state'))}   量价 {translate_macd(post.macd.get('volume_price_divergence_state'))}",
             f"Pattern {pattern_text}",
         ]
     )
+    lines.extend(format_sector_lines(post.sectors))
     if result.intraday is not None:
         intra = result.intraday
         lines.extend(
@@ -877,9 +1139,8 @@ def format_result(result: StockLookupResult) -> str:
                 f"来源    {intra.source_label}",
                 f"价格    {format_number(intra.latest_price, 2)}    涨幅 {format_signed_percent(intra.pct_change)}",
                 f"ATR     {format_number(intra.atr14, 4)}    ATR% {format_number(intra.atr_pct, 2)}%    仓位 {format_number(intra.max_position_pct, 2)}%",
-                f"Phase   P1 {format_number(intra.phase1.score_100, 1)}   P2 {format_number(intra.phase2.score_100, 1)}   P4 {format_number(intra.phase4.score_100, 1)}   P8 {format_number(intra.phase8.score_100, 1)}",
-                f"P4五日   均值 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_mean')), 1)}   波动 {format_number(safe_float(intra.phase4.extra.get('phase4_5d_std')), 1)}",
-                f"事件    CUSUM {format_flag(intra.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(intra.phase4.rank)}   P8排名 {format_rank(intra.phase8.rank)}",
+                f"Phase   P1 {format_number(intra.phase1.score_100, 1)}   P2 {format_number(intra.phase2.score_100, 1)}   P4 {format_number(intra.phase4.score_100, 1)}",
+                f"事件    CUSUM {format_flag(intra.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(intra.phase4.rank)}",
                 f"技术    MACD {translate_macd(intra.macd.get('macd_cross_state'))}   背离 {translate_macd(intra.macd.get('macd_divergence_state'))}   量价 {translate_macd(intra.macd.get('volume_price_divergence_state'))}",
             ]
         )
@@ -892,6 +1153,32 @@ def format_result(result: StockLookupResult) -> str:
     if reason_text:
         lines.append(reason_text)
     return "\n".join(lines)
+
+
+def format_sector_lines(exposure: SectorExposure) -> list[str]:
+    lines = ["", "所属板块"]
+    industry_text = "/".join(exposure.industries) if exposure.industries else "无数据"
+    concept_text = "/".join(exposure.concepts) if exposure.concepts else "无数据"
+    lines.append(f"行业    {trim_text(industry_text, 150)}")
+    lines.append(f"概念    {trim_text(concept_text, 220)}")
+    phase9_score, phase9_name = best_sector_metric(exposure, "phase9_score")
+    heat_score, heat_name = best_sector_metric(exposure, "short_mainline_score")
+    leader_score, leader_name = best_sector_metric(exposure, "leader_score")
+    lines.append(
+        "板块分  "
+        f"P9 {format_score_with_name(phase9_score, phase9_name)}   "
+        f"热度 {format_score_with_name(heat_score, heat_name)}   "
+        f"龙头 {format_score_with_name(leader_score, leader_name)}"
+    )
+    return lines
+
+
+def format_score_with_name(score: float | None, name: str) -> str:
+    if score is None or not math.isfinite(score):
+        return "无数据"
+    if name:
+        return f"{score:.1f}({trim_text(name, 10)})"
+    return f"{score:.1f}"
 
 
 def format_number(value: float | None, digits: int) -> str:
@@ -982,7 +1269,7 @@ def run_gui() -> None:
     ).grid(row=0, column=0, columnspan=2, sticky="w")
     Label(
         shell,
-        text="最新日中结果 + 盘后参数 + 六维评分",
+        text="盘后/盘中参数 + 所属板块 + 六维评分",
         bg=APP_BG,
         fg=TEXT_MUTED,
         font=("Microsoft YaHei UI", 9),
@@ -1091,10 +1378,10 @@ def empty_six_dimension_labels() -> list[tuple[str, None]]:
     return [
         ("风险质量", None),
         ("上涨预期", None),
-        ("趋势稳定", None),
-        ("长期稳健", None),
-        ("短线爆发", None),
         ("仓位空间", None),
+        ("板块预期", None),
+        ("板块热度", None),
+        ("龙头指数", None),
     ]
 
 
@@ -1196,7 +1483,7 @@ def write_result(widget: Text, content: str) -> None:
         tag = None
         if index == 0:
             tag = "title"
-        elif line in {"日中参数", "盘后参数", "六维评分"}:
+        elif line in {"日中参数", "盘后参数", "所属板块", "六维评分"}:
             tag = "section"
         elif line.startswith("来源") or line == "无盘中信息":
             tag = "muted"

@@ -1,10 +1,10 @@
 {
   "trade_date": "2026-05-15",
   "source_file": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\patterns\\patterns_all_2026-05-15.csv",
-  "watchlist_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_2026-05-15.json",
-  "watchlist_csv_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_2026-05-15.csv",
-  "intraday_pool_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\intraday_pool_2026-05-15.json",
-  "intraday_pool_csv_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\intraday_pool_2026-05-15.csv",
+  "watchlist_stocks_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_stocks_2026-05-15.json",
+  "watchlist_stocks_csv_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_stocks_2026-05-15.csv",
+  "watchlist_sectors_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_sectors_2026-05-15.json",
+  "watchlist_sectors_csv_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_sectors_2026-05-15.csv",
   "watchlist_pattern_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\watchlists\\watchlist_pattern_2026-05-15.json",
   "macd_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\macd\\macd_2026-05-15.csv",
   "atr_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\atr\\atr_2026-05-15.csv",
@@ -12,11 +12,11 @@
   "phase1_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\tail_risk_predictions_2026-05-15.csv",
   "phase2_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\barrier_risk_predictions_2026-05-15.csv",
   "phase4_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\alpha158_qlib_return_predictions_2026-05-15.csv",
-  "phase8_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\limit_up_3d_opportunity_predictions_2026-05-15.csv",
-  "phase5_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\mcd_crash_annual_measures.csv",
-  "phase7_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\full_market_model\\trade_day_gate_prediction_2026-05-15.csv",
+  "phase9_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\sectors\\sector_phase9_buy_score_predictions_2026-05-15.csv",
   "track_stock_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\track_stock.xlsx",
-  "trade_permission": "allow",
+  "sector_membership_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\data\\sector_membership\\stock_sector_membership.csv",
+  "sector_performance_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\sectors\\sector_performance_2026-05-15.csv",
+  "sector_leaders_path": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\sectors\\sector_leaders_2026-05-15.csv",
   "filter_summary": {
     "phase1_rows": 2988,
     "phase1_excluded_top20": 598,
@@ -26,19 +26,19 @@
     "hard_filter_pass_count_before_limit_up_filter": 2186,
     "limit_up_excluded_gt_9_9pct": 14,
     "hard_filter_pass_count": 2173,
-    "pattern_symbols_after_filter": 6,
-    "pattern_symbols_phase4_gt_70": 6,
+    "pattern_symbols_after_filter": 22,
+    "pattern_symbols_direct": 22,
     "phase4_top_candidates_after_score_floor": 395,
-    "phase4_top_n_added_count": 20,
-    "phase8_rows": 2989,
-    "phase8_top5_symbols": [
-      "600497",
-      "002840",
-      "601997",
-      "002597",
-      "605177"
-    ],
-    "phase8_top5_added_count": 5
+    "phase4_top_n_added_count": 20
   },
-  "candidate_count": 31
+  "candidate_count": 42,
+  "sector_candidate_count": 100,
+  "deprecated_phases": [
+    "P3",
+    "P5",
+    "P7",
+    "P8",
+    "P10"
+  ],
+  "full_market_daily_returns_path": "reports\\daily_screening\\full_market_daily_returns_2026-05-15.csv"
 }

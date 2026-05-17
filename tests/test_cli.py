@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -65,6 +64,25 @@ def test_build_parser_accepts_daily_screening_main_commands() -> None:
     assert daily.date == "2026-05-07"
     assert daily.start_date == "20150101"
 
+    track = parser.parse_args(["track-stock", "--date", "2026-05-07", "--mode", "intraday"])
+    assert track.command == "track-stock"
+    assert track.mode == "intraday"
+
+    sectors = parser.parse_args(["update-sector-membership", "--date", "2026-05-15"])
+    assert sectors.command == "update-sector-membership"
+    assert sectors.date == "2026-05-15"
+
+    sector_pullback = parser.parse_args(["analyze-sector-pullback-metrics", "--date", "2026-05-15", "--local-peak-window", "20"])
+    assert sector_pullback.command == "analyze-sector-pullback-metrics"
+    assert sector_pullback.date == "2026-05-15"
+    assert sector_pullback.local_peak_window == 20
+
+    sector_leaders = parser.parse_args(["analyze-sector-leaders", "--date", "2026-05-15", "--sector-type", "concept", "--top-n", "5"])
+    assert sector_leaders.command == "analyze-sector-leaders"
+    assert sector_leaders.date == "2026-05-15"
+    assert sector_leaders.sector_type == "concept"
+    assert sector_leaders.top_n == 5
+
     backtest = parser.parse_args(
         ["backtest-daily-screening-components", "--start-date", "2026-01-01", "--end-date", "2026-04-30"]
     )
@@ -80,11 +98,10 @@ def test_build_parser_exposes_current_phase_commands_only() -> None:
     assert parser.parse_args(["predict-tail-risk", "--date", "2026-05-07"]).command == "predict-tail-risk"
     assert parser.parse_args(["predict-barrier-risk", "--date", "2026-05-07"]).command == "predict-barrier-risk"
     assert parser.parse_args(["predict-alpha158-qlib-return", "--date", "2026-05-07"]).command == "predict-alpha158-qlib-return"
-    assert parser.parse_args(["validate-limit-up-3d-opportunity", "--test-start-date", "2020-01-01"]).command == "validate-limit-up-3d-opportunity"
-    assert parser.parse_args(["train-limit-up-3d-opportunity-model", "--end-date", "2026-05-07"]).command == "train-limit-up-3d-opportunity-model"
-    assert parser.parse_args(["predict-limit-up-3d-opportunity", "--date", "2026-05-07"]).command == "predict-limit-up-3d-opportunity"
-    assert parser.parse_args(["predict-trade-day-gate", "--date", "2026-05-07"]).command == "predict-trade-day-gate"
-    assert parser.parse_args(["validate-mcd-crash-risk", "--end-date", "2026-05-07"]).command == "validate-mcd-crash-risk"
+    assert parser.parse_args(["validate-sector-phase9-buy-score", "--test-start-date", "2020-01-01"]).command == "validate-sector-phase9-buy-score"
+    assert parser.parse_args(["validate-sector-rule-buy-score", "--test-start-date", "2020-01-01"]).command == "validate-sector-rule-buy-score"
+    assert parser.parse_args(["train-sector-phase9-buy-score-model", "--end-date", "2026-05-07"]).command == "train-sector-phase9-buy-score-model"
+    assert parser.parse_args(["predict-sector-phase9-buy-score", "--date", "2026-05-07"]).command == "predict-sector-phase9-buy-score"
     assert parser.parse_args(
         ["backtest-daily-screening-components", "--start-date", "2026-01-01", "--end-date", "2026-04-30"]
     ).command == "backtest-daily-screening-components"
@@ -94,6 +111,7 @@ def test_command_needs_network_only_for_update() -> None:
     assert _command_needs_network("update") is True
     assert _command_needs_network("intraday-update") is True
     assert _command_needs_network("intraday-screening") is True
+    assert _command_needs_network("update-sector-membership") is True
     assert _command_needs_network("macd") is False
     assert _command_needs_network("daily-screening") is False
 
@@ -228,8 +246,8 @@ def test_run_update_reports_progress_for_each_symbol(monkeypatch) -> None:
     assert progress_calls == [(1, 2), (2, 2)]
 
 
-def test_run_pattern_updates_pattern_watchlist(monkeypatch) -> None:
-    tmp_path = _make_workspace_tmp_dir("pattern_updates_watchlist")
+def test_run_pattern_only_writes_pattern_report(monkeypatch) -> None:
+    tmp_path = _make_workspace_tmp_dir("pattern_only_writes_report")
     config = load_config(ROOT / "config" / "default.yaml")
     paths = ProjectPaths(tmp_path, config.storage)
     storage = Storage(paths)
@@ -263,8 +281,6 @@ def test_run_pattern_updates_pattern_watchlist(monkeypatch) -> None:
         output=None,
     )
 
-    watchlist = json.loads((tmp_path / "reports" / "watchlists" / "watchlist_2026-05-07.json").read_text(encoding="utf-8"))
-    pattern_watchlist = json.loads((tmp_path / "reports" / "watchlists" / "watchlist_pattern_2026-05-07.json").read_text(encoding="utf-8"))
-    assert watchlist["candidate_count"] == 1
-    assert pattern_watchlist["candidate_count"] == 1
-    assert pattern_watchlist["candidates"][0]["symbol"] == "600000"
+    assert (tmp_path / "reports" / "patterns" / "patterns_1_2026-05-07.csv").exists()
+    assert not (tmp_path / "reports" / "watchlists" / "watchlist_2026-05-07.json").exists()
+    assert not (tmp_path / "reports" / "watchlists" / "watchlist_pattern_2026-05-07.json").exists()

@@ -11,14 +11,18 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 
+from .daily_returns import read_full_market_daily_returns, write_full_market_daily_returns
 from .phase_display import add_phase5_score_100, phase7_score_100, score_series_100
 from .phase4_rolling import merge_phase4_rolling_frame
 from .position_sizing import RECOMMENDED_POSITION_PERCENT_FIELD, recommended_position_percent_from_mapping
+from .sector_membership import build_sector_display_frame
 
 
 DEFAULT_TRACK_STOCK_FILENAME = "track_stock.xlsx"
 TRACK_INPUT_SHEET = "Sheet1"
-TRACK_OUTPUT_SHEET = "Sheet2"
+TRACK_DAILY_OUTPUT_SHEET = "Sheet2"
+TRACK_INTRADAY_OUTPUT_SHEET = "Sheet3"
+TRACK_OUTPUT_SHEET = TRACK_DAILY_OUTPUT_SHEET
 TEXT_NUMBER_FORMAT = "@"
 
 
@@ -28,12 +32,17 @@ class TrackStockUpdateResult:
     trade_date: date
     tracked_count: int
     output_rows: int
+    output_sheet: str
 
 
 TRACK_STOCK_COLUMNS = [
     "trade_date",
     "symbol",
     "name",
+    "daily_return_pct",
+    "daily_close",
+    "industry_names",
+    "concept_names",
     "phase1_score_100",
     "phase2_score_100",
     "phase2_is_cusum_event",
@@ -76,6 +85,10 @@ TRACK_STOCK_HEADERS_ZH = {
     "trade_date": "交易日期",
     "symbol": "股票代码",
     "name": "股票名称",
+    "daily_return_pct": "当日涨幅%",
+    "daily_close": "收盘价",
+    "industry_names": "所属行业",
+    "concept_names": "所属概念",
     "phase1_score_100": "Phase1买入分",
     "phase2_score_100": "Phase2买入分",
     "phase2_is_cusum_event": "Phase2是否CUSUM事件",
@@ -114,17 +127,135 @@ TRACK_STOCK_HEADERS_ZH = {
     "atr_volatility_regime": "ATR波动分层",
 }
 
+INTRADAY_TRACK_STOCK_COLUMNS = [
+    "intraday_trade_date",
+    "symbol",
+    "name",
+    "intraday_selection_source",
+    "intraday_pct_change",
+    "phase1_score_100",
+    "phase2_score_100",
+    "phase4_score_100",
+    "phase4_5d_mean",
+    "phase4_5d_std",
+    "intraday_pool_score",
+    "prev_pattern_match",
+    "prev_pattern_ids",
+    "atr_pct_14",
+    "recommended_position_pct",
+    "atr_close",
+    "atr_14",
+    "macd_cross_state",
+    "macd_divergence_state",
+    "volume_price_divergence_state",
+    "industry_names",
+    "concept_names",
+    "intraday_quote_datetime",
+    "intraday_source",
+]
+
+INTRADAY_TRACK_STOCK_HEADERS_ZH = {
+    "intraday_trade_date": "交易日期",
+    "symbol": "股票代码",
+    "name": "股票名称",
+    "intraday_selection_source": "来源",
+    "intraday_pct_change": "盘中涨幅%",
+    "phase1_score_100": "P1风险质量分",
+    "phase2_score_100": "P2交易风险分",
+    "phase4_score_100": "P4上涨质量分",
+    "phase4_5d_mean": "P4五日均分",
+    "phase4_5d_std": "P4五日std",
+    "intraday_pool_score": "P1/P2/P4综合分",
+    "prev_pattern_match": "Pattern命中",
+    "prev_pattern_ids": "Pattern编号",
+    "atr_pct_14": "ATR%",
+    "recommended_position_pct": RECOMMENDED_POSITION_PERCENT_FIELD,
+    "atr_close": "最新价格",
+    "atr_14": "ATR14",
+    "macd_cross_state": "macd交叉",
+    "macd_divergence_state": "macd背离",
+    "volume_price_divergence_state": "量价背离",
+    "industry_names": "行业",
+    "concept_names": "概念",
+    "intraday_quote_datetime": "行情时间",
+    "intraday_source": "行情源",
+}
+
+INTRADAY_CHINESE_TO_INTERNAL = {
+    "日期": "intraday_trade_date",
+    "交易日期": "intraday_trade_date",
+    "编号": "symbol",
+    "股票代码": "symbol",
+    "股票名称": "name",
+    "来源": "intraday_selection_source",
+    "盘中涨幅%": "intraday_pct_change",
+    "P1风险质量分": "phase1_score_100",
+    "P2交易风险分": "phase2_score_100",
+    "P4上涨质量分": "phase4_score_100",
+    "P4五日均分": "phase4_5d_mean",
+    "P4五日std": "phase4_5d_std",
+    "P1/P2/P4综合分": "intraday_pool_score",
+    "Pattern命中": "prev_pattern_match",
+    "Pattern编号": "prev_pattern_ids",
+    "ATR%": "atr_pct_14",
+    RECOMMENDED_POSITION_PERCENT_FIELD: "recommended_position_pct",
+    "最新价格": "atr_close",
+    "ATR14": "atr_14",
+    "macd交叉": "macd_cross_state",
+    "macd背离": "macd_divergence_state",
+    "量价背离": "volume_price_divergence_state",
+    "行业": "industry_names",
+    "概念": "concept_names",
+    "行情时间": "intraday_quote_datetime",
+    "行情源": "intraday_source",
+}
+
 
 def update_track_stock_workbook(
     *,
     project_root: Path,
     trade_date: date,
     workbook_path: Path | None = None,
+    mode: str = "daily",
+    intraday_frame: pd.DataFrame | None = None,
 ) -> TrackStockUpdateResult:
     target = _resolve_workbook_path(project_root, workbook_path)
     workbook = _load_or_create_workbook(target)
     symbols = _read_tracked_symbols(workbook)
 
+    normalized_mode = str(mode or "daily").strip().lower()
+    if normalized_mode in {"daily", "post", "postmarket", "盘后"}:
+        rows = _build_daily_rows(project_root=project_root, trade_date=trade_date, symbols=symbols)
+        output_sheet = TRACK_DAILY_OUTPUT_SHEET
+        columns = TRACK_STOCK_COLUMNS
+        headers = TRACK_STOCK_HEADERS_ZH
+    elif normalized_mode in {"intraday", "盘中"}:
+        rows = _build_intraday_rows(
+            project_root=project_root,
+            trade_date=trade_date,
+            symbols=symbols,
+            intraday_frame=intraday_frame,
+        )
+        output_sheet = TRACK_INTRADAY_OUTPUT_SHEET
+        columns = INTRADAY_TRACK_STOCK_COLUMNS
+        headers = INTRADAY_TRACK_STOCK_HEADERS_ZH
+    else:
+        raise ValueError(f"Unsupported track-stock mode: {mode}")
+
+    _write_output_sheet(workbook, rows, sheet_name=output_sheet, columns=columns, headers=headers)
+    _ensure_sheet_order(workbook)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(target)
+    return TrackStockUpdateResult(
+        workbook_path=target,
+        trade_date=trade_date,
+        tracked_count=len(symbols),
+        output_rows=len(rows),
+        output_sheet=output_sheet,
+    )
+
+
+def _build_daily_rows(*, project_root: Path, trade_date: date, symbols: list[str]) -> list[dict[str, Any]]:
     phase1 = _prepare_phase1(_read_csv(_phase1_path(project_root, trade_date)), filter_rate=0.2)
     phase2 = _prepare_phase2(_read_csv(_phase2_path(project_root, trade_date)), filter_rate=0.2)
     phase4 = _prepare_phase4(_read_csv(_phase4_path(project_root, trade_date)), project_root=project_root, trade_date=trade_date)
@@ -134,6 +265,8 @@ def update_track_stock_workbook(
     patterns = _prepare_patterns(_read_csv(_patterns_path(project_root, trade_date)))
     macd = _prepare_symbol_lookup(_read_csv(_macd_path(project_root, trade_date)))
     atr = _prepare_atr(_read_csv(_atr_path(project_root, trade_date)))
+    daily_returns = _prepare_daily_returns(_load_daily_returns(project_root=project_root, trade_date=trade_date))
+    sectors = _prepare_symbol_lookup(build_sector_display_frame(project_root=project_root))
 
     rows = [
         _build_output_row(
@@ -148,19 +281,13 @@ def update_track_stock_workbook(
             patterns=patterns,
             macd=macd,
             atr=atr,
+            daily_returns=daily_returns,
+            sectors=sectors,
         )
         for symbol in symbols
     ]
 
-    _write_output_sheet(workbook, rows)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(target)
-    return TrackStockUpdateResult(
-        workbook_path=target,
-        trade_date=trade_date,
-        tracked_count=len(symbols),
-        output_rows=len(rows),
-    )
+    return rows
 
 
 def _resolve_workbook_path(project_root: Path, workbook_path: Path | None) -> Path:
@@ -283,6 +410,30 @@ def _macd_path(project_root: Path, trade_date: date) -> Path:
 
 def _atr_path(project_root: Path, trade_date: date) -> Path:
     return project_root / "reports" / "atr" / f"atr_{trade_date.isoformat()}.csv"
+
+
+def _load_daily_returns(*, project_root: Path, trade_date: date) -> pd.DataFrame:
+    frame = read_full_market_daily_returns(project_root=project_root, trade_date=trade_date)
+    if not frame.empty:
+        return frame
+    write_full_market_daily_returns(project_root=project_root, trade_date=trade_date)
+    return read_full_market_daily_returns(project_root=project_root, trade_date=trade_date)
+
+
+def _prepare_daily_returns(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    if frame.empty or "symbol" not in frame.columns:
+        return {}
+    data = frame.copy()
+    data["symbol"] = data["symbol"].map(_normalize_symbol)
+    keep = [
+        "symbol",
+        "daily_return_pct",
+        "daily_close",
+        "daily_prev_close",
+        "daily_volume",
+        "daily_amount",
+    ]
+    return _records_by_symbol(data.dropna(subset=["symbol"]), keep)
 
 
 def _prepare_phase1(frame: pd.DataFrame, *, filter_rate: float) -> dict[str, dict[str, Any]]:
@@ -538,11 +689,13 @@ def _build_output_row(
     patterns: dict[str, dict[str, Any]],
     macd: dict[str, dict[str, Any]],
     atr: dict[str, dict[str, Any]],
+    daily_returns: dict[str, dict[str, Any]],
+    sectors: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     row: dict[str, Any] = {column: "" for column in TRACK_STOCK_COLUMNS}
     row["trade_date"] = trade_date.isoformat()
     row["symbol"] = symbol
-    for source in (phase1, phase2, phase4, phase5, phase8, patterns, macd, atr):
+    for source in (daily_returns, phase1, phase2, phase4, phase5, phase8, sectors, patterns, macd, atr):
         row.update(source.get(symbol, {}))
     row.update(phase7)
     position_pct = recommended_position_percent_from_mapping(row)
@@ -551,16 +704,80 @@ def _build_output_row(
     return {column: row.get(column, "") for column in TRACK_STOCK_COLUMNS}
 
 
-def _write_output_sheet(workbook, rows: list[dict[str, Any]]) -> None:
-    if TRACK_OUTPUT_SHEET in workbook.sheetnames:
-        del workbook[TRACK_OUTPUT_SHEET]
-    sheet = workbook.create_sheet(TRACK_OUTPUT_SHEET)
-    sheet.append([TRACK_STOCK_HEADERS_ZH.get(column, column) for column in TRACK_STOCK_COLUMNS])
+def _build_intraday_rows(
+    *,
+    project_root: Path,
+    trade_date: date,
+    symbols: list[str],
+    intraday_frame: pd.DataFrame | None,
+) -> list[dict[str, Any]]:
+    frame = intraday_frame.copy() if intraday_frame is not None else _read_intraday_track_source(project_root, trade_date)
+    prepared = _prepare_intraday_track_frame(frame, trade_date=trade_date)
+    records = _records_by_symbol(prepared, INTRADAY_TRACK_STOCK_COLUMNS)
+    rows: list[dict[str, Any]] = []
+    for symbol in symbols:
+        row: dict[str, Any] = {column: "" for column in INTRADAY_TRACK_STOCK_COLUMNS}
+        row["intraday_trade_date"] = trade_date.isoformat()
+        row["symbol"] = symbol
+        row.update(records.get(symbol, {}))
+        rows.append({column: row.get(column, "") for column in INTRADAY_TRACK_STOCK_COLUMNS})
+    return rows
+
+
+def _read_intraday_track_source(project_root: Path, trade_date: date) -> pd.DataFrame:
+    report_dir = project_root / "reports" / "intraday_screening"
+    preferred = report_dir / f"intraday_track_stock_{trade_date.isoformat()}.csv"
+    if preferred.exists():
+        return _read_csv(preferred)
+    fallback = report_dir / f"intraday_pool_screening_{trade_date.isoformat()}.csv"
+    if fallback.exists():
+        return _read_csv(fallback)
+    return pd.DataFrame()
+
+
+def _prepare_intraday_track_frame(frame: pd.DataFrame, *, trade_date: date) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(columns=INTRADAY_TRACK_STOCK_COLUMNS)
+    data = frame.rename(columns={key: value for key, value in INTRADAY_CHINESE_TO_INTERNAL.items() if key in frame.columns}).copy()
+    if "symbol" not in data.columns:
+        return pd.DataFrame(columns=INTRADAY_TRACK_STOCK_COLUMNS)
+    data["symbol"] = data["symbol"].map(_normalize_symbol)
+    data = data[data["symbol"].astype(str).str.len().eq(6)].copy()
+    if data.empty:
+        return pd.DataFrame(columns=INTRADAY_TRACK_STOCK_COLUMNS)
+    if "intraday_trade_date" not in data.columns:
+        data["intraday_trade_date"] = trade_date.isoformat()
+    if "intraday_selection_source" not in data.columns:
+        data["intraday_selection_source"] = data.get("prev_source", "")
+    if "intraday_pool_score" not in data.columns and "centered_risk_score" in data.columns:
+        data["intraday_pool_score"] = data["centered_risk_score"]
+    if "recommended_position_pct" not in data.columns:
+        data[RECOMMENDED_POSITION_PERCENT_FIELD] = data.get(RECOMMENDED_POSITION_PERCENT_FIELD, "")
+        data["recommended_position_pct"] = data[RECOMMENDED_POSITION_PERCENT_FIELD]
+    for column in INTRADAY_TRACK_STOCK_COLUMNS:
+        if column not in data.columns:
+            data[column] = ""
+    return data.loc[:, INTRADAY_TRACK_STOCK_COLUMNS].drop_duplicates("symbol", keep="first")
+
+
+def _write_output_sheet(
+    workbook,
+    rows: list[dict[str, Any]],
+    *,
+    sheet_name: str,
+    columns: list[str],
+    headers: dict[str, str],
+) -> None:
+    if sheet_name in workbook.sheetnames:
+        del workbook[sheet_name]
+    index = 1 if sheet_name == TRACK_DAILY_OUTPUT_SHEET else 2 if sheet_name == TRACK_INTRADAY_OUTPUT_SHEET else None
+    sheet = workbook.create_sheet(sheet_name, index=index)
+    sheet.append([headers.get(column, column) for column in columns])
     for row in rows:
-        sheet.append([row.get(column, "") for column in TRACK_STOCK_COLUMNS])
+        sheet.append([row.get(column, "") for column in columns])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for index, column in enumerate(TRACK_STOCK_COLUMNS, start=1):
+    for index, column in enumerate(columns, start=1):
         width = max(10, min(max(len(str(column)) + 2, 12), 28))
         sheet.column_dimensions[get_column_letter(index)].width = width
         if column == "symbol":
@@ -568,6 +785,21 @@ def _write_output_sheet(workbook, rows: list[dict[str, Any]]) -> None:
             for cell in sheet.iter_cols(min_col=index, max_col=index, min_row=1, max_row=sheet.max_row):
                 for item in cell:
                     item.number_format = TEXT_NUMBER_FORMAT
+
+
+def _ensure_sheet_order(workbook) -> None:
+    if TRACK_DAILY_OUTPUT_SHEET not in workbook.sheetnames:
+        sheet = workbook.create_sheet(TRACK_DAILY_OUTPUT_SHEET, index=1)
+        sheet.append([TRACK_STOCK_HEADERS_ZH.get(column, column) for column in TRACK_STOCK_COLUMNS])
+        sheet.freeze_panes = "A2"
+    if TRACK_INTRADAY_OUTPUT_SHEET not in workbook.sheetnames:
+        sheet = workbook.create_sheet(TRACK_INTRADAY_OUTPUT_SHEET, index=2)
+        sheet.append([INTRADAY_TRACK_STOCK_HEADERS_ZH.get(column, column) for column in INTRADAY_TRACK_STOCK_COLUMNS])
+        sheet.freeze_panes = "A2"
+    desired = [TRACK_INPUT_SHEET, TRACK_DAILY_OUTPUT_SHEET, TRACK_INTRADAY_OUTPUT_SHEET]
+    ordered = [workbook[name] for name in desired if name in workbook.sheetnames]
+    ordered.extend([sheet for sheet in workbook.worksheets if sheet.title not in desired])
+    workbook._sheets = ordered
 
 
 def _normalize_symbol(value: object) -> str:

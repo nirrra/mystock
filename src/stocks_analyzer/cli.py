@@ -23,13 +23,6 @@ from .exit_rule_optimization import (
     DEFAULT_EXIT_STRATEGIES,
     optimize_exit_rules,
 )
-from .full_market_crash import validate_mcd_crash_risk
-from .full_market_limit_up_3d import (
-    format_limit_up_3d_prediction_table,
-    predict_limit_up_3d_opportunity,
-    train_limit_up_3d_opportunity_model,
-    validate_limit_up_3d_opportunity,
-)
 from .full_market_panel import audit_full_market_data, format_full_market_audit_summary
 from .full_market_return import (
     format_alpha158_qlib_return_prediction_table,
@@ -52,13 +45,6 @@ from .full_market_risk import (
     validate_barrier_risk_walkforward,
     validate_tail_risk_walkforward,
 )
-from .full_market_trade_day import (
-    DEFAULT_TRADE_DAY_MODEL_NAMES,
-    format_trade_day_gate_prediction_table,
-    predict_trade_day_gate,
-    train_trade_day_gate_model,
-    validate_trade_day_gate,
-)
 from .indicators import add_indicators
 from .intraday_screening import DEFAULT_INTRADAY_REPORT_KEEP_DATES, run_intraday_screening
 from .intraday_update import INTRADAY_DATA_INTERFACES, run_intraday_update
@@ -72,6 +58,16 @@ from .rolling_phase_score_validation import (
     format_rolling_phase_strategy_summary,
     validate_rolling_phase_scores,
 )
+from .sector_membership import append_sector_display_columns, update_sector_membership
+from .sector_leaders import analyze_sector_leaders
+from .sector_phase9 import (
+    format_sector_phase9_prediction_table,
+    predict_sector_phase9_buy_score,
+    train_sector_phase9_buy_score_model,
+    validate_sector_phase9_buy_score,
+    validate_sector_rule_buy_score,
+)
+from .sector_pullback_metrics import analyze_sector_pullback_metrics
 from .screener import Screener, parse_as_of
 from .storage import DailyBarsReadError, Storage
 from .strict_mixed_score_validation import (
@@ -88,7 +84,6 @@ from .synthetic_market import build_synthetic_market_index
 from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, update_track_stock_workbook
 from .trend_reporting import save_atr_report, save_macd_report
 from .universe import build_main_board_universe
-from .watchlist import build_watchlist_candidates_from_patterns, write_watchlist
 
 
 PATTERN_FLAG_MAP = {
@@ -121,12 +116,12 @@ def build_parser() -> argparse.ArgumentParser:
             "  python -m stocks_analyzer --project-root . daily-screening\n\n"
             "拆分运行：\n"
             "  python -m stocks_analyzer --project-root . update --start-date 20150101\n"
+            "  python -m stocks_analyzer --project-root . update-sector-membership --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . macd --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . atr --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . predict-tail-risk --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . predict-barrier-risk --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . predict-alpha158-qlib-return --date 2026-05-07\n"
-            "  python -m stocks_analyzer --project-root . predict-trade-day-gate --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . pattern --as-of 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . track-stock --date 2026-05-07\n"
         ),
@@ -227,9 +222,13 @@ def main() -> None:
         print(f"Candidates: {result.candidate_count}")
         print(f"Intraday updated: {result.intraday_updated_count}")
         print(f"Output: {result.output_path}")
+        if result.sector_strength_path is not None:
+            print(f"Intraday sector strength: {result.sector_strength_path}")
         if result.track_stock_path is not None:
             print(f"Intraday track stock: {result.track_stock_path}")
             print(f"Tracked symbols: {result.track_stock_count}")
+        if result.track_workbook_path is not None:
+            print(f"Track stock workbook: {result.track_workbook_path}")
         if result.cleaned_report_files:
             print(f"Cleaned report files: {result.cleaned_report_files}")
         if result.missing_intraday_symbols:
@@ -312,32 +311,20 @@ def main() -> None:
         _run_predict_alpha158_return(storage, project_root, args)
         return
 
-    if args.command == "validate-limit-up-3d-opportunity":
-        _run_validate_limit_up_3d(storage, project_root, args)
+    if args.command == "validate-sector-phase9-buy-score":
+        _run_validate_sector_phase9(project_root, args)
         return
 
-    if args.command == "train-limit-up-3d-opportunity-model":
-        _run_train_limit_up_3d(storage, project_root, args)
+    if args.command == "validate-sector-rule-buy-score":
+        _run_validate_sector_rule_buy_score(project_root, args)
         return
 
-    if args.command == "predict-limit-up-3d-opportunity":
-        _run_predict_limit_up_3d(storage, project_root, args)
+    if args.command == "train-sector-phase9-buy-score-model":
+        _run_train_sector_phase9(project_root, args)
         return
 
-    if args.command == "validate-mcd-crash-risk":
-        _run_validate_mcd_crash(storage, project_root, args)
-        return
-
-    if args.command == "validate-trade-day-gate":
-        _run_validate_trade_day_gate(storage, project_root, args)
-        return
-
-    if args.command == "train-trade-day-gate-model":
-        _run_train_trade_day_gate(storage, project_root, args)
-        return
-
-    if args.command == "predict-trade-day-gate":
-        _run_predict_trade_day_gate(storage, project_root, args)
+    if args.command == "predict-sector-phase9-buy-score":
+        _run_predict_sector_phase9(project_root, args)
         return
 
     if args.command == "backtest-daily-screening-components":
@@ -366,6 +353,8 @@ def main() -> None:
         print(result.message)
         if result.report_path:
             print(f"报告文件：{result.report_path}")
+        if result.track_stock_path:
+            print(f"Track stock workbook: {result.track_stock_path}")
         return
 
     if args.command == "track-stock":
@@ -374,12 +363,88 @@ def main() -> None:
             project_root=project_root,
             trade_date=trade_date,
             workbook_path=Path(args.workbook),
+            mode=args.mode,
         )
         print("Track stock workbook updated.")
         print(f"Workbook: {result.workbook_path}")
         print(f"Trade date: {result.trade_date.isoformat()}")
         print(f"Tracked symbols: {result.tracked_count}")
-        print(f"Sheet2 rows: {result.output_rows}")
+        print(f"{result.output_sheet} rows: {result.output_rows}")
+        return
+
+    if args.command == "update-sector-membership":
+        trade_date = _parse_required_date(args.date) if args.date else None
+        result = update_sector_membership(
+            project_root=project_root,
+            trade_date=trade_date,
+            daily_dir=storage.paths.daily_dir,
+            force_refresh=bool(args.force_refresh),
+        )
+        print("Sector membership step complete.")
+        print(f"Output: {result.output_path}")
+        print(f"Membership refreshed: {result.membership_refreshed}")
+        if result.membership_cache_age_days is not None:
+            print(f"Membership cache age days: {result.membership_cache_age_days:.2f}")
+        print(f"Industries: {result.industry_count}")
+        print(f"Concepts: {result.concept_count}")
+        print(f"Rows: {result.row_count}")
+        if result.performance_path is not None:
+            print(f"Performance date: {result.performance_trade_date.isoformat() if result.performance_trade_date else ''}")
+            print(f"Performance output: {result.performance_path}")
+            print(f"Performance rows: {result.performance_row_count}")
+        else:
+            print("Performance output: not generated")
+        return
+
+    if args.command == "analyze-sector-pullback-metrics":
+        trade_date = _parse_required_date(args.date) if args.date else None
+        result = analyze_sector_pullback_metrics(
+            project_root=project_root,
+            trade_date=trade_date,
+            daily_dir=storage.paths.daily_dir,
+            history_days=args.history_days,
+            strength_lookback_days=args.strength_lookback_days,
+            local_peak_window=args.local_peak_window,
+            slope_lag_days=args.slope_lag_days,
+            min_members=args.min_members,
+            output=Path(args.output).resolve() if args.output else None,
+            progress=args.progress,
+        )
+        print("Sector pullback metrics complete.")
+        print(f"Trade date: {result.trade_date.isoformat() if result.trade_date else ''}")
+        print(f"Symbols: {result.symbol_count}")
+        print(f"Sectors: {result.sector_count}")
+        print(f"Rows: {result.row_count}")
+        print(f"Output: {result.output_path}")
+        return
+
+    if args.command == "analyze-sector-leaders":
+        trade_date = _parse_required_date(args.date) if args.date else None
+        result = analyze_sector_leaders(
+            project_root=project_root,
+            trade_date=trade_date,
+            daily_dir=storage.paths.daily_dir,
+            lookback_days=args.lookback_days,
+            min_history_days=args.min_history_days,
+            min_valid_members=args.min_valid_members,
+            top_n=args.top_n,
+            sector_type=args.sector_type,
+            sector_name=args.sector_name,
+            output=Path(args.output).resolve() if args.output else None,
+            progress=args.progress,
+        )
+        print("Sector leader analysis complete.")
+        print(f"Trade date: {result.trade_date.isoformat() if result.trade_date else ''}")
+        print(f"Symbols: {result.symbol_count}")
+        print(f"Sectors: {result.sector_count}")
+        print(f"Rows: {result.row_count}")
+        print(f"All-score rows: {result.all_score_row_count}")
+        print(f"Summary rows: {result.summary_row_count}")
+        print(f"Skipped sectors: {result.skipped_count}")
+        print(f"Output: {result.output_path}")
+        print(f"All scores: {result.all_scores_path}")
+        print(f"Summary: {result.summary_path}")
+        print(f"Skipped: {result.skipped_path}")
         return
 
     parser.error(f"Unknown command: {args.command}")
@@ -422,7 +487,7 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
     intraday_screening.add_argument(
         "--refresh-full-market-pool",
         action="store_true",
-        help="先扫描全市场并生成当天 intraday_pool Top100；后续同日 intraday-screening 会优先使用该池",
+        help="先扫描全市场并生成当天 intraday_pool Top200；后续同日 intraday-screening 会优先使用该池",
     )
     intraday_screening.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
     intraday_screening.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")
@@ -478,9 +543,7 @@ def _add_model_maintenance_parsers(subparsers: argparse._SubParsersAction) -> No
     _add_phase1_parsers(subparsers)
     _add_phase2_parsers(subparsers)
     _add_phase4_parsers(subparsers)
-    _add_phase8_parsers(subparsers)
-    _add_phase5_parser(subparsers)
-    _add_phase7_parsers(subparsers)
+    _add_phase9_parsers(subparsers)
     _add_backtest_parser(subparsers)
 
 
@@ -636,100 +699,67 @@ def _add_phase4_parsers(subparsers: argparse._SubParsersAction) -> None:
     predict_return.add_argument("--compact-output", action="store_true", help="预测输出不保存 Alpha158 原始特征列")
 
 
-def _add_phase8_parsers(subparsers: argparse._SubParsersAction) -> None:
-    validate_limit_up = subparsers.add_parser("validate-limit-up-3d-opportunity", help="验证 Phase8 三日涨停机会模型")
-    validate_limit_up.add_argument("--start-date", default="2015-01-01")
-    validate_limit_up.add_argument("--test-start-date", default="2020-01-01")
-    validate_limit_up.add_argument("--end-date", default=date.today().isoformat())
-    validate_limit_up.add_argument("--limit", type=int, default=None)
-    validate_limit_up.add_argument("--top-ns", default="5,10,20,50")
-    validate_limit_up.add_argument("--test-window-days", type=int, default=60)
-    validate_limit_up.add_argument("--step-days", type=int, default=60)
-    validate_limit_up.add_argument("--embargo-days", type=int, default=3)
-    validate_limit_up.add_argument("--min-train-days", type=int, default=900)
-    validate_limit_up.add_argument("--max-windows", type=int, default=None)
-    validate_limit_up.add_argument("--limit-up-threshold", type=float, default=0.099)
-    validate_limit_up.add_argument("--down-threshold", type=float, default=-0.05)
-    validate_limit_up.add_argument("--down-penalty", type=float, default=1.2)
-    validate_limit_up.add_argument("--trap-penalty", type=float, default=1.5)
-    validate_limit_up.add_argument("--hit-reward", type=float, default=1.0)
-    validate_limit_up.add_argument("--min-training-rows", type=int, default=200)
-    validate_limit_up.add_argument("--output-dir", default="reports/limit_up_3d_opportunity_validation")
-    validate_limit_up.add_argument("--lgbm-device", choices=("cpu", "gpu", "cuda", "auto"), default="cpu")
-    validate_limit_up.add_argument("--lgbm-n-jobs", type=int, default=1)
-    validate_limit_up.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
-    validate_limit_up.add_argument("--lgbm-gpu-device-id", type=int, default=None)
-    validate_limit_up.add_argument("--progress", action="store_true")
+def _add_phase9_parsers(subparsers: argparse._SubParsersAction) -> None:
+    validate_phase9 = subparsers.add_parser("validate-sector-phase9-buy-score", help="验证 Phase9 板块 20 日收盘买入概率模型")
+    validate_phase9.add_argument("--start-date", default="2015-01-01")
+    validate_phase9.add_argument("--test-start-date", default="2020-01-01")
+    validate_phase9.add_argument("--end-date", default=date.today().isoformat())
+    validate_phase9.add_argument("--history-days", type=int, default=3200)
+    validate_phase9.add_argument("--min-members", type=int, default=5)
+    validate_phase9.add_argument("--horizon-days", type=int, default=20)
+    validate_phase9.add_argument("--return-threshold", type=float, default=0.05)
+    validate_phase9.add_argument("--top-ns", default="5,10,20,50")
+    validate_phase9.add_argument("--test-window-days", type=int, default=60)
+    validate_phase9.add_argument("--step-days", type=int, default=60)
+    validate_phase9.add_argument("--embargo-days", type=int, default=20)
+    validate_phase9.add_argument("--min-train-days", type=int, default=900)
+    validate_phase9.add_argument("--min-training-rows", type=int, default=200)
+    validate_phase9.add_argument("--max-windows", type=int, default=None)
+    validate_phase9.add_argument("--output-dir", default="reports/sectors/phase9_buy_score_validation")
+    validate_phase9.add_argument("--lgbm-device", choices=("cpu", "gpu", "cuda", "auto"), default="cpu")
+    validate_phase9.add_argument("--lgbm-n-jobs", type=int, default=1)
+    validate_phase9.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
+    validate_phase9.add_argument("--lgbm-gpu-device-id", type=int, default=None)
+    validate_phase9.add_argument("--progress", action="store_true")
 
-    train_limit_up = subparsers.add_parser("train-limit-up-3d-opportunity-model", help="训练 Phase8 三日涨停机会部署模型")
-    train_limit_up.add_argument("--start-date", default="2015-01-01")
-    train_limit_up.add_argument("--end-date", default=date.today().isoformat())
-    train_limit_up.add_argument("--limit", type=int, default=None)
-    train_limit_up.add_argument("--limit-up-threshold", type=float, default=0.099)
-    train_limit_up.add_argument("--down-threshold", type=float, default=-0.05)
-    train_limit_up.add_argument("--down-penalty", type=float, default=1.2)
-    train_limit_up.add_argument("--trap-penalty", type=float, default=1.5)
-    train_limit_up.add_argument("--hit-reward", type=float, default=1.0)
-    train_limit_up.add_argument("--min-training-rows", type=int, default=200)
-    train_limit_up.add_argument("--lgbm-device", choices=("cpu", "gpu", "cuda", "auto"), default="cpu")
-    train_limit_up.add_argument("--lgbm-n-jobs", type=int, default=1)
-    train_limit_up.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
-    train_limit_up.add_argument("--lgbm-gpu-device-id", type=int, default=None)
+    validate_rule = subparsers.add_parser("validate-sector-rule-buy-score", help="验证参数规则版板块买入分")
+    validate_rule.add_argument("--start-date", default="2015-01-01")
+    validate_rule.add_argument("--test-start-date", default="2020-01-01")
+    validate_rule.add_argument("--end-date", default=date.today().isoformat())
+    validate_rule.add_argument("--history-days", type=int, default=3200)
+    validate_rule.add_argument("--min-members", type=int, default=5)
+    validate_rule.add_argument("--horizon-days", type=int, default=20)
+    validate_rule.add_argument("--return-threshold", type=float, default=0.05)
+    validate_rule.add_argument("--top-ns", default="5,10,20,50")
+    validate_rule.add_argument("--test-window-days", type=int, default=60)
+    validate_rule.add_argument("--step-days", type=int, default=60)
+    validate_rule.add_argument("--embargo-days", type=int, default=20)
+    validate_rule.add_argument("--min-train-days", type=int, default=900)
+    validate_rule.add_argument("--max-windows", type=int, default=None)
+    validate_rule.add_argument("--output-dir", default="reports/sectors/rule_buy_score_validation")
+    validate_rule.add_argument("--progress", action="store_true")
 
-    predict_limit_up = subparsers.add_parser("predict-limit-up-3d-opportunity", help="使用 Phase8 artifact 对指定日期全市场打分")
-    predict_limit_up.add_argument("--date", required=True)
-    predict_limit_up.add_argument("--limit", type=int, default=None)
-    predict_limit_up.add_argument("--top-n", type=int, default=20)
-    predict_limit_up.add_argument("--output", default=None)
-    predict_limit_up.add_argument("--latest-only", action="store_true", help="只计算最新一行 Alpha158 特征；用于日常预测加速")
-    predict_limit_up.add_argument("--feature-lookback-bars", type=int, default=61, help="latest-only 模式下使用的最近交易日数量")
-    predict_limit_up.add_argument("--compact-output", action="store_true", help="预测输出不保存 Alpha158 原始特征列")
+    train_phase9 = subparsers.add_parser("train-sector-phase9-buy-score-model", help="训练 Phase9 板块买入概率部署模型")
+    train_phase9.add_argument("--start-date", default="2015-01-01")
+    train_phase9.add_argument("--end-date", default=date.today().isoformat())
+    train_phase9.add_argument("--history-days", type=int, default=3200)
+    train_phase9.add_argument("--min-members", type=int, default=5)
+    train_phase9.add_argument("--horizon-days", type=int, default=20)
+    train_phase9.add_argument("--return-threshold", type=float, default=0.05)
+    train_phase9.add_argument("--min-training-rows", type=int, default=200)
+    train_phase9.add_argument("--lgbm-device", choices=("cpu", "gpu", "cuda", "auto"), default="cpu")
+    train_phase9.add_argument("--lgbm-n-jobs", type=int, default=1)
+    train_phase9.add_argument("--lgbm-gpu-platform-id", type=int, default=None)
+    train_phase9.add_argument("--lgbm-gpu-device-id", type=int, default=None)
+    train_phase9.add_argument("--progress", action="store_true")
 
-
-def _add_phase5_parser(subparsers: argparse._SubParsersAction) -> None:
-    mcd = subparsers.add_parser("validate-mcd-crash-risk", help="复现 Phase5 MCD stock price crash-risk 指标")
-    mcd.add_argument("--start-date", default="2015-01-01")
-    mcd.add_argument("--end-date", default="2026-05-07")
-    mcd.add_argument("--limit", type=int, default=None)
-    mcd.add_argument("--min-weeks-per-year", type=int, default=26)
-    mcd.add_argument("--mcd-support-fraction", type=float, default=0.75)
-    mcd.add_argument("--mcd-contamination", type=float, default=0.04)
-
-
-def _add_phase7_parsers(subparsers: argparse._SubParsersAction) -> None:
-    validate_trade_day = subparsers.add_parser("validate-trade-day-gate", help="验证 Phase7 交易日买点风险 gate")
-    validate_trade_day.add_argument("--start-date", default="2015-01-01")
-    validate_trade_day.add_argument("--end-date", default=date.today().isoformat())
-    validate_trade_day.add_argument("--limit", type=int, default=None)
-    validate_trade_day.add_argument("--min-stock-count", type=int, default=500)
-    validate_trade_day.add_argument("--train-days", type=int, default=1000)
-    validate_trade_day.add_argument("--valid-days", type=int, default=250)
-    validate_trade_day.add_argument("--step-days", type=int, default=250)
-    validate_trade_day.add_argument("--max-windows", type=int, default=None)
-    validate_trade_day.add_argument("--horizon-days-grid", default="5,10")
-    validate_trade_day.add_argument("--drawdown-threshold-grid", default="-0.02,-0.03,-0.05")
-    validate_trade_day.add_argument("--return-threshold-grid", default="-0.01,-0.02,-0.03")
-    validate_trade_day.add_argument("--models", default=",".join(DEFAULT_TRADE_DAY_MODEL_NAMES))
-    validate_trade_day.add_argument("--filter-rates", default="0.2,0.3")
-    validate_trade_day.add_argument("--min-training-rows", type=int, default=200)
-    validate_trade_day.add_argument("--allow-short-sample", action="store_true")
-
-    train_trade_day = subparsers.add_parser("train-trade-day-gate-model", help="训练 Phase7 交易日买点风险部署模型")
-    train_trade_day.add_argument("--start-date", default="2015-01-01")
-    train_trade_day.add_argument("--end-date", default=date.today().isoformat())
-    train_trade_day.add_argument("--limit", type=int, default=None)
-    train_trade_day.add_argument("--min-stock-count", type=int, default=500)
-    train_trade_day.add_argument("--model-name", default="naive_bayes")
-    train_trade_day.add_argument("--horizon-days", type=int, default=10)
-    train_trade_day.add_argument("--drawdown-threshold", type=float, default=-0.02)
-    train_trade_day.add_argument("--return-threshold", type=float, default=-0.01)
-    train_trade_day.add_argument("--block-rate", type=float, default=0.2)
-    train_trade_day.add_argument("--min-training-rows", type=int, default=200)
-
-    predict_trade_day = subparsers.add_parser("predict-trade-day-gate", help="使用 Phase7 artifact 判断指定日期是否适合交易")
-    predict_trade_day.add_argument("--date", required=True)
-    predict_trade_day.add_argument("--limit", type=int, default=None)
-    predict_trade_day.add_argument("--output", default=None)
+    predict_phase9 = subparsers.add_parser("predict-sector-phase9-buy-score", help="使用 Phase9 artifact 对行业/概念板块打分")
+    predict_phase9.add_argument("--date", required=True)
+    predict_phase9.add_argument("--history-days", type=int, default=3200)
+    predict_phase9.add_argument("--min-members", type=int, default=5)
+    predict_phase9.add_argument("--top-n", type=int, default=30)
+    predict_phase9.add_argument("--output", default=None)
+    predict_phase9.add_argument("--progress", action="store_true")
 
 
 def _add_daily_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -737,9 +767,35 @@ def _add_daily_parsers(subparsers: argparse._SubParsersAction) -> None:
     daily.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     daily.add_argument("--start-date", default="20240101", help="update 起始日期，格式 YYYYMMDD")
 
-    track = subparsers.add_parser("track-stock", help="更新 track_stock.xlsx 的 Sheet2")
+    track = subparsers.add_parser("track-stock", help="更新 track_stock.xlsx 的 Sheet2/Sheet3")
     track.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     track.add_argument("--workbook", default=DEFAULT_TRACK_STOCK_FILENAME, help="跟踪表路径")
+    track.add_argument("--mode", choices=("daily", "intraday"), default="daily", help="daily 写 Sheet2，intraday 写 Sheet3")
+
+    sectors = subparsers.add_parser("update-sector-membership", help="按需更新股票所属行业和概念映射，并计算板块/概念当日表现")
+    sectors.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD；默认使用本地日线最新交易日")
+    sectors.add_argument("--force-refresh", action="store_true", help="忽略 7 日缓存，强制联网刷新行业/概念映射")
+
+    sector_pullback = subparsers.add_parser("analyze-sector-pullback-metrics", help="基于本地日线生成行业/概念主线强度、回调深度和企稳参数表")
+    sector_pullback.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD；默认使用本地日线最新交易日")
+    sector_pullback.add_argument("--history-days", type=int, default=420, help="合成板块指数时读取的最近交易日数量")
+    sector_pullback.add_argument("--strength-lookback-days", type=int, default=252, help="主线强度参数的回看交易日数量")
+    sector_pullback.add_argument("--local-peak-window", type=int, default=60, help="前高确认窗口，前后各 N 个交易日")
+    sector_pullback.add_argument("--slope-lag-days", type=int, default=5, help="MA 斜率比较间隔，单位为交易日")
+    sector_pullback.add_argument("--min-members", type=int, default=5, help="纳入统计的板块/概念最少成分数")
+    sector_pullback.add_argument("--output", default=None, help="自定义输出 CSV 路径")
+    sector_pullback.add_argument("--progress", action="store_true", help="显示读取和板块计算进度")
+
+    sector_leaders = subparsers.add_parser("analyze-sector-leaders", help="基于本地日线识别每个行业/概念的长期龙头和波段领涨龙头")
+    sector_leaders.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD；默认使用本地日线最新交易日")
+    sector_leaders.add_argument("--lookback-days", type=int, default=504, help="回看交易日数量，默认约两年")
+    sector_leaders.add_argument("--min-history-days", type=int, default=180, help="股票最少有效交易日数量")
+    sector_leaders.add_argument("--min-valid-members", type=int, default=5, help="板块每日和整体纳入统计的最少有效成分数")
+    sector_leaders.add_argument("--top-n", type=int, default=10, help="每个板块每类榜单输出数量")
+    sector_leaders.add_argument("--sector-type", choices=("all", "industry", "concept"), default="all", help="只分析行业或概念")
+    sector_leaders.add_argument("--sector-name", default=None, help="只分析名称包含该文本的板块，用于调试")
+    sector_leaders.add_argument("--output", default=None, help="自定义明细 CSV 输出路径")
+    sector_leaders.add_argument("--progress", action="store_true", help="显示读取和板块计算进度")
 
 
 def _add_backtest_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -776,17 +832,13 @@ def _add_backtest_parser(subparsers: argparse._SubParsersAction) -> None:
     strict.add_argument("--phase1-min-score", type=float, default=40.0)
     strict.add_argument("--phase2-min-score", type=float, default=40.0)
     strict.add_argument("--all90-min-score", type=float, default=90.0)
-    strict.add_argument("--phase5-safe-min-score", type=float, default=40.0)
     strict.add_argument("--stop-loss-pct", type=float, default=0.08)
     strict.add_argument("--take-profit-pct", type=float, default=0.15)
     strict.add_argument("--phase1-model-name", default="logistic_regression")
     strict.add_argument("--phase2-model-name", default="lightgbm_classifier")
-    strict.add_argument("--phase7-model-name", default="naive_bayes")
     strict.add_argument("--min-training-rows", type=int, default=200)
     strict.add_argument("--min-stock-count", type=int, default=500)
     strict.add_argument("--output-dir", default="reports/strict_mixed_score_validation")
-    strict.add_argument("--no-phase5", action="store_true", help="不附加 Phase5 年度风险画像")
-    strict.add_argument("--no-phase7", action="store_true", help="不训练/验证 Phase7 交易日闸门")
     strict.add_argument("--no-atr", action="store_true", help="不附加 ATR")
     strict.add_argument("--no-cache", action="store_true", help="不复用 panel 缓存")
     strict.add_argument("--progress", action="store_true", help="显示窗口进度")
@@ -1115,26 +1167,23 @@ def _run_predict_alpha158_return(storage: Storage, project_root: Path, args: arg
     print(f"Saved predictions: {result.output_path}")
 
 
-def _run_validate_limit_up_3d(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
-    result = validate_limit_up_3d_opportunity(
-        storage=storage,
+def _run_validate_sector_phase9(project_root: Path, args: argparse.Namespace) -> None:
+    result = validate_sector_phase9_buy_score(
         project_root=project_root,
         start_date=_parse_optional_date(args.start_date),
         test_start_date=_parse_required_date(args.test_start_date),
         end_date=_parse_optional_date(args.end_date),
-        limit=args.limit,
+        history_days=args.history_days,
+        min_members=args.min_members,
+        horizon_days=args.horizon_days,
+        return_threshold=args.return_threshold,
         top_ns=tuple(_parse_int_list(args.top_ns)),
         test_window_days=args.test_window_days,
         step_days=args.step_days,
         embargo_days=args.embargo_days,
         min_train_days=args.min_train_days,
-        max_windows=args.max_windows,
-        limit_up_threshold=args.limit_up_threshold,
-        down_threshold=args.down_threshold,
-        down_penalty=args.down_penalty,
-        trap_penalty=args.trap_penalty,
-        hit_reward=args.hit_reward,
         min_training_rows=args.min_training_rows,
+        max_windows=args.max_windows,
         output_dir=Path(args.output_dir).resolve() if args.output_dir else None,
         lgbm_device=args.lgbm_device,
         lgbm_n_jobs=args.lgbm_n_jobs,
@@ -1142,7 +1191,7 @@ def _run_validate_limit_up_3d(storage: Storage, project_root: Path, args: argpar
         lgbm_gpu_device_id=args.lgbm_gpu_device_id,
         progress=args.progress,
     )
-    print("Phase8 limit-up 3D opportunity validation complete.")
+    print("Sector Phase9 buy-score validation complete.")
     print(result.summary.to_string(index=False))
     print(f"Saved windows: {result.windows_path}")
     print(f"Saved scored: {result.scored_path}")
@@ -1150,122 +1199,69 @@ def _run_validate_limit_up_3d(storage: Storage, project_root: Path, args: argpar
     print(f"Saved deciles: {result.deciles_path}")
 
 
-def _run_train_limit_up_3d(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
-    result = train_limit_up_3d_opportunity_model(
-        storage=storage,
+def _run_validate_sector_rule_buy_score(project_root: Path, args: argparse.Namespace) -> None:
+    result = validate_sector_rule_buy_score(
+        project_root=project_root,
+        start_date=_parse_optional_date(args.start_date),
+        test_start_date=_parse_required_date(args.test_start_date),
+        end_date=_parse_optional_date(args.end_date),
+        history_days=args.history_days,
+        min_members=args.min_members,
+        horizon_days=args.horizon_days,
+        return_threshold=args.return_threshold,
+        top_ns=tuple(_parse_int_list(args.top_ns)),
+        test_window_days=args.test_window_days,
+        step_days=args.step_days,
+        embargo_days=args.embargo_days,
+        min_train_days=args.min_train_days,
+        max_windows=args.max_windows,
+        output_dir=Path(args.output_dir).resolve() if args.output_dir else None,
+        progress=args.progress,
+    )
+    print("Sector rule buy-score validation complete.")
+    print(result.summary.to_string(index=False))
+    print(f"Saved windows: {result.windows_path}")
+    print(f"Saved scored: {result.scored_path}")
+    print(f"Saved summary: {result.summary_path}")
+    print(f"Saved deciles: {result.deciles_path}")
+
+
+def _run_train_sector_phase9(project_root: Path, args: argparse.Namespace) -> None:
+    result = train_sector_phase9_buy_score_model(
         project_root=project_root,
         start_date=_parse_optional_date(args.start_date),
         end_date=_parse_optional_date(args.end_date),
-        limit=args.limit,
-        limit_up_threshold=args.limit_up_threshold,
-        down_threshold=args.down_threshold,
-        down_penalty=args.down_penalty,
-        trap_penalty=args.trap_penalty,
-        hit_reward=args.hit_reward,
+        history_days=args.history_days,
+        min_members=args.min_members,
+        horizon_days=args.horizon_days,
+        return_threshold=args.return_threshold,
         min_training_rows=args.min_training_rows,
         lgbm_device=args.lgbm_device,
         lgbm_n_jobs=args.lgbm_n_jobs,
         lgbm_gpu_platform_id=args.lgbm_gpu_platform_id,
         lgbm_gpu_device_id=args.lgbm_gpu_device_id,
+        progress=args.progress,
     )
-    print("Phase8 limit-up 3D opportunity deployment training complete.")
+    print("Sector Phase9 buy-score deployment training complete.")
     print(f"Rows: {result.train_rows}")
     print(f"LightGBM device: {result.used_lgbm_device}")
     print(f"Saved model: {result.model_path}")
     print(f"Saved metadata: {result.metadata_path}")
 
 
-def _run_predict_limit_up_3d(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
-    result = predict_limit_up_3d_opportunity(
-        storage=storage,
+def _run_predict_sector_phase9(project_root: Path, args: argparse.Namespace) -> None:
+    result = predict_sector_phase9_buy_score(
         project_root=project_root,
         trade_date=_parse_required_date(args.date),
         output=Path(args.output).resolve() if args.output else None,
-        limit=args.limit,
-        latest_only=args.latest_only,
-        feature_lookback_bars=args.feature_lookback_bars,
-        include_features=not args.compact_output,
-        prediction_scope="full_market_daily_fast" if args.latest_only else "full_market_daily",
+        history_days=args.history_days,
+        min_members=args.min_members,
+        top_n=args.top_n,
+        progress=args.progress,
     )
-    print("Phase8 limit-up 3D opportunity prediction complete.")
-    print(format_limit_up_3d_prediction_table(result.predictions, top_n=args.top_n))
+    print("Sector Phase9 buy-score prediction complete.")
+    print(format_sector_phase9_prediction_table(result.predictions, top_n=args.top_n))
     print(f"Saved predictions: {result.output_path}")
-
-
-def _run_validate_mcd_crash(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
-    result = validate_mcd_crash_risk(
-        storage=storage,
-        project_root=project_root,
-        start_date=_parse_optional_date(args.start_date),
-        end_date=_parse_optional_date(args.end_date),
-        limit=args.limit,
-        min_weeks_per_year=args.min_weeks_per_year,
-        mcd_support_fraction=args.mcd_support_fraction,
-        mcd_contamination=args.mcd_contamination,
-    )
-    print("MCD crash-risk label reproduction complete.")
-    print(result.distribution.tail(12).to_string(index=False))
-    print(f"Saved annual measures: {result.annual_measures_path}")
-
-
-def _run_validate_trade_day_gate(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
-    result = validate_trade_day_gate(
-        storage=storage,
-        project_root=project_root,
-        start_date=_parse_optional_date(args.start_date),
-        end_date=_parse_optional_date(args.end_date),
-        limit=args.limit,
-        min_stock_count=args.min_stock_count,
-        train_days=args.train_days,
-        valid_days=args.valid_days,
-        step_days=args.step_days,
-        max_windows=args.max_windows,
-        horizon_days_grid=tuple(_parse_int_list(args.horizon_days_grid)),
-        drawdown_threshold_grid=tuple(_parse_float_list(args.drawdown_threshold_grid)),
-        return_threshold_grid=tuple(_parse_float_list(args.return_threshold_grid)),
-        model_names=tuple(_parse_str_list(args.models)),
-        filter_rates=tuple(_parse_float_list(args.filter_rates)),
-        min_training_rows=args.min_training_rows,
-        allow_short_sample=args.allow_short_sample,
-    )
-    print("Trade-day gate validation complete.")
-    print(result.summary.to_string(index=False) if not result.summary.empty else "No summary rows.")
-
-
-def _run_train_trade_day_gate(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
-    result = train_trade_day_gate_model(
-        storage=storage,
-        project_root=project_root,
-        start_date=_parse_optional_date(args.start_date),
-        end_date=_parse_optional_date(args.end_date),
-        limit=args.limit,
-        min_stock_count=args.min_stock_count,
-        model_name=args.model_name,
-        horizon_days=args.horizon_days,
-        drawdown_threshold=args.drawdown_threshold,
-        return_threshold=args.return_threshold,
-        block_rate=args.block_rate,
-        min_training_rows=args.min_training_rows,
-    )
-    print("Trade-day gate deployment training complete.")
-    print(f"Model: {result.model_name}")
-    print(f"Rows: {result.train_rows}")
-    print(f"Selected threshold: {result.selected_threshold:.6f}")
-    print(f"Saved model: {result.model_path}")
-    print(f"Saved metadata: {result.metadata_path}")
-
-
-def _run_predict_trade_day_gate(storage: Storage, project_root: Path, args: argparse.Namespace) -> None:
-    result = predict_trade_day_gate(
-        storage=storage,
-        project_root=project_root,
-        trade_date=_parse_required_date(args.date),
-        output=Path(args.output).resolve() if args.output else None,
-        limit=args.limit,
-    )
-    print("Trade-day gate prediction complete.")
-    print(format_trade_day_gate_prediction_table(result.prediction))
-    print(f"Saved prediction: {result.output_path}")
 
 
 def _run_backtest_daily_screening_components(
@@ -1330,16 +1326,16 @@ def _run_validate_strict_mixed_score(storage: Storage, project_root: Path, args:
         phase1_min_score=args.phase1_min_score,
         phase2_min_score=args.phase2_min_score,
         all90_min_score=args.all90_min_score,
-        phase5_safe_min_score=args.phase5_safe_min_score,
+        phase5_safe_min_score=40.0,
         stop_loss_pct=args.stop_loss_pct,
         take_profit_pct=args.take_profit_pct,
         phase1_model_name=args.phase1_model_name,
         phase2_model_name=args.phase2_model_name,
-        phase7_model_name=args.phase7_model_name,
+        phase7_model_name="",
         min_training_rows=args.min_training_rows,
         min_stock_count=args.min_stock_count,
-        include_phase5=not args.no_phase5,
-        include_phase7=not args.no_phase7,
+        include_phase5=False,
+        include_phase7=False,
         include_atr=not args.no_atr,
         use_cache=not args.no_cache,
         progress=args.progress,
@@ -1708,26 +1704,18 @@ def _run_pattern(
     exported = _append_recent_macd_summary(storage, exported, as_of=as_of, symbols=symbols)
     exported = _append_recent_atr_summary(storage, exported, as_of=as_of, symbols=symbols)
     exported = append_daily_phase_display_columns(exported, project_root=storage.paths.root, trade_date=as_of)
+    exported = append_sector_display_columns(exported, project_root=storage.paths.root)
     for column in reversed(PHASE_DISPLAY_COLUMNS):
         exported = _move_column_after(exported, column, "风险情况")
+    for column in reversed(["industry_names", "concept_names"]):
+        exported = _move_column_after(exported, column, "name")
 
     output_path = Path(output) if output else _default_pattern_output_path(storage, as_of=as_of, selected_patterns=selected_patterns)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     exported.to_csv(output_path, index=False, encoding="utf-8-sig")
 
-    pattern_watchlist_payload = build_watchlist_candidates_from_patterns(exported, source_file=str(output_path), limit=None)
-    write_watchlist(project_root=storage.paths.root, trade_date=as_of, picker_payload=pattern_watchlist_payload)
-    pattern_watchlist_target = write_watchlist(
-        project_root=storage.paths.root,
-        trade_date=as_of,
-        picker_payload=pattern_watchlist_payload,
-        kind="pattern",
-    )
-    logging.info("Saved pattern watchlist to %s", pattern_watchlist_target)
-
     if exported.empty:
         print(f"No patterns matched. Saved empty CSV to {output_path}")
-        print(f"Saved pattern watchlist to {pattern_watchlist_target}")
         return
     multi_pattern_summary = format_multi_pattern_summary(exported)
     if multi_pattern_summary:
@@ -1735,7 +1723,6 @@ def _run_pattern(
         print()
     print(format_report(exported, limit=limit or config.screening.output_limit))
     print(f"\nSaved pattern report to {output_path}")
-    print(f"Saved pattern watchlist to {pattern_watchlist_target}")
 
 
 def _run_report(storage: Storage, config, trade_date: date, limit: int | None) -> None:
@@ -2240,7 +2227,7 @@ def _load_local_env(path: Path) -> None:
 
 
 def _command_needs_network(command_name: str) -> bool:
-    return command_name in {"update", "intraday-update", "intraday-screening"}
+    return command_name in {"update", "intraday-update", "intraday-screening", "update-sector-membership"}
 
 
 def _create_update_data_provider(data_interface: str):

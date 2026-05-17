@@ -44,12 +44,6 @@ DEFAULT_STRICT_MIXED_STRATEGIES = (
     "mixed_top20",
     "centered_risk_top20",
     "all90",
-    "mixed_010_top20_phase7_allow",
-    "mixed_top20_phase7_allow",
-    "all90_phase7_allow",
-    "mixed_010_top20_phase5_safe",
-    "mixed_top20_phase5_safe",
-    "all90_phase5_safe",
 )
 
 
@@ -102,8 +96,8 @@ def validate_strict_mixed_score(
     phase7_model_name: str = "naive_bayes",
     min_training_rows: int = 200,
     min_stock_count: int = 500,
-    include_phase5: bool = True,
-    include_phase7: bool = True,
+    include_phase5: bool = False,
+    include_phase7: bool = False,
     include_atr: bool = True,
     use_cache: bool = True,
     progress: bool = False,

@@ -30,7 +30,7 @@ intraday-screening
 - 不用分钟线训练新模型。
 - 不重训 P1/P2/P4/P9。
 - 不改变已有 P1/P2/P4 的模型定义。
-- 不把 P8 作为主排序条件。P8 仍只作为高风险短线提示，是否继续展示由现有预测文件是否存在决定。
+- P3、P5、P7、P8、P10 全部废弃，不在新盘后/盘中主流程、watchlist、用户 CSV 或选股文档中展示。
 
 ## 3. 盘后流程
 
@@ -174,12 +174,22 @@ data/sector_membership/stock_sector_membership.csv
 长期主线指数
 ```
 
-### 3.8 筛查短期主线和 P9 高分板块
+### 3.8 标记短期主线和 P9 高分板块
 
-在关注板块列表中继续筛出：
+在长期主线关注板块列表中继续标记：
 
 1. 短期主线板块：代表市场当前关注度。
 2. P9 高分板块：代表未来 20 个交易日潜在发力概率。
+
+当前使用排序名额制，不使用固定阈值：
+
+- 按 `长期主线指数` 取 Top100：纳入 `watchlist_sectors`。
+- 在长期主线 Top100 内，按 `短期主线指数` 取 Top10：标记为短期主线。
+- 在长期主线 Top100 内，按 `P9买入分` 取 Top10：标记为 P9 高分。
+
+短期主线和 P9 高分不单独把非长期主线板块拉入 `watchlist_sectors`。
+
+主线判断不能只看入选数量，还要看强度分数。如果长期主线 Top100 的头部长期主线指数、短期主线指数和 P9 分数都不强，应在选股说明中判断为市场主线偏混沌，减少新开仓，只观察少数高分共振方向。
 
 短期主线指数关注近 5/10/20 个交易日，包括：
 
@@ -358,14 +368,7 @@ reports/watchlists/watchlist_sectors_YYYY-MM-DD.json
 reports/watchlists/watchlist_sectors_YYYY-MM-DD.csv
 ```
 
-短期兼容：
-
-```text
-reports/watchlists/watchlist_YYYY-MM-DD.json
-reports/watchlists/watchlist_YYYY-MM-DD.csv
-```
-
-可作为 `watchlist_stocks` 的兼容副本写出，避免现有工具立即断开。
+旧版 `reports/watchlists/watchlist_YYYY-MM-DD.*` 和 `watchlist_pattern_YYYY-MM-DD.*` 已废弃；`pattern` 命令只写 `reports/patterns/patterns_all_YYYY-MM-DD.csv`，不再生成旧 watchlist。
 
 ### 5.2 盘中核心文件
 
@@ -392,7 +395,6 @@ reports/intraday_screening/watchlist_sectors_intraday_YYYY-MM-DD.csv
 - P1
 - P2
 - P4
-- P8
 - P9
 
 ### 6.1 股票 CSV 前置列
@@ -421,8 +423,6 @@ reports/intraday_screening/watchlist_sectors_intraday_YYYY-MM-DD.csv
 后续列再放：
 
 - P4五日均分/std
-- P5
-- P8
 - pattern 细节
 - MACD 细节
 - ATR 细节
@@ -496,11 +496,10 @@ JSON 保留更完整的信息，便于后续工具读取。
 
 ## 8. 错误处理
 
-1. P8 文件不存在：跳过 P8 展示，不影响主流程。
-2. P9 模型或预测文件不存在：`watchlist_sectors` 仍输出长期主线和短期主线，P9 显示为空，并在元数据中记录。
-3. 板块成分映射刷新失败：若本地缓存存在，则继续使用本地缓存；若缓存不存在，则跳过板块流程并明确报错。
-4. 板块龙头计算失败：股票 watchlist 仍应生成；板块 watchlist 报错中止或输出空表，由实现阶段决定，但错误必须清晰。
-5. 盘中行情接口失败：保留前一日盘后数据，盘中表中标注“无盘中信息”。
+1. P9 模型或预测文件不存在：`watchlist_sectors` 仍输出可计算的板块表现和龙头信息，P9 显示为空，并在元数据中记录。
+2. 板块成分映射刷新失败：若本地缓存存在，则继续使用本地缓存；若缓存不存在，则跳过板块流程并明确报错。
+3. 板块龙头计算失败：股票 watchlist 仍应生成；板块 watchlist 报错中止或输出空表，由实现阶段决定，但错误必须清晰。
+4. 盘中行情接口失败：保留前一日盘后数据，盘中表中标注“无盘中信息”。
 
 ## 9. 测试要求
 
@@ -530,4 +529,3 @@ JSON 保留更完整的信息，便于后续工具读取。
 4. 改造盘中流程和两个写作指南。
 
 每一步都保持命令可运行，避免直接一次性替换后难以定位问题。
-

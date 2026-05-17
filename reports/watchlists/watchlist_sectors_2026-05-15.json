@@ -1,0 +1,5738 @@
+{
+  "trade_date": "2026-05-15",
+  "source_files": {
+    "sector_performance": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\sectors\\sector_performance_2026-05-15.csv",
+    "sector_leaders": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\sectors\\sector_leaders_2026-05-15.csv",
+    "phase9": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\sectors\\sector_phase9_buy_score_predictions_2026-05-15.csv",
+    "mainline_scores": "C:\\Users\\wdyab\\Desktop\\wdy\\stocks\\reports\\sectors\\sector_mainline_scores_2026-05-15.csv"
+  },
+  "selection_policy": {
+    "long_mainline_top_n": 100,
+    "short_mainline_top_n": 10,
+    "phase9_buy_top_n": 10,
+    "leader_top_n": 3,
+    "deprecated_phases": [
+      "P3",
+      "P5",
+      "P7",
+      "P8",
+      "P10"
+    ],
+    "note": "板块池按长期主线指数取Top100；短期主线和P9买入分分别在长期主线Top100内取Top10做标签。"
+  },
+  "mainline_strength_summary": {
+    "state": "strong",
+    "selected_count": 100,
+    "top1_score": 97.15,
+    "top10_avg_score": 93.65,
+    "top30_avg_score": 90.89,
+    "pool_min_score": 63.21,
+    "count_ge_90": 19,
+    "count_ge_80": 51,
+    "note": "头部主线强度较高。"
+  },
+  "sector_count": 100,
+  "sectors": [
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "新型烟草(电子烟)",
+      "sector_label": "885899",
+      "member_count": 16,
+      "valid_count": 16,
+      "sector_avg_pct_change": 0.1134,
+      "sector_amount_weighted_pct_change": 1.0275,
+      "sector_up_count": 8,
+      "sector_up_ratio": 0.5,
+      "long_mainline_score_100": 97.15,
+      "short_mainline_score_100": 51.52,
+      "phase9_score_100": 30.84,
+      "phase9_rank": 28,
+      "long_mainline_rank": 1,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002565",
+        "603626",
+        "002957"
+      ],
+      "leader_names": [
+        "顺灏股份",
+        "科森科技",
+        "科瑞技术"
+      ],
+      "leaders": [
+        {
+          "symbol": "002565",
+          "name": "顺灏股份",
+          "leader_score": 88.53,
+          "combined_leader_score": 81.09,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603626",
+          "name": "科森科技",
+          "leader_score": 85.94,
+          "combined_leader_score": 80.4,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002957",
+          "name": "科瑞技术",
+          "leader_score": 82.06,
+          "combined_leader_score": 76.71,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "铜缆高速连接",
+      "sector_label": "886073",
+      "member_count": 14,
+      "valid_count": 14,
+      "sector_avg_pct_change": -2.0087,
+      "sector_amount_weighted_pct_change": -3.6872,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.2143,
+      "long_mainline_score_100": 96.16,
+      "short_mainline_score_100": 49.68,
+      "phase9_score_100": 35.02,
+      "phase9_rank": 6,
+      "long_mainline_rank": 2,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 5,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "601869",
+        "600869",
+        "002792"
+      ],
+      "leader_names": [
+        "长飞光纤",
+        "远东股份",
+        "通宇通讯"
+      ],
+      "leaders": [
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 91.86,
+          "combined_leader_score": 91.43,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 79.15,
+          "combined_leader_score": 78.97,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002792",
+          "name": "通宇通讯",
+          "leader_score": 74.75,
+          "combined_leader_score": 70.79,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "光纤概念",
+      "sector_label": "886084",
+      "member_count": 33,
+      "valid_count": 33,
+      "sector_avg_pct_change": -3.2856,
+      "sector_amount_weighted_pct_change": -5.2513,
+      "sector_up_count": 5,
+      "sector_up_ratio": 0.1515,
+      "long_mainline_score_100": 94.65,
+      "short_mainline_score_100": 47.92,
+      "phase9_score_100": 32.42,
+      "phase9_rank": 18,
+      "long_mainline_rank": 3,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002384",
+        "601869"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "东山精密",
+        "长飞光纤"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 91.2,
+          "combined_leader_score": 88.44,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 94.22,
+          "combined_leader_score": 85.39,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 87.94,
+          "combined_leader_score": 84.56,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "通信-通信设备",
+      "sector_label": "通信-通信设备",
+      "member_count": 30,
+      "valid_count": 30,
+      "sector_avg_pct_change": -3.4159,
+      "sector_amount_weighted_pct_change": -5.0159,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.1,
+      "long_mainline_score_100": 93.97,
+      "short_mainline_score_100": 39.27,
+      "phase9_score_100": 32.36,
+      "phase9_rank": 19,
+      "long_mainline_rank": 4,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "601869",
+        "600105",
+        "603083"
+      ],
+      "leader_names": [
+        "长飞光纤",
+        "永鼎股份",
+        "剑桥科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 90.14,
+          "combined_leader_score": 86.78,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 93.62,
+          "combined_leader_score": 83.81,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603083",
+          "name": "剑桥科技",
+          "leader_score": 78.55,
+          "combined_leader_score": 76.84,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "建筑装饰-装修装饰Ⅱ",
+      "sector_label": "建筑装饰-装修装饰Ⅱ",
+      "member_count": 12,
+      "valid_count": 12,
+      "sector_avg_pct_change": -0.4055,
+      "sector_amount_weighted_pct_change": -0.6615,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.3333,
+      "long_mainline_score_100": 93.89,
+      "short_mainline_score_100": 44.71,
+      "phase9_score_100": 19.88,
+      "phase9_rank": 149,
+      "long_mainline_rank": 5,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600234",
+        "605178",
+        "605289"
+      ],
+      "leader_names": [
+        "科新发展",
+        "时空科技",
+        "罗曼股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "600234",
+          "name": "科新发展",
+          "leader_score": 95.04,
+          "combined_leader_score": 83.92,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "605178",
+          "name": "时空科技",
+          "leader_score": 82.03,
+          "combined_leader_score": 79.61,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "605289",
+          "name": "罗曼股份",
+          "leader_score": 79.23,
+          "combined_leader_score": 78.74,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电子-电子化学品Ⅱ",
+      "sector_label": "电子-电子化学品Ⅱ",
+      "member_count": 7,
+      "valid_count": 7,
+      "sector_avg_pct_change": -0.1553,
+      "sector_amount_weighted_pct_change": -4.5536,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.5714,
+      "long_mainline_score_100": 93.61,
+      "short_mainline_score_100": 65.97,
+      "phase9_score_100": 30.53,
+      "phase9_rank": 32,
+      "long_mainline_rank": 6,
+      "short_mainline_rank_in_long_pool": 6,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603256",
+        "603115",
+        "600330"
+      ],
+      "leader_names": [
+        "宏和科技",
+        "海星股份",
+        "天通股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 93.51,
+          "combined_leader_score": 89.7,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603115",
+          "name": "海星股份",
+          "leader_score": 80.64,
+          "combined_leader_score": 77.22,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600330",
+          "name": "天通股份",
+          "leader_score": 78.76,
+          "combined_leader_score": 74.04,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "共封装光学(CPO)",
+      "sector_label": "886033",
+      "member_count": 62,
+      "valid_count": 62,
+      "sector_avg_pct_change": -1.8775,
+      "sector_amount_weighted_pct_change": -2.3846,
+      "sector_up_count": 18,
+      "sector_up_ratio": 0.2903,
+      "long_mainline_score_100": 92.2,
+      "short_mainline_score_100": 54.08,
+      "phase9_score_100": 28.39,
+      "phase9_rank": 60,
+      "long_mainline_rank": 7,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002384",
+        "601869"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "东山精密",
+        "长飞光纤"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 91.35,
+          "combined_leader_score": 84.33,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 93.45,
+          "combined_leader_score": 83.64,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 86.28,
+          "combined_leader_score": 83.06,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "PET铜箔",
+      "sector_label": "886020",
+      "member_count": 20,
+      "valid_count": 20,
+      "sector_avg_pct_change": -1.88,
+      "sector_amount_weighted_pct_change": -4.026,
+      "sector_up_count": 5,
+      "sector_up_ratio": 0.25,
+      "long_mainline_score_100": 91.85,
+      "short_mainline_score_100": 38.61,
+      "phase9_score_100": 29.5,
+      "phase9_rank": 41,
+      "long_mainline_rank": 8,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "601208",
+        "600869",
+        "603773"
+      ],
+      "leader_names": [
+        "东材科技",
+        "远东股份",
+        "沃格光电"
+      ],
+      "leaders": [
+        {
+          "symbol": "601208",
+          "name": "东材科技",
+          "leader_score": 89.05,
+          "combined_leader_score": 83.08,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 86.37,
+          "combined_leader_score": 79.74,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603773",
+          "name": "沃格光电",
+          "leader_score": 76.64,
+          "combined_leader_score": 72.79,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "太赫兹",
+      "sector_label": "886043",
+      "member_count": 11,
+      "valid_count": 11,
+      "sector_avg_pct_change": -3.2888,
+      "sector_amount_weighted_pct_change": -4.7481,
+      "sector_up_count": 0,
+      "sector_up_ratio": 0.0,
+      "long_mainline_score_100": 91.59,
+      "short_mainline_score_100": 25.71,
+      "phase9_score_100": 27.61,
+      "phase9_rank": 78,
+      "long_mainline_rank": 9,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "601869",
+        "600487",
+        "002413"
+      ],
+      "leader_names": [
+        "长飞光纤",
+        "亨通光电",
+        "雷科防务"
+      ],
+      "leaders": [
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 93.44,
+          "combined_leader_score": 91.88,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 90.7,
+          "combined_leader_score": 84.85,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002413",
+          "name": "雷科防务",
+          "leader_score": 80.54,
+          "combined_leader_score": 66.8,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "F5G概念",
+      "sector_label": "885998",
+      "member_count": 14,
+      "valid_count": 14,
+      "sector_avg_pct_change": -2.7021,
+      "sector_amount_weighted_pct_change": -4.5011,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.2857,
+      "long_mainline_score_100": 91.44,
+      "short_mainline_score_100": 41.19,
+      "phase9_score_100": 33.08,
+      "phase9_rank": 15,
+      "long_mainline_rank": 10,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603083",
+        "600487",
+        "002792"
+      ],
+      "leader_names": [
+        "剑桥科技",
+        "亨通光电",
+        "通宇通讯"
+      ],
+      "leaders": [
+        {
+          "symbol": "603083",
+          "name": "剑桥科技",
+          "leader_score": 90.88,
+          "combined_leader_score": 87.29,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 90.46,
+          "combined_leader_score": 83.92,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002792",
+          "name": "通宇通讯",
+          "leader_score": 86.46,
+          "combined_leader_score": 77.74,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "富士康概念",
+      "sector_label": "885786",
+      "member_count": 33,
+      "valid_count": 33,
+      "sector_avg_pct_change": -0.6201,
+      "sector_amount_weighted_pct_change": -0.6519,
+      "sector_up_count": 12,
+      "sector_up_ratio": 0.3636,
+      "long_mainline_score_100": 91.26,
+      "short_mainline_score_100": 52.38,
+      "phase9_score_100": 27.33,
+      "phase9_rank": 81,
+      "long_mainline_rank": 11,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603626",
+        "002975",
+        "002916"
+      ],
+      "leader_names": [
+        "科森科技",
+        "博杰股份",
+        "深南电路"
+      ],
+      "leaders": [
+        {
+          "symbol": "603626",
+          "name": "科森科技",
+          "leader_score": 85.6,
+          "combined_leader_score": 82.96,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002975",
+          "name": "博杰股份",
+          "leader_score": 78.78,
+          "combined_leader_score": 78.0,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002916",
+          "name": "深南电路",
+          "leader_score": 92.68,
+          "combined_leader_score": 77.86,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "存储芯片",
+      "sector_label": "886042",
+      "member_count": 45,
+      "valid_count": 45,
+      "sector_avg_pct_change": -0.7355,
+      "sector_amount_weighted_pct_change": 0.412,
+      "sector_up_count": 16,
+      "sector_up_ratio": 0.3556,
+      "long_mainline_score_100": 91.16,
+      "short_mainline_score_100": 62.68,
+      "phase9_score_100": 26.76,
+      "phase9_rank": 89,
+      "long_mainline_rank": 12,
+      "short_mainline_rank_in_long_pool": 7,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "001309",
+        "600183",
+        "002916"
+      ],
+      "leader_names": [
+        "德明利",
+        "生益科技",
+        "深南电路"
+      ],
+      "leaders": [
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 89.35,
+          "combined_leader_score": 87.45,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600183",
+          "name": "生益科技",
+          "leader_score": 91.17,
+          "combined_leader_score": 85.15,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002916",
+          "name": "深南电路",
+          "leader_score": 86.55,
+          "combined_leader_score": 79.05,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "基础化工-塑料",
+      "sector_label": "基础化工-塑料",
+      "member_count": 22,
+      "valid_count": 22,
+      "sector_avg_pct_change": 0.3653,
+      "sector_amount_weighted_pct_change": 0.2381,
+      "sector_up_count": 11,
+      "sector_up_ratio": 0.5,
+      "long_mainline_score_100": 91.08,
+      "short_mainline_score_100": 45.86,
+      "phase9_score_100": 32.57,
+      "phase9_rank": 16,
+      "long_mainline_rank": 13,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "601208",
+        "002361",
+        "000973"
+      ],
+      "leader_names": [
+        "东材科技",
+        "神剑股份",
+        "佛塑科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "601208",
+          "name": "东材科技",
+          "leader_score": 92.55,
+          "combined_leader_score": 86.1,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002361",
+          "name": "神剑股份",
+          "leader_score": 90.25,
+          "combined_leader_score": 85.23,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000973",
+          "name": "佛塑科技",
+          "leader_score": 80.25,
+          "combined_leader_score": 77.41,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "超导概念",
+      "sector_label": "886038",
+      "member_count": 22,
+      "valid_count": 22,
+      "sector_avg_pct_change": -2.0638,
+      "sector_amount_weighted_pct_change": -3.9069,
+      "sector_up_count": 6,
+      "sector_up_ratio": 0.2727,
+      "long_mainline_score_100": 91.02,
+      "short_mainline_score_100": 36.07,
+      "phase9_score_100": 33.56,
+      "phase9_rank": 13,
+      "long_mainline_rank": 14,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002149",
+        "600869"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "西部材料",
+        "远东股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 94.95,
+          "combined_leader_score": 91.49,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 87.47,
+          "combined_leader_score": 86.95,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 80.4,
+          "combined_leader_score": 77.73,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "芯片概念",
+      "sector_label": "885756",
+      "member_count": 266,
+      "valid_count": 266,
+      "sector_avg_pct_change": -1.221,
+      "sector_amount_weighted_pct_change": -2.3173,
+      "sector_up_count": 86,
+      "sector_up_ratio": 0.3233,
+      "long_mainline_score_100": 90.99,
+      "short_mainline_score_100": 42.2,
+      "phase9_score_100": 29.31,
+      "phase9_rank": 48,
+      "long_mainline_rank": 15,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "603256",
+        "001309"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "宏和科技",
+        "德明利"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 94.66,
+          "combined_leader_score": 85.92,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 90.27,
+          "combined_leader_score": 84.99,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 90.07,
+          "combined_leader_score": 84.22,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "PCB概念",
+      "sector_label": "885959",
+      "member_count": 56,
+      "valid_count": 56,
+      "sector_avg_pct_change": -2.6426,
+      "sector_amount_weighted_pct_change": -4.9029,
+      "sector_up_count": 12,
+      "sector_up_ratio": 0.2143,
+      "long_mainline_score_100": 90.83,
+      "short_mainline_score_100": 45.85,
+      "phase9_score_100": 27.18,
+      "phase9_rank": 82,
+      "long_mainline_rank": 16,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603256",
+        "002384",
+        "600601"
+      ],
+      "leader_names": [
+        "宏和科技",
+        "东山精密",
+        "方正科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 89.17,
+          "combined_leader_score": 88.57,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 92.92,
+          "combined_leader_score": 82.11,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选"
+        },
+        {
+          "symbol": "600601",
+          "name": "方正科技",
+          "leader_score": 78.36,
+          "combined_leader_score": 76.23,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "第三代半导体",
+      "sector_label": "885908",
+      "member_count": 44,
+      "valid_count": 44,
+      "sector_avg_pct_change": -2.3358,
+      "sector_amount_weighted_pct_change": -1.7416,
+      "sector_up_count": 9,
+      "sector_up_ratio": 0.2045,
+      "long_mainline_score_100": 90.45,
+      "short_mainline_score_100": 58.95,
+      "phase9_score_100": 30.4,
+      "phase9_rank": 33,
+      "long_mainline_rank": 17,
+      "short_mainline_rank_in_long_pool": 9,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "601869",
+        "002428",
+        "002046"
+      ],
+      "leader_names": [
+        "长飞光纤",
+        "云南锗业",
+        "国机精工"
+      ],
+      "leaders": [
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 88.56,
+          "combined_leader_score": 84.25,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002428",
+          "name": "云南锗业",
+          "leader_score": 83.27,
+          "combined_leader_score": 80.53,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002046",
+          "name": "国机精工",
+          "leader_score": 83.26,
+          "combined_leader_score": 78.89,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "PEEK材料",
+      "sector_label": "886063",
+      "member_count": 21,
+      "valid_count": 21,
+      "sector_avg_pct_change": 0.6329,
+      "sector_amount_weighted_pct_change": -1.4285,
+      "sector_up_count": 12,
+      "sector_up_ratio": 0.5714,
+      "long_mainline_score_100": 90.14,
+      "short_mainline_score_100": 53.14,
+      "phase9_score_100": 31.67,
+      "phase9_rank": 22,
+      "long_mainline_rank": 18,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002838",
+        "603319",
+        "600176"
+      ],
+      "leader_names": [
+        "道恩股份",
+        "美湖股份",
+        "中国巨石"
+      ],
+      "leaders": [
+        {
+          "symbol": "002838",
+          "name": "道恩股份",
+          "leader_score": 84.11,
+          "combined_leader_score": 82.07,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603319",
+          "name": "美湖股份",
+          "leader_score": 74.15,
+          "combined_leader_score": 73.38,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600176",
+          "name": "中国巨石",
+          "leader_score": 88.1,
+          "combined_leader_score": 74.25,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "超级电容",
+      "sector_label": "885886",
+      "member_count": 20,
+      "valid_count": 20,
+      "sector_avg_pct_change": -0.6668,
+      "sector_amount_weighted_pct_change": -3.3286,
+      "sector_up_count": 8,
+      "sector_up_ratio": 0.4,
+      "long_mainline_score_100": 90.0,
+      "short_mainline_score_100": 41.62,
+      "phase9_score_100": 29.83,
+      "phase9_rank": 36,
+      "long_mainline_rank": 19,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002851",
+        "000962",
+        "600522"
+      ],
+      "leader_names": [
+        "麦格米特",
+        "东方钽业",
+        "中天科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "002851",
+          "name": "麦格米特",
+          "leader_score": 83.79,
+          "combined_leader_score": 83.35,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000962",
+          "name": "东方钽业",
+          "leader_score": 87.71,
+          "combined_leader_score": 82.67,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600522",
+          "name": "中天科技",
+          "leader_score": 83.95,
+          "combined_leader_score": 80.45,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电子-其他电子Ⅱ",
+      "sector_label": "电子-其他电子Ⅱ",
+      "member_count": 9,
+      "valid_count": 9,
+      "sector_avg_pct_change": -0.9707,
+      "sector_amount_weighted_pct_change": -2.419,
+      "sector_up_count": 2,
+      "sector_up_ratio": 0.2222,
+      "long_mainline_score_100": 89.43,
+      "short_mainline_score_100": 52.06,
+      "phase9_score_100": 31.52,
+      "phase9_rank": 23,
+      "long_mainline_rank": 20,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000062",
+        "002885",
+        "600353"
+      ],
+      "leader_names": [
+        "深圳华强",
+        "京泉华",
+        "旭光电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "000062",
+          "name": "深圳华强",
+          "leader_score": 90.12,
+          "combined_leader_score": 79.4,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002885",
+          "name": "京泉华",
+          "leader_score": 80.7,
+          "combined_leader_score": 78.18,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600353",
+          "name": "旭光电子",
+          "leader_score": 77.03,
+          "combined_leader_score": 70.0,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "液冷服务器",
+      "sector_label": "886044",
+      "member_count": 81,
+      "valid_count": 81,
+      "sector_avg_pct_change": -0.791,
+      "sector_amount_weighted_pct_change": -1.6368,
+      "sector_up_count": 29,
+      "sector_up_ratio": 0.358,
+      "long_mainline_score_100": 89.36,
+      "short_mainline_score_100": 43.63,
+      "phase9_score_100": 28.12,
+      "phase9_rank": 67,
+      "long_mainline_rank": 21,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603083",
+        "003018",
+        "600487"
+      ],
+      "leader_names": [
+        "剑桥科技",
+        "金富科技",
+        "亨通光电"
+      ],
+      "leaders": [
+        {
+          "symbol": "603083",
+          "name": "剑桥科技",
+          "leader_score": 85.23,
+          "combined_leader_score": 79.78,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "003018",
+          "name": "金富科技",
+          "leader_score": 82.72,
+          "combined_leader_score": 81.12,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 90.01,
+          "combined_leader_score": 80.81,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "WiFi 6",
+      "sector_label": "885940",
+      "member_count": 17,
+      "valid_count": 17,
+      "sector_avg_pct_change": -3.211,
+      "sector_amount_weighted_pct_change": -4.008,
+      "sector_up_count": 2,
+      "sector_up_ratio": 0.1176,
+      "long_mainline_score_100": 89.33,
+      "short_mainline_score_100": 32.52,
+      "phase9_score_100": 35.82,
+      "phase9_rank": 5,
+      "long_mainline_rank": 22,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 4,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "603083",
+        "002213",
+        "600498"
+      ],
+      "leader_names": [
+        "剑桥科技",
+        "大为股份",
+        "烽火通信"
+      ],
+      "leaders": [
+        {
+          "symbol": "603083",
+          "name": "剑桥科技",
+          "leader_score": 88.94,
+          "combined_leader_score": 85.96,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002213",
+          "name": "大为股份",
+          "leader_score": 84.35,
+          "combined_leader_score": 75.82,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/波段活跃候选"
+        },
+        {
+          "symbol": "600498",
+          "name": "烽火通信",
+          "leader_score": 79.56,
+          "combined_leader_score": 75.52,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "专精特新",
+      "sector_label": "885929",
+      "member_count": 202,
+      "valid_count": 201,
+      "sector_avg_pct_change": 0.2056,
+      "sector_amount_weighted_pct_change": -0.7076,
+      "sector_up_count": 97,
+      "sector_up_ratio": 0.4826,
+      "long_mainline_score_100": 89.23,
+      "short_mainline_score_100": 45.56,
+      "phase9_score_100": 30.57,
+      "phase9_rank": 31,
+      "long_mainline_rank": 23,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603256",
+        "600105",
+        "601869"
+      ],
+      "leader_names": [
+        "宏和科技",
+        "永鼎股份",
+        "长飞光纤"
+      ],
+      "leaders": [
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 93.51,
+          "combined_leader_score": 87.78,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 96.22,
+          "combined_leader_score": 86.66,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 93.33,
+          "combined_leader_score": 86.03,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "5G",
+      "sector_label": "885556",
+      "member_count": 168,
+      "valid_count": 168,
+      "sector_avg_pct_change": -1.4958,
+      "sector_amount_weighted_pct_change": -3.2264,
+      "sector_up_count": 45,
+      "sector_up_ratio": 0.2679,
+      "long_mainline_score_100": 88.77,
+      "short_mainline_score_100": 39.73,
+      "phase9_score_100": 26.24,
+      "phase9_rank": 90,
+      "long_mainline_rank": 24,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "603256",
+        "601869"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "宏和科技",
+        "长飞光纤"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 93.96,
+          "combined_leader_score": 85.51,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 90.61,
+          "combined_leader_score": 85.46,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 91.13,
+          "combined_leader_score": 83.55,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "6G概念",
+      "sector_label": "886037",
+      "member_count": 37,
+      "valid_count": 37,
+      "sector_avg_pct_change": -2.4825,
+      "sector_amount_weighted_pct_change": -4.0741,
+      "sector_up_count": 5,
+      "sector_up_ratio": 0.1351,
+      "long_mainline_score_100": 88.68,
+      "short_mainline_score_100": 33.77,
+      "phase9_score_100": 34.75,
+      "phase9_rank": 8,
+      "long_mainline_rank": 25,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 7,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "600487",
+        "600118",
+        "002080"
+      ],
+      "leader_names": [
+        "亨通光电",
+        "中国卫星",
+        "中材科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 96.65,
+          "combined_leader_score": 85.75,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600118",
+          "name": "中国卫星",
+          "leader_score": 81.28,
+          "combined_leader_score": 76.82,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002080",
+          "name": "中材科技",
+          "leader_score": 84.76,
+          "combined_leader_score": 74.89,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "摘帽",
+      "sector_label": "885742",
+      "member_count": 29,
+      "valid_count": 29,
+      "sector_avg_pct_change": null,
+      "sector_amount_weighted_pct_change": null,
+      "sector_up_count": null,
+      "sector_up_ratio": null,
+      "long_mainline_score_100": 88.41,
+      "short_mainline_score_100": 48.07,
+      "phase9_score_100": null,
+      "phase9_rank": null,
+      "long_mainline_rank": 26,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [],
+      "leader_names": [],
+      "leaders": []
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "先进封装",
+      "sector_label": "886009",
+      "member_count": 48,
+      "valid_count": 48,
+      "sector_avg_pct_change": -1.5197,
+      "sector_amount_weighted_pct_change": -1.7642,
+      "sector_up_count": 17,
+      "sector_up_ratio": 0.3542,
+      "long_mainline_score_100": 88.11,
+      "short_mainline_score_100": 56.2,
+      "phase9_score_100": 27.91,
+      "phase9_rank": 70,
+      "long_mainline_rank": 27,
+      "short_mainline_rank_in_long_pool": 10,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002916",
+        "600183",
+        "002436"
+      ],
+      "leader_names": [
+        "深南电路",
+        "生益科技",
+        "兴森科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "002916",
+          "name": "深南电路",
+          "leader_score": 90.2,
+          "combined_leader_score": 85.93,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600183",
+          "name": "生益科技",
+          "leader_score": 92.07,
+          "combined_leader_score": 85.17,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002436",
+          "name": "兴森科技",
+          "leader_score": 82.71,
+          "combined_leader_score": 80.21,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "苹果概念",
+      "sector_label": "885376",
+      "member_count": 46,
+      "valid_count": 46,
+      "sector_avg_pct_change": -1.0945,
+      "sector_amount_weighted_pct_change": -1.149,
+      "sector_up_count": 12,
+      "sector_up_ratio": 0.2609,
+      "long_mainline_score_100": 88.05,
+      "short_mainline_score_100": 43.93,
+      "phase9_score_100": 28.09,
+      "phase9_rank": 68,
+      "long_mainline_rank": 28,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603256",
+        "002384",
+        "002600"
+      ],
+      "leader_names": [
+        "宏和科技",
+        "东山精密",
+        "领益智造"
+      ],
+      "leaders": [
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 89.24,
+          "combined_leader_score": 86.05,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 93.11,
+          "combined_leader_score": 84.75,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002600",
+          "name": "领益智造",
+          "leader_score": 76.69,
+          "combined_leader_score": 75.3,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "华为手机",
+      "sector_label": "886091",
+      "member_count": 17,
+      "valid_count": 17,
+      "sector_avg_pct_change": -2.4627,
+      "sector_amount_weighted_pct_change": -2.4767,
+      "sector_up_count": 1,
+      "sector_up_ratio": 0.0588,
+      "long_mainline_score_100": 87.17,
+      "short_mainline_score_100": 34.35,
+      "phase9_score_100": 29.35,
+      "phase9_rank": 45,
+      "long_mainline_rank": 29,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603256",
+        "603228",
+        "002273"
+      ],
+      "leader_names": [
+        "宏和科技",
+        "景旺电子",
+        "水晶光电"
+      ],
+      "leaders": [
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 91.89,
+          "combined_leader_score": 90.67,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603228",
+          "name": "景旺电子",
+          "leader_score": 87.13,
+          "combined_leader_score": 83.55,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002273",
+          "name": "水晶光电",
+          "leader_score": 82.93,
+          "combined_leader_score": 80.93,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "海工装备",
+      "sector_label": "885426",
+      "member_count": 121,
+      "valid_count": 121,
+      "sector_avg_pct_change": -1.0385,
+      "sector_amount_weighted_pct_change": -3.2143,
+      "sector_up_count": 39,
+      "sector_up_ratio": 0.3223,
+      "long_mainline_score_100": 86.66,
+      "short_mainline_score_100": 28.52,
+      "phase9_score_100": 23.75,
+      "phase9_rank": 121,
+      "long_mainline_rank": 30,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002149",
+        "601869"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "西部材料",
+        "长飞光纤"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 94.86,
+          "combined_leader_score": 87.27,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 87.39,
+          "combined_leader_score": 83.93,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 90.27,
+          "combined_leader_score": 83.29,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "AI PC",
+      "sector_label": "886071",
+      "member_count": 19,
+      "valid_count": 19,
+      "sector_avg_pct_change": -1.5926,
+      "sector_amount_weighted_pct_change": -2.0272,
+      "sector_up_count": 5,
+      "sector_up_ratio": 0.2632,
+      "long_mainline_score_100": 86.56,
+      "short_mainline_score_100": 42.12,
+      "phase9_score_100": 30.03,
+      "phase9_rank": 35,
+      "long_mainline_rank": 31,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "001309",
+        "603626",
+        "603228"
+      ],
+      "leader_names": [
+        "德明利",
+        "科森科技",
+        "景旺电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 90.94,
+          "combined_leader_score": 89.85,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603626",
+          "name": "科森科技",
+          "leader_score": 83.87,
+          "combined_leader_score": 78.55,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603228",
+          "name": "景旺电子",
+          "leader_score": 84.78,
+          "combined_leader_score": 77.65,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "英伟达概念",
+      "sector_label": "886048",
+      "member_count": 26,
+      "valid_count": 26,
+      "sector_avg_pct_change": -0.6773,
+      "sector_amount_weighted_pct_change": -0.0372,
+      "sector_up_count": 9,
+      "sector_up_ratio": 0.3462,
+      "long_mainline_score_100": 86.27,
+      "short_mainline_score_100": 43.54,
+      "phase9_score_100": 31.93,
+      "phase9_rank": 21,
+      "long_mainline_rank": 32,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002837",
+        "002851",
+        "603629"
+      ],
+      "leader_names": [
+        "英维克",
+        "麦格米特",
+        "利通电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "002837",
+          "name": "英维克",
+          "leader_score": 86.52,
+          "combined_leader_score": 81.16,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002851",
+          "name": "麦格米特",
+          "leader_score": 85.16,
+          "combined_leader_score": 81.06,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603629",
+          "name": "利通电子",
+          "leader_score": 80.64,
+          "combined_leader_score": 79.31,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "中芯国际概念",
+      "sector_label": "885897",
+      "member_count": 31,
+      "valid_count": 31,
+      "sector_avg_pct_change": 0.8281,
+      "sector_amount_weighted_pct_change": 2.0179,
+      "sector_up_count": 17,
+      "sector_up_ratio": 0.5484,
+      "long_mainline_score_100": 85.84,
+      "short_mainline_score_100": 77.77,
+      "phase9_score_100": 29.32,
+      "phase9_rank": 47,
+      "long_mainline_rank": 33,
+      "short_mainline_rank_in_long_pool": 2,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "001309",
+        "000811",
+        "002046"
+      ],
+      "leader_names": [
+        "德明利",
+        "冰轮环境",
+        "国机精工"
+      ],
+      "leaders": [
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 89.05,
+          "combined_leader_score": 88.55,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000811",
+          "name": "冰轮环境",
+          "leader_score": 82.23,
+          "combined_leader_score": 82.06,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002046",
+          "name": "国机精工",
+          "leader_score": 83.55,
+          "combined_leader_score": 79.53,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "国家大基金持股",
+      "sector_label": "885893",
+      "member_count": 8,
+      "valid_count": 8,
+      "sector_avg_pct_change": -0.2647,
+      "sector_amount_weighted_pct_change": 2.3988,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.375,
+      "long_mainline_score_100": 85.75,
+      "short_mainline_score_100": 74.25,
+      "phase9_score_100": 34.86,
+      "phase9_rank": 7,
+      "long_mainline_rank": 34,
+      "short_mainline_rank_in_long_pool": 3,
+      "phase9_rank_in_long_pool": 6,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "002916",
+        "002156",
+        "600206"
+      ],
+      "leader_names": [
+        "深南电路",
+        "通富微电",
+        "有研新材"
+      ],
+      "leaders": [
+        {
+          "symbol": "002916",
+          "name": "深南电路",
+          "leader_score": 90.43,
+          "combined_leader_score": 86.26,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002156",
+          "name": "通富微电",
+          "leader_score": 87.73,
+          "combined_leader_score": 78.37,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600206",
+          "name": "有研新材",
+          "leader_score": 76.57,
+          "combined_leader_score": 67.22,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "特高压",
+      "sector_label": "885425",
+      "member_count": 56,
+      "valid_count": 56,
+      "sector_avg_pct_change": -1.7628,
+      "sector_amount_weighted_pct_change": -3.792,
+      "sector_up_count": 11,
+      "sector_up_ratio": 0.1964,
+      "long_mainline_score_100": 85.66,
+      "short_mainline_score_100": 36.4,
+      "phase9_score_100": 34.13,
+      "phase9_rank": 12,
+      "long_mainline_rank": 35,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600487",
+        "601869",
+        "600869"
+      ],
+      "leader_names": [
+        "亨通光电",
+        "长飞光纤",
+        "远东股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 95.92,
+          "combined_leader_score": 87.61,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 89.2,
+          "combined_leader_score": 86.24,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 83.84,
+          "combined_leader_score": 82.69,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "MiniLED",
+      "sector_label": "885875",
+      "member_count": 24,
+      "valid_count": 24,
+      "sector_avg_pct_change": -2.6647,
+      "sector_amount_weighted_pct_change": -4.3936,
+      "sector_up_count": 2,
+      "sector_up_ratio": 0.0833,
+      "long_mainline_score_100": 85.52,
+      "short_mainline_score_100": 42.22,
+      "phase9_score_100": 28.9,
+      "phase9_rank": 50,
+      "long_mainline_rank": 36,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002384",
+        "600183",
+        "002429"
+      ],
+      "leader_names": [
+        "东山精密",
+        "生益科技",
+        "兆驰股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 94.95,
+          "combined_leader_score": 94.62,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600183",
+          "name": "生益科技",
+          "leader_score": 91.64,
+          "combined_leader_score": 88.05,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002429",
+          "name": "兆驰股份",
+          "leader_score": 79.39,
+          "combined_leader_score": 77.29,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "OLED",
+      "sector_label": "885738",
+      "member_count": 49,
+      "valid_count": 49,
+      "sector_avg_pct_change": -1.1484,
+      "sector_amount_weighted_pct_change": -0.9118,
+      "sector_up_count": 13,
+      "sector_up_ratio": 0.2653,
+      "long_mainline_score_100": 85.42,
+      "short_mainline_score_100": 54.93,
+      "phase9_score_100": 28.66,
+      "phase9_rank": 55,
+      "long_mainline_rank": 37,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "601208",
+        "603629",
+        "603920"
+      ],
+      "leader_names": [
+        "东材科技",
+        "利通电子",
+        "世运电路"
+      ],
+      "leaders": [
+        {
+          "symbol": "601208",
+          "name": "东材科技",
+          "leader_score": 87.82,
+          "combined_leader_score": 85.26,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603629",
+          "name": "利通电子",
+          "leader_score": 87.46,
+          "combined_leader_score": 82.0,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603920",
+          "name": "世运电路",
+          "leader_score": 85.23,
+          "combined_leader_score": 80.56,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "固态电池",
+      "sector_label": "886032",
+      "member_count": 103,
+      "valid_count": 103,
+      "sector_avg_pct_change": -0.9914,
+      "sector_amount_weighted_pct_change": -2.1419,
+      "sector_up_count": 32,
+      "sector_up_ratio": 0.3107,
+      "long_mainline_score_100": 85.4,
+      "short_mainline_score_100": 33.36,
+      "phase9_score_100": 27.71,
+      "phase9_rank": 75,
+      "long_mainline_rank": 38,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002491",
+        "003036",
+        "603067"
+      ],
+      "leader_names": [
+        "通鼎互联",
+        "泰坦股份",
+        "振华股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "002491",
+          "name": "通鼎互联",
+          "leader_score": 85.23,
+          "combined_leader_score": 81.46,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "003036",
+          "name": "泰坦股份",
+          "leader_score": 79.62,
+          "combined_leader_score": 77.8,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603067",
+          "name": "振华股份",
+          "leader_score": 85.65,
+          "combined_leader_score": 76.31,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "有色金属-能源金属",
+      "sector_label": "有色金属-能源金属",
+      "member_count": 6,
+      "valid_count": 6,
+      "sector_avg_pct_change": -1.7903,
+      "sector_amount_weighted_pct_change": -2.2328,
+      "sector_up_count": 1,
+      "sector_up_ratio": 0.1667,
+      "long_mainline_score_100": 85.15,
+      "short_mainline_score_100": 10.65,
+      "phase9_score_100": 28.27,
+      "phase9_rank": 63,
+      "long_mainline_rank": 39,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "605376",
+        "002240",
+        "002192"
+      ],
+      "leader_names": [
+        "博迁新材",
+        "盛新锂能",
+        "融捷股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "605376",
+          "name": "博迁新材",
+          "leader_score": 86.85,
+          "combined_leader_score": 83.96,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002240",
+          "name": "盛新锂能",
+          "leader_score": 77.33,
+          "combined_leader_score": 65.6,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        },
+        {
+          "symbol": "002192",
+          "name": "融捷股份",
+          "leader_score": 80.92,
+          "combined_leader_score": 62.92,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电子-元件",
+      "sector_label": "电子-元件",
+      "member_count": 20,
+      "valid_count": 20,
+      "sector_avg_pct_change": -2.0005,
+      "sector_amount_weighted_pct_change": -3.3047,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.2,
+      "long_mainline_score_100": 84.92,
+      "short_mainline_score_100": 47.37,
+      "phase9_score_100": 37.39,
+      "phase9_rank": 3,
+      "long_mainline_rank": 40,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 3,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "002384",
+        "600183",
+        "002636"
+      ],
+      "leader_names": [
+        "东山精密",
+        "生益科技",
+        "金安国纪"
+      ],
+      "leaders": [
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 93.17,
+          "combined_leader_score": 89.47,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600183",
+          "name": "生益科技",
+          "leader_score": 83.64,
+          "combined_leader_score": 79.99,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002636",
+          "name": "金安国纪",
+          "leader_score": 76.58,
+          "combined_leader_score": 75.38,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电力设备-风电设备",
+      "sector_label": "电力设备-风电设备",
+      "member_count": 11,
+      "valid_count": 11,
+      "sector_avg_pct_change": -0.3982,
+      "sector_amount_weighted_pct_change": -1.902,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.3636,
+      "long_mainline_score_100": 84.48,
+      "short_mainline_score_100": 35.64,
+      "phase9_score_100": 34.6,
+      "phase9_rank": 10,
+      "long_mainline_rank": 41,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 9,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "002487",
+        "002202",
+        "603063"
+      ],
+      "leader_names": [
+        "大金重工",
+        "金风科技",
+        "禾望电气"
+      ],
+      "leaders": [
+        {
+          "symbol": "002487",
+          "name": "大金重工",
+          "leader_score": 90.75,
+          "combined_leader_score": 85.38,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002202",
+          "name": "金风科技",
+          "leader_score": 82.55,
+          "combined_leader_score": 81.35,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603063",
+          "name": "禾望电气",
+          "leader_score": 93.75,
+          "combined_leader_score": 77.11,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "AI手机",
+      "sector_label": "886070",
+      "member_count": 10,
+      "valid_count": 10,
+      "sector_avg_pct_change": -0.7446,
+      "sector_amount_weighted_pct_change": -2.225,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.3,
+      "long_mainline_score_100": 84.46,
+      "short_mainline_score_100": 44.09,
+      "phase9_score_100": 28.43,
+      "phase9_rank": 59,
+      "long_mainline_rank": 42,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002384",
+        "002600",
+        "002273"
+      ],
+      "leader_names": [
+        "东山精密",
+        "领益智造",
+        "水晶光电"
+      ],
+      "leaders": [
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 93.56,
+          "combined_leader_score": 93.53,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002600",
+          "name": "领益智造",
+          "leader_score": 84.04,
+          "combined_leader_score": 80.66,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002273",
+          "name": "水晶光电",
+          "leader_score": 84.58,
+          "combined_leader_score": 79.8,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "有色金属-小金属",
+      "sector_label": "有色金属-小金属",
+      "member_count": 18,
+      "valid_count": 18,
+      "sector_avg_pct_change": -2.4435,
+      "sector_amount_weighted_pct_change": -1.7379,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.1667,
+      "long_mainline_score_100": 82.79,
+      "short_mainline_score_100": 12.44,
+      "phase9_score_100": 41.34,
+      "phase9_rank": 1,
+      "long_mainline_rank": 43,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 1,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "002149",
+        "000657",
+        "002842"
+      ],
+      "leader_names": [
+        "西部材料",
+        "中钨高新",
+        "翔鹭钨业"
+      ],
+      "leaders": [
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 86.63,
+          "combined_leader_score": 84.87,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000657",
+          "name": "中钨高新",
+          "leader_score": 82.8,
+          "combined_leader_score": 80.79,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002842",
+          "name": "翔鹭钨业",
+          "leader_score": 78.29,
+          "combined_leader_score": 77.87,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "消费电子概念",
+      "sector_label": "885800",
+      "member_count": 135,
+      "valid_count": 135,
+      "sector_avg_pct_change": -1.0484,
+      "sector_amount_weighted_pct_change": -2.3159,
+      "sector_up_count": 40,
+      "sector_up_ratio": 0.2963,
+      "long_mainline_score_100": 82.76,
+      "short_mainline_score_100": 38.12,
+      "phase9_score_100": 27.36,
+      "phase9_rank": 80,
+      "long_mainline_rank": 44,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603256",
+        "603629",
+        "603228"
+      ],
+      "leader_names": [
+        "宏和科技",
+        "利通电子",
+        "景旺电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 91.89,
+          "combined_leader_score": 85.95,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603629",
+          "name": "利通电子",
+          "leader_score": 86.31,
+          "combined_leader_score": 82.18,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603228",
+          "name": "景旺电子",
+          "leader_score": 87.35,
+          "combined_leader_score": 81.0,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "金属镍",
+      "sector_label": "885969",
+      "member_count": 20,
+      "valid_count": 20,
+      "sector_avg_pct_change": -4.1056,
+      "sector_amount_weighted_pct_change": -4.7572,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.15,
+      "long_mainline_score_100": 82.53,
+      "short_mainline_score_100": 22.25,
+      "phase9_score_100": 21.21,
+      "phase9_rank": 138,
+      "long_mainline_rank": 45,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000426",
+        "605376",
+        "600711"
+      ],
+      "leader_names": [
+        "兴业银锡",
+        "博迁新材",
+        "盛屯矿业"
+      ],
+      "leaders": [
+        {
+          "symbol": "000426",
+          "name": "兴业银锡",
+          "leader_score": 85.84,
+          "combined_leader_score": 84.31,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "605376",
+          "name": "博迁新材",
+          "leader_score": 81.35,
+          "combined_leader_score": 81.27,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600711",
+          "name": "盛屯矿业",
+          "leader_score": 71.77,
+          "combined_leader_score": 70.25,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "光刻机",
+      "sector_label": "886054",
+      "member_count": 12,
+      "valid_count": 12,
+      "sector_avg_pct_change": -1.2244,
+      "sector_amount_weighted_pct_change": -1.0984,
+      "sector_up_count": 5,
+      "sector_up_ratio": 0.4167,
+      "long_mainline_score_100": 82.51,
+      "short_mainline_score_100": 53.36,
+      "phase9_score_100": 29.71,
+      "phase9_rank": 38,
+      "long_mainline_rank": 46,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603773",
+        "600353",
+        "003031"
+      ],
+      "leader_names": [
+        "沃格光电",
+        "旭光电子",
+        "中瓷电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "603773",
+          "name": "沃格光电",
+          "leader_score": 81.92,
+          "combined_leader_score": 78.31,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600353",
+          "name": "旭光电子",
+          "leader_score": 75.68,
+          "combined_leader_score": 75.29,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "003031",
+          "name": "中瓷电子",
+          "leader_score": 81.23,
+          "combined_leader_score": 77.58,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电子-半导体",
+      "sector_label": "电子-半导体",
+      "member_count": 23,
+      "valid_count": 23,
+      "sector_avg_pct_change": -0.3025,
+      "sector_amount_weighted_pct_change": 1.4142,
+      "sector_up_count": 10,
+      "sector_up_ratio": 0.4348,
+      "long_mainline_score_100": 82.41,
+      "short_mainline_score_100": 69.62,
+      "phase9_score_100": 31.01,
+      "phase9_rank": 27,
+      "long_mainline_rank": 47,
+      "short_mainline_rank_in_long_pool": 5,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "001309",
+        "603061",
+        "002213"
+      ],
+      "leader_names": [
+        "德明利",
+        "金海通",
+        "大为股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 90.77,
+          "combined_leader_score": 87.57,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603061",
+          "name": "金海通",
+          "leader_score": 78.5,
+          "combined_leader_score": 76.06,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002213",
+          "name": "大为股份",
+          "leader_score": 77.32,
+          "combined_leader_score": 70.66,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "东数西算(算力)",
+      "sector_label": "885957",
+      "member_count": 145,
+      "valid_count": 145,
+      "sector_avg_pct_change": -1.5605,
+      "sector_amount_weighted_pct_change": -2.7719,
+      "sector_up_count": 33,
+      "sector_up_ratio": 0.2276,
+      "long_mainline_score_100": 80.68,
+      "short_mainline_score_100": 34.73,
+      "phase9_score_100": 30.75,
+      "phase9_rank": 29,
+      "long_mainline_rank": 48,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "601869",
+        "600869"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "长飞光纤",
+        "远东股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 93.7,
+          "combined_leader_score": 85.51,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 91.56,
+          "combined_leader_score": 85.08,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 76.82,
+          "combined_leader_score": 80.49,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "锂电池概念",
+      "sector_label": "885710",
+      "member_count": 235,
+      "valid_count": 235,
+      "sector_avg_pct_change": -1.1299,
+      "sector_amount_weighted_pct_change": -2.2528,
+      "sector_up_count": 79,
+      "sector_up_ratio": 0.3362,
+      "long_mainline_score_100": 80.54,
+      "short_mainline_score_100": 26.94,
+      "phase9_score_100": 27.87,
+      "phase9_rank": 71,
+      "long_mainline_rank": 49,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002759",
+        "605376",
+        "600869"
+      ],
+      "leader_names": [
+        "天际股份",
+        "博迁新材",
+        "远东股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "002759",
+          "name": "天际股份",
+          "leader_score": 80.48,
+          "combined_leader_score": 81.42,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "605376",
+          "name": "博迁新材",
+          "leader_score": 85.57,
+          "combined_leader_score": 81.05,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 88.07,
+          "combined_leader_score": 79.38,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "轻工制造-包装印刷",
+      "sector_label": "轻工制造-包装印刷",
+      "member_count": 22,
+      "valid_count": 22,
+      "sector_avg_pct_change": -0.0134,
+      "sector_amount_weighted_pct_change": 0.5873,
+      "sector_up_count": 9,
+      "sector_up_ratio": 0.4091,
+      "long_mainline_score_100": 80.39,
+      "short_mainline_score_100": 41.27,
+      "phase9_score_100": 33.24,
+      "phase9_rank": 14,
+      "long_mainline_rank": 50,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "003018",
+        "002787",
+        "600076"
+      ],
+      "leader_names": [
+        "金富科技",
+        "华源控股",
+        "康欣新材"
+      ],
+      "leaders": [
+        {
+          "symbol": "003018",
+          "name": "金富科技",
+          "leader_score": 86.43,
+          "combined_leader_score": 84.92,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002787",
+          "name": "华源控股",
+          "leader_score": 77.38,
+          "combined_leader_score": 76.19,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600076",
+          "name": "康欣新材",
+          "leader_score": 79.3,
+          "combined_leader_score": 73.44,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "毫米波雷达",
+      "sector_label": "886035",
+      "member_count": 58,
+      "valid_count": 58,
+      "sector_avg_pct_change": -0.4143,
+      "sector_amount_weighted_pct_change": -0.3973,
+      "sector_up_count": 23,
+      "sector_up_ratio": 0.3966,
+      "long_mainline_score_100": 80.22,
+      "short_mainline_score_100": 41.36,
+      "phase9_score_100": 28.16,
+      "phase9_rank": 66,
+      "long_mainline_rank": 51,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603920",
+        "002436",
+        "600330"
+      ],
+      "leader_names": [
+        "世运电路",
+        "兴森科技",
+        "天通股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "603920",
+          "name": "世运电路",
+          "leader_score": 87.08,
+          "combined_leader_score": 83.58,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002436",
+          "name": "兴森科技",
+          "leader_score": 85.27,
+          "combined_leader_score": 79.34,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600330",
+          "name": "天通股份",
+          "leader_score": 87.94,
+          "combined_leader_score": 79.33,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "机械设备-通用设备",
+      "sector_label": "机械设备-通用设备",
+      "member_count": 62,
+      "valid_count": 62,
+      "sector_avg_pct_change": 0.3905,
+      "sector_amount_weighted_pct_change": -0.3992,
+      "sector_up_count": 31,
+      "sector_up_ratio": 0.5,
+      "long_mainline_score_100": 79.87,
+      "short_mainline_score_100": 44.65,
+      "phase9_score_100": 31.32,
+      "phase9_rank": 26,
+      "long_mainline_rank": 52,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603308",
+        "600343",
+        "002342"
+      ],
+      "leader_names": [
+        "应流股份",
+        "航天动力",
+        "巨力索具"
+      ],
+      "leaders": [
+        {
+          "symbol": "603308",
+          "name": "应流股份",
+          "leader_score": 90.52,
+          "combined_leader_score": 84.76,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600343",
+          "name": "航天动力",
+          "leader_score": 85.94,
+          "combined_leader_score": 84.21,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002342",
+          "name": "巨力索具",
+          "leader_score": 81.34,
+          "combined_leader_score": 79.67,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "智能穿戴",
+      "sector_label": "885454",
+      "member_count": 73,
+      "valid_count": 73,
+      "sector_avg_pct_change": -1.514,
+      "sector_amount_weighted_pct_change": -1.4084,
+      "sector_up_count": 19,
+      "sector_up_ratio": 0.2603,
+      "long_mainline_score_100": 79.75,
+      "short_mainline_score_100": 46.15,
+      "phase9_score_100": 27.65,
+      "phase9_rank": 76,
+      "long_mainline_rank": 53,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "001309",
+        "600330",
+        "002980"
+      ],
+      "leader_names": [
+        "德明利",
+        "天通股份",
+        "华盛昌"
+      ],
+      "leaders": [
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 92.78,
+          "combined_leader_score": 86.25,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600330",
+          "name": "天通股份",
+          "leader_score": 88.4,
+          "combined_leader_score": 81.68,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002980",
+          "name": "华盛昌",
+          "leader_score": 81.02,
+          "combined_leader_score": 77.8,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "柔性直流输电",
+      "sector_label": "885948",
+      "member_count": 30,
+      "valid_count": 30,
+      "sector_avg_pct_change": -2.2549,
+      "sector_amount_weighted_pct_change": -3.8748,
+      "sector_up_count": 5,
+      "sector_up_ratio": 0.1667,
+      "long_mainline_score_100": 79.73,
+      "short_mainline_score_100": 32.79,
+      "phase9_score_100": 37.64,
+      "phase9_rank": 2,
+      "long_mainline_rank": 54,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 2,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "600487",
+        "600869",
+        "600353"
+      ],
+      "leader_names": [
+        "亨通光电",
+        "远东股份",
+        "旭光电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 98.17,
+          "combined_leader_score": 91.92,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 90.16,
+          "combined_leader_score": 85.6,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600353",
+          "name": "旭光电子",
+          "leader_score": 74.9,
+          "combined_leader_score": 73.26,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "稀土永磁",
+      "sector_label": "885343",
+      "member_count": 29,
+      "valid_count": 29,
+      "sector_avg_pct_change": -1.7495,
+      "sector_amount_weighted_pct_change": -0.9114,
+      "sector_up_count": 7,
+      "sector_up_ratio": 0.2414,
+      "long_mainline_score_100": 79.46,
+      "short_mainline_score_100": 33.38,
+      "phase9_score_100": 34.69,
+      "phase9_rank": 9,
+      "long_mainline_rank": 55,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 8,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "600259",
+        "600206",
+        "600111"
+      ],
+      "leader_names": [
+        "中稀有色",
+        "有研新材",
+        "北方稀土"
+      ],
+      "leaders": [
+        {
+          "symbol": "600259",
+          "name": "中稀有色",
+          "leader_score": 82.3,
+          "combined_leader_score": 77.64,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600206",
+          "name": "有研新材",
+          "leader_score": 76.93,
+          "combined_leader_score": 73.42,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选"
+        },
+        {
+          "symbol": "600111",
+          "name": "北方稀土",
+          "leader_score": 72.24,
+          "combined_leader_score": 71.01,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "光刻胶",
+      "sector_label": "885864",
+      "member_count": 21,
+      "valid_count": 21,
+      "sector_avg_pct_change": 0.6822,
+      "sector_amount_weighted_pct_change": 0.2447,
+      "sector_up_count": 13,
+      "sector_up_ratio": 0.619,
+      "long_mainline_score_100": 79.33,
+      "short_mainline_score_100": 72.87,
+      "phase9_score_100": 29.45,
+      "phase9_rank": 42,
+      "long_mainline_rank": 56,
+      "short_mainline_rank_in_long_pool": 4,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603306",
+        "601208",
+        "603078"
+      ],
+      "leader_names": [
+        "华懋科技",
+        "东材科技",
+        "江化微"
+      ],
+      "leaders": [
+        {
+          "symbol": "603306",
+          "name": "华懋科技",
+          "leader_score": 91.55,
+          "combined_leader_score": 90.41,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601208",
+          "name": "东材科技",
+          "leader_score": 89.53,
+          "combined_leader_score": 85.84,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603078",
+          "name": "江化微",
+          "leader_score": 75.65,
+          "combined_leader_score": 71.0,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "工业母机",
+      "sector_label": "885930",
+      "member_count": 38,
+      "valid_count": 38,
+      "sector_avg_pct_change": 0.4037,
+      "sector_amount_weighted_pct_change": -0.2598,
+      "sector_up_count": 20,
+      "sector_up_ratio": 0.5263,
+      "long_mainline_score_100": 79.32,
+      "short_mainline_score_100": 43.8,
+      "phase9_score_100": 32.26,
+      "phase9_rank": 20,
+      "long_mainline_rank": 57,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002046",
+        "002975",
+        "002378"
+      ],
+      "leader_names": [
+        "国机精工",
+        "博杰股份",
+        "章源钨业"
+      ],
+      "leaders": [
+        {
+          "symbol": "002046",
+          "name": "国机精工",
+          "leader_score": 92.39,
+          "combined_leader_score": 87.42,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002975",
+          "name": "博杰股份",
+          "leader_score": 82.67,
+          "combined_leader_score": 78.83,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002378",
+          "name": "章源钨业",
+          "leader_score": 89.39,
+          "combined_leader_score": 77.16,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电力设备-电网设备",
+      "sector_label": "电力设备-电网设备",
+      "member_count": 64,
+      "valid_count": 64,
+      "sector_avg_pct_change": -1.7631,
+      "sector_amount_weighted_pct_change": -2.2291,
+      "sector_up_count": 14,
+      "sector_up_ratio": 0.2188,
+      "long_mainline_score_100": 79.27,
+      "short_mainline_score_100": 34.85,
+      "phase9_score_100": 34.26,
+      "phase9_rank": 11,
+      "long_mainline_rank": 58,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": 10,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": true,
+      "leader_symbols": [
+        "600869",
+        "603618",
+        "002980"
+      ],
+      "leader_names": [
+        "远东股份",
+        "杭电股份",
+        "华盛昌"
+      ],
+      "leaders": [
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 86.75,
+          "combined_leader_score": 83.48,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603618",
+          "name": "杭电股份",
+          "leader_score": 84.67,
+          "combined_leader_score": 81.29,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002980",
+          "name": "华盛昌",
+          "leader_score": 79.57,
+          "combined_leader_score": 77.32,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "金属钴",
+      "sector_label": "885865",
+      "member_count": 17,
+      "valid_count": 17,
+      "sector_avg_pct_change": -2.8888,
+      "sector_amount_weighted_pct_change": -4.5306,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.1765,
+      "long_mainline_score_100": 79.12,
+      "short_mainline_score_100": 24.88,
+      "phase9_score_100": 28.25,
+      "phase9_rank": 64,
+      "long_mainline_rank": 59,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000426",
+        "600549",
+        "600711"
+      ],
+      "leader_names": [
+        "兴业银锡",
+        "厦门钨业",
+        "盛屯矿业"
+      ],
+      "leaders": [
+        {
+          "symbol": "000426",
+          "name": "兴业银锡",
+          "leader_score": 87.81,
+          "combined_leader_score": 85.34,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600549",
+          "name": "厦门钨业",
+          "leader_score": 85.09,
+          "combined_leader_score": 78.99,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600711",
+          "name": "盛屯矿业",
+          "leader_score": 79.07,
+          "combined_leader_score": 77.42,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "新股与次新股",
+      "sector_label": "885598",
+      "member_count": 24,
+      "valid_count": 23,
+      "sector_avg_pct_change": null,
+      "sector_amount_weighted_pct_change": null,
+      "sector_up_count": null,
+      "sector_up_ratio": null,
+      "long_mainline_score_100": 78.94,
+      "short_mainline_score_100": 43.38,
+      "phase9_score_100": null,
+      "phase9_rank": null,
+      "long_mainline_rank": 60,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [],
+      "leader_names": [],
+      "leaders": []
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "注册制次新股",
+      "sector_label": "885905",
+      "member_count": 24,
+      "valid_count": 23,
+      "sector_avg_pct_change": null,
+      "sector_amount_weighted_pct_change": null,
+      "sector_up_count": null,
+      "sector_up_ratio": null,
+      "long_mainline_score_100": 78.94,
+      "short_mainline_score_100": 43.38,
+      "phase9_score_100": null,
+      "phase9_rank": null,
+      "long_mainline_rank": 61,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [],
+      "leader_names": [],
+      "leaders": []
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "氟化工概念",
+      "sector_label": "885551",
+      "member_count": 35,
+      "valid_count": 35,
+      "sector_avg_pct_change": 1.6992,
+      "sector_amount_weighted_pct_change": 0.0824,
+      "sector_up_count": 21,
+      "sector_up_ratio": 0.6,
+      "long_mainline_score_100": 78.76,
+      "short_mainline_score_100": 51.23,
+      "phase9_score_100": 28.79,
+      "phase9_rank": 52,
+      "long_mainline_rank": 62,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002428",
+        "002759",
+        "002250"
+      ],
+      "leader_names": [
+        "云南锗业",
+        "天际股份",
+        "联化科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "002428",
+          "name": "云南锗业",
+          "leader_score": 89.82,
+          "combined_leader_score": 88.55,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002759",
+          "name": "天际股份",
+          "leader_score": 86.26,
+          "combined_leader_score": 82.88,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002250",
+          "name": "联化科技",
+          "leader_score": 76.29,
+          "combined_leader_score": 74.11,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "小金属概念",
+      "sector_label": "885552",
+      "member_count": 102,
+      "valid_count": 102,
+      "sector_avg_pct_change": -2.6632,
+      "sector_amount_weighted_pct_change": -3.6652,
+      "sector_up_count": 19,
+      "sector_up_ratio": 0.1863,
+      "long_mainline_score_100": 78.73,
+      "short_mainline_score_100": 19.89,
+      "phase9_score_100": 24.92,
+      "phase9_rank": 110,
+      "long_mainline_rank": 63,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002149",
+        "603067",
+        "002428"
+      ],
+      "leader_names": [
+        "西部材料",
+        "振华股份",
+        "云南锗业"
+      ],
+      "leaders": [
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 87.66,
+          "combined_leader_score": 84.99,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603067",
+          "name": "振华股份",
+          "leader_score": 86.16,
+          "combined_leader_score": 79.09,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002428",
+          "name": "云南锗业",
+          "leader_score": 86.41,
+          "combined_leader_score": 78.24,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "卫星导航",
+      "sector_label": "885574",
+      "member_count": 90,
+      "valid_count": 90,
+      "sector_avg_pct_change": -1.8907,
+      "sector_amount_weighted_pct_change": -3.9425,
+      "sector_up_count": 15,
+      "sector_up_ratio": 0.1667,
+      "long_mainline_score_100": 78.61,
+      "short_mainline_score_100": 29.83,
+      "phase9_score_100": 31.48,
+      "phase9_rank": 24,
+      "long_mainline_rank": 64,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002428",
+        "002149",
+        "002046"
+      ],
+      "leader_names": [
+        "云南锗业",
+        "西部材料",
+        "国机精工"
+      ],
+      "leaders": [
+        {
+          "symbol": "002428",
+          "name": "云南锗业",
+          "leader_score": 92.9,
+          "combined_leader_score": 83.93,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 90.36,
+          "combined_leader_score": 83.72,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002046",
+          "name": "国机精工",
+          "leader_score": 86.78,
+          "combined_leader_score": 80.28,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "长三角一体化",
+      "sector_label": "885832",
+      "member_count": 79,
+      "valid_count": 79,
+      "sector_avg_pct_change": -1.1856,
+      "sector_amount_weighted_pct_change": -4.2533,
+      "sector_up_count": 21,
+      "sector_up_ratio": 0.2658,
+      "long_mainline_score_100": 77.6,
+      "short_mainline_score_100": 29.21,
+      "phase9_score_100": 26.07,
+      "phase9_rank": 92,
+      "long_mainline_rank": 65,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002491",
+        "600330"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "通鼎互联",
+        "天通股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 94.9,
+          "combined_leader_score": 88.94,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002491",
+          "name": "通鼎互联",
+          "leader_score": 86.37,
+          "combined_leader_score": 80.99,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600330",
+          "name": "天通股份",
+          "leader_score": 85.83,
+          "combined_leader_score": 79.52,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电力设备-电池",
+      "sector_label": "电力设备-电池",
+      "member_count": 20,
+      "valid_count": 20,
+      "sector_avg_pct_change": -0.7806,
+      "sector_amount_weighted_pct_change": -0.3734,
+      "sector_up_count": 8,
+      "sector_up_ratio": 0.4,
+      "long_mainline_score_100": 77.38,
+      "short_mainline_score_100": 18.68,
+      "phase9_score_100": 27.03,
+      "phase9_rank": 84,
+      "long_mainline_rank": 66,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002580",
+        "600152",
+        "600110"
+      ],
+      "leader_names": [
+        "圣阳股份",
+        "维科技术",
+        "诺德股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "002580",
+          "name": "圣阳股份",
+          "leader_score": 83.79,
+          "combined_leader_score": 82.02,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600152",
+          "name": "维科技术",
+          "leader_score": 77.19,
+          "combined_leader_score": 76.53,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600110",
+          "name": "诺德股份",
+          "leader_score": 86.23,
+          "combined_leader_score": 74.77,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电力设备-其他电源设备Ⅱ",
+      "sector_label": "电力设备-其他电源设备Ⅱ",
+      "member_count": 11,
+      "valid_count": 11,
+      "sector_avg_pct_change": -0.9804,
+      "sector_amount_weighted_pct_change": 0.0852,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.3636,
+      "long_mainline_score_100": 77.23,
+      "short_mainline_score_100": 42.66,
+      "phase9_score_100": 29.33,
+      "phase9_rank": 46,
+      "long_mainline_rank": 67,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002364",
+        "002052",
+        "002518"
+      ],
+      "leader_names": [
+        "中恒电气",
+        "同洲电子",
+        "科士达"
+      ],
+      "leaders": [
+        {
+          "symbol": "002364",
+          "name": "中恒电气",
+          "leader_score": 94.31,
+          "combined_leader_score": 90.21,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002052",
+          "name": "同洲电子",
+          "leader_score": 80.38,
+          "combined_leader_score": 76.59,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002518",
+          "name": "科士达",
+          "leader_score": 80.77,
+          "combined_leader_score": 74.79,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "金属铅",
+      "sector_label": "885971",
+      "member_count": 25,
+      "valid_count": 25,
+      "sector_avg_pct_change": -4.9015,
+      "sector_amount_weighted_pct_change": -5.7326,
+      "sector_up_count": 0,
+      "sector_up_ratio": 0.0,
+      "long_mainline_score_100": 76.0,
+      "short_mainline_score_100": 7.67,
+      "phase9_score_100": 22.75,
+      "phase9_rank": 127,
+      "long_mainline_rank": 68,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000426",
+        "600301",
+        "002716"
+      ],
+      "leader_names": [
+        "兴业银锡",
+        "华锡有色",
+        "湖南白银"
+      ],
+      "leaders": [
+        {
+          "symbol": "000426",
+          "name": "兴业银锡",
+          "leader_score": 84.29,
+          "combined_leader_score": 83.88,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600301",
+          "name": "华锡有色",
+          "leader_score": 76.49,
+          "combined_leader_score": 74.2,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002716",
+          "name": "湖南白银",
+          "leader_score": 83.03,
+          "combined_leader_score": 73.35,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "盐湖提锂",
+      "sector_label": "885922",
+      "member_count": 23,
+      "valid_count": 23,
+      "sector_avg_pct_change": -2.6412,
+      "sector_amount_weighted_pct_change": -3.8051,
+      "sector_up_count": 2,
+      "sector_up_ratio": 0.087,
+      "long_mainline_score_100": 75.97,
+      "short_mainline_score_100": 8.13,
+      "phase9_score_100": 26.96,
+      "phase9_rank": 85,
+      "long_mainline_rank": 69,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000408",
+        "002240",
+        "600338"
+      ],
+      "leader_names": [
+        "藏格矿业",
+        "盛新锂能",
+        "西藏珠峰"
+      ],
+      "leaders": [
+        {
+          "symbol": "000408",
+          "name": "藏格矿业",
+          "leader_score": 90.82,
+          "combined_leader_score": 85.16,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002240",
+          "name": "盛新锂能",
+          "leader_score": 82.27,
+          "combined_leader_score": 78.31,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600338",
+          "name": "西藏珠峰",
+          "leader_score": 80.64,
+          "combined_leader_score": 75.28,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "可控核聚变",
+      "sector_label": "886065",
+      "member_count": 55,
+      "valid_count": 55,
+      "sector_avg_pct_change": -1.1024,
+      "sector_amount_weighted_pct_change": -2.2911,
+      "sector_up_count": 16,
+      "sector_up_ratio": 0.2909,
+      "long_mainline_score_100": 75.13,
+      "short_mainline_score_100": 34.6,
+      "phase9_score_100": 27.1,
+      "phase9_rank": 83,
+      "long_mainline_rank": 70,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002149",
+        "000962"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "西部材料",
+        "东方钽业"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 96.17,
+          "combined_leader_score": 89.94,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 85.32,
+          "combined_leader_score": 83.36,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000962",
+          "name": "东方钽业",
+          "leader_score": 83.26,
+          "combined_leader_score": 78.19,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "智能电网",
+      "sector_label": "885311",
+      "member_count": 102,
+      "valid_count": 102,
+      "sector_avg_pct_change": -1.6863,
+      "sector_amount_weighted_pct_change": -3.628,
+      "sector_up_count": 22,
+      "sector_up_ratio": 0.2157,
+      "long_mainline_score_100": 75.05,
+      "short_mainline_score_100": 31.04,
+      "phase9_score_100": 31.41,
+      "phase9_rank": 25,
+      "long_mainline_rank": 71,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600487",
+        "601869",
+        "002851"
+      ],
+      "leader_names": [
+        "亨通光电",
+        "长飞光纤",
+        "麦格米特"
+      ],
+      "leaders": [
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 96.0,
+          "combined_leader_score": 87.45,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 91.63,
+          "combined_leader_score": 84.45,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002851",
+          "name": "麦格米特",
+          "leader_score": 90.18,
+          "combined_leader_score": 82.95,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "军工",
+      "sector_label": "885700",
+      "member_count": 227,
+      "valid_count": 227,
+      "sector_avg_pct_change": -1.0424,
+      "sector_amount_weighted_pct_change": -2.4453,
+      "sector_up_count": 61,
+      "sector_up_ratio": 0.2687,
+      "long_mainline_score_100": 75.02,
+      "short_mainline_score_100": 28.82,
+      "phase9_score_100": 28.51,
+      "phase9_rank": 58,
+      "long_mainline_rank": 72,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002428",
+        "600487"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "云南锗业",
+        "亨通光电"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 96.53,
+          "combined_leader_score": 86.88,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002428",
+          "name": "云南锗业",
+          "leader_score": 91.27,
+          "combined_leader_score": 84.11,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 96.47,
+          "combined_leader_score": 83.68,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "华为海思概念股",
+      "sector_label": "885843",
+      "member_count": 14,
+      "valid_count": 14,
+      "sector_avg_pct_change": -1.3805,
+      "sector_amount_weighted_pct_change": 0.4124,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.2857,
+      "long_mainline_score_100": 74.77,
+      "short_mainline_score_100": 52.44,
+      "phase9_score_100": 28.59,
+      "phase9_rank": 56,
+      "long_mainline_rank": 73,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002402",
+        "003031",
+        "002371"
+      ],
+      "leader_names": [
+        "和而泰",
+        "中瓷电子",
+        "北方华创"
+      ],
+      "leaders": [
+        {
+          "symbol": "002402",
+          "name": "和而泰",
+          "leader_score": 78.36,
+          "combined_leader_score": 76.68,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "003031",
+          "name": "中瓷电子",
+          "leader_score": 85.69,
+          "combined_leader_score": 78.53,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        },
+        {
+          "symbol": "002371",
+          "name": "北方华创",
+          "leader_score": 80.04,
+          "combined_leader_score": 72.33,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "航空发动机",
+      "sector_label": "885884",
+      "member_count": 30,
+      "valid_count": 30,
+      "sector_avg_pct_change": 0.1948,
+      "sector_amount_weighted_pct_change": 0.806,
+      "sector_up_count": 10,
+      "sector_up_ratio": 0.3333,
+      "long_mainline_score_100": 74.3,
+      "short_mainline_score_100": 36.94,
+      "phase9_score_100": 25.59,
+      "phase9_rank": 98,
+      "long_mainline_rank": 74,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002149",
+        "002361",
+        "000962"
+      ],
+      "leader_names": [
+        "西部材料",
+        "神剑股份",
+        "东方钽业"
+      ],
+      "leaders": [
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 87.22,
+          "combined_leader_score": 84.01,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002361",
+          "name": "神剑股份",
+          "leader_score": 85.86,
+          "combined_leader_score": 83.36,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000962",
+          "name": "东方钽业",
+          "leader_score": 85.78,
+          "combined_leader_score": 80.3,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "金属回收",
+      "sector_label": "885972",
+      "member_count": 41,
+      "valid_count": 41,
+      "sector_avg_pct_change": -2.7894,
+      "sector_amount_weighted_pct_change": -3.6468,
+      "sector_up_count": 6,
+      "sector_up_ratio": 0.1463,
+      "long_mainline_score_100": 74.17,
+      "short_mainline_score_100": 27.42,
+      "phase9_score_100": 22.88,
+      "phase9_rank": 126,
+      "long_mainline_rank": 75,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002716",
+        "001203",
+        "600961"
+      ],
+      "leader_names": [
+        "湖南白银",
+        "大中矿业",
+        "株冶集团"
+      ],
+      "leaders": [
+        {
+          "symbol": "002716",
+          "name": "湖南白银",
+          "leader_score": 81.9,
+          "combined_leader_score": 79.07,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "001203",
+          "name": "大中矿业",
+          "leader_score": 79.21,
+          "combined_leader_score": 78.86,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600961",
+          "name": "株冶集团",
+          "leader_score": 78.4,
+          "combined_leader_score": 77.3,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "3D打印",
+      "sector_label": "885537",
+      "member_count": 39,
+      "valid_count": 39,
+      "sector_avg_pct_change": 0.2021,
+      "sector_amount_weighted_pct_change": -0.2004,
+      "sector_up_count": 14,
+      "sector_up_ratio": 0.359,
+      "long_mainline_score_100": 73.62,
+      "short_mainline_score_100": 40.84,
+      "phase9_score_100": 32.56,
+      "phase9_rank": 17,
+      "long_mainline_rank": 76,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "605376",
+        "002361"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "博迁新材",
+        "神剑股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 95.53,
+          "combined_leader_score": 92.22,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "605376",
+          "name": "博迁新材",
+          "leader_score": 90.11,
+          "combined_leader_score": 86.24,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002361",
+          "name": "神剑股份",
+          "leader_score": 84.74,
+          "combined_leader_score": 82.12,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "有色金属-金属新材料",
+      "sector_label": "有色金属-金属新材料",
+      "member_count": 9,
+      "valid_count": 9,
+      "sector_avg_pct_change": 0.0639,
+      "sector_amount_weighted_pct_change": 1.3594,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.4444,
+      "long_mainline_score_100": 73.32,
+      "short_mainline_score_100": 42.05,
+      "phase9_score_100": 25.15,
+      "phase9_rank": 105,
+      "long_mainline_rank": 77,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000969",
+        "603978",
+        "600366"
+      ],
+      "leader_names": [
+        "安泰科技",
+        "深圳新星",
+        "宁波韵升"
+      ],
+      "leaders": [
+        {
+          "symbol": "000969",
+          "name": "安泰科技",
+          "leader_score": 85.5,
+          "combined_leader_score": 82.17,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603978",
+          "name": "深圳新星",
+          "leader_score": 92.83,
+          "combined_leader_score": 80.58,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600366",
+          "name": "宁波韵升",
+          "leader_score": 79.16,
+          "combined_leader_score": 75.98,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "钠离子电池",
+      "sector_label": "885928",
+      "member_count": 51,
+      "valid_count": 51,
+      "sector_avg_pct_change": -1.0149,
+      "sector_amount_weighted_pct_change": -2.3191,
+      "sector_up_count": 17,
+      "sector_up_ratio": 0.3333,
+      "long_mainline_score_100": 73.24,
+      "short_mainline_score_100": 27.91,
+      "phase9_score_100": 28.78,
+      "phase9_rank": 53,
+      "long_mainline_rank": 78,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600869",
+        "002580",
+        "002759"
+      ],
+      "leader_names": [
+        "远东股份",
+        "圣阳股份",
+        "天际股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 89.21,
+          "combined_leader_score": 82.55,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002580",
+          "name": "圣阳股份",
+          "leader_score": 86.08,
+          "combined_leader_score": 80.89,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002759",
+          "name": "天际股份",
+          "leader_score": 80.04,
+          "combined_leader_score": 78.27,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "商业航天",
+      "sector_label": "886078",
+      "member_count": 176,
+      "valid_count": 176,
+      "sector_avg_pct_change": -1.5657,
+      "sector_amount_weighted_pct_change": -3.1729,
+      "sector_up_count": 40,
+      "sector_up_ratio": 0.2273,
+      "long_mainline_score_100": 73.22,
+      "short_mainline_score_100": 29.3,
+      "phase9_score_100": 29.38,
+      "phase9_rank": 43,
+      "long_mainline_rank": 79,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "002428",
+        "002149"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "云南锗业",
+        "西部材料"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 96.71,
+          "combined_leader_score": 88.4,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002428",
+          "name": "云南锗业",
+          "leader_score": 90.12,
+          "combined_leader_score": 83.4,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 87.61,
+          "combined_leader_score": 82.43,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "汽车电子",
+      "sector_label": "885545",
+      "member_count": 146,
+      "valid_count": 146,
+      "sector_avg_pct_change": -0.4911,
+      "sector_amount_weighted_pct_change": -1.354,
+      "sector_up_count": 49,
+      "sector_up_ratio": 0.3356,
+      "long_mainline_score_100": 73.17,
+      "short_mainline_score_100": 42.36,
+      "phase9_score_100": 27.73,
+      "phase9_rank": 74,
+      "long_mainline_rank": 80,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "001309",
+        "002916",
+        "603920"
+      ],
+      "leader_names": [
+        "德明利",
+        "深南电路",
+        "世运电路"
+      ],
+      "leaders": [
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 91.85,
+          "combined_leader_score": 84.46,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002916",
+          "name": "深南电路",
+          "leader_score": 91.4,
+          "combined_leader_score": 81.03,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        },
+        {
+          "symbol": "603920",
+          "name": "世运电路",
+          "leader_score": 86.21,
+          "combined_leader_score": 78.93,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "机械设备-自动化设备",
+      "sector_label": "机械设备-自动化设备",
+      "member_count": 17,
+      "valid_count": 17,
+      "sector_avg_pct_change": 2.9172,
+      "sector_amount_weighted_pct_change": 0.6361,
+      "sector_up_count": 15,
+      "sector_up_ratio": 0.8824,
+      "long_mainline_score_100": 73.17,
+      "short_mainline_score_100": 80.84,
+      "phase9_score_100": 30.28,
+      "phase9_rank": 34,
+      "long_mainline_rank": 81,
+      "short_mainline_rank_in_long_pool": 1,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002975",
+        "002979",
+        "603203"
+      ],
+      "leader_names": [
+        "博杰股份",
+        "雷赛智能",
+        "快克智能"
+      ],
+      "leaders": [
+        {
+          "symbol": "002975",
+          "name": "博杰股份",
+          "leader_score": 83.44,
+          "combined_leader_score": 81.01,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002979",
+          "name": "雷赛智能",
+          "leader_score": 81.11,
+          "combined_leader_score": 79.44,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603203",
+          "name": "快克智能",
+          "leader_score": 77.26,
+          "combined_leader_score": 77.22,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "金属锌",
+      "sector_label": "885970",
+      "member_count": 28,
+      "valid_count": 28,
+      "sector_avg_pct_change": -4.4377,
+      "sector_amount_weighted_pct_change": -5.5357,
+      "sector_up_count": 0,
+      "sector_up_ratio": 0.0,
+      "long_mainline_score_100": 72.93,
+      "short_mainline_score_100": 11.64,
+      "phase9_score_100": 19.28,
+      "phase9_rank": 154,
+      "long_mainline_rank": 82,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000426",
+        "600301",
+        "002716"
+      ],
+      "leader_names": [
+        "兴业银锡",
+        "华锡有色",
+        "湖南白银"
+      ],
+      "leaders": [
+        {
+          "symbol": "000426",
+          "name": "兴业银锡",
+          "leader_score": 85.66,
+          "combined_leader_score": 84.82,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600301",
+          "name": "华锡有色",
+          "leader_score": 74.91,
+          "combined_leader_score": 74.51,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002716",
+          "name": "湖南白银",
+          "leader_score": 77.73,
+          "combined_leader_score": 71.63,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "数据中心",
+      "sector_label": "885887",
+      "member_count": 235,
+      "valid_count": 235,
+      "sector_avg_pct_change": -1.226,
+      "sector_amount_weighted_pct_change": -2.3002,
+      "sector_up_count": 67,
+      "sector_up_ratio": 0.2851,
+      "long_mainline_score_100": 72.83,
+      "short_mainline_score_100": 32.65,
+      "phase9_score_100": 28.18,
+      "phase9_rank": 65,
+      "long_mainline_rank": 83,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600487",
+        "603256",
+        "001309"
+      ],
+      "leader_names": [
+        "亨通光电",
+        "宏和科技",
+        "德明利"
+      ],
+      "leaders": [
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 94.61,
+          "combined_leader_score": 86.09,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603256",
+          "name": "宏和科技",
+          "leader_score": 90.13,
+          "combined_leader_score": 85.52,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 90.15,
+          "combined_leader_score": 84.87,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "丙烯酸",
+      "sector_label": "885829",
+      "member_count": 13,
+      "valid_count": 13,
+      "sector_avg_pct_change": 1.7585,
+      "sector_amount_weighted_pct_change": 1.1483,
+      "sector_up_count": 9,
+      "sector_up_ratio": 0.6923,
+      "long_mainline_score_100": 72.52,
+      "short_mainline_score_100": 45.87,
+      "phase9_score_100": 26.9,
+      "phase9_rank": 87,
+      "long_mainline_rank": 84,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "605589",
+        "600800",
+        "603928"
+      ],
+      "leader_names": [
+        "圣泉集团",
+        "渤海化学",
+        "兴业股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "605589",
+          "name": "圣泉集团",
+          "leader_score": 87.73,
+          "combined_leader_score": 79.7,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选"
+        },
+        {
+          "symbol": "600800",
+          "name": "渤海化学",
+          "leader_score": 89.8,
+          "combined_leader_score": 76.51,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        },
+        {
+          "symbol": "603928",
+          "name": "兴业股份",
+          "leader_score": 83.17,
+          "combined_leader_score": 73.03,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "PM2.5",
+      "sector_label": "885555",
+      "member_count": 9,
+      "valid_count": 8,
+      "sector_avg_pct_change": 0.0185,
+      "sector_amount_weighted_pct_change": 0.9726,
+      "sector_up_count": 4,
+      "sector_up_ratio": 0.5,
+      "long_mainline_score_100": 72.28,
+      "short_mainline_score_100": 52.49,
+      "phase9_score_100": 23.36,
+      "phase9_rank": 124,
+      "long_mainline_rank": 85,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002980",
+        "603286",
+        "000551"
+      ],
+      "leader_names": [
+        "华盛昌",
+        "日盈电子",
+        "创元科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "002980",
+          "name": "华盛昌",
+          "leader_score": 89.75,
+          "combined_leader_score": 88.58,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603286",
+          "name": "日盈电子",
+          "leader_score": 88.2,
+          "combined_leader_score": 82.59,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000551",
+          "name": "创元科技",
+          "leader_score": 77.87,
+          "combined_leader_score": 73.4,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "特斯拉概念",
+      "sector_label": "885467",
+      "member_count": 106,
+      "valid_count": 106,
+      "sector_avg_pct_change": 0.3473,
+      "sector_amount_weighted_pct_change": 0.3696,
+      "sector_up_count": 51,
+      "sector_up_ratio": 0.4811,
+      "long_mainline_score_100": 71.74,
+      "short_mainline_score_100": 43.59,
+      "phase9_score_100": 28.56,
+      "phase9_rank": 57,
+      "long_mainline_rank": 86,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603306",
+        "002384",
+        "603228"
+      ],
+      "leader_names": [
+        "华懋科技",
+        "东山精密",
+        "景旺电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "603306",
+          "name": "华懋科技",
+          "leader_score": 92.97,
+          "combined_leader_score": 83.31,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 94.79,
+          "combined_leader_score": 83.6,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        },
+        {
+          "symbol": "603228",
+          "name": "景旺电子",
+          "leader_score": 86.9,
+          "combined_leader_score": 78.93,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "建筑材料-玻璃玻纤",
+      "sector_label": "建筑材料-玻璃玻纤",
+      "member_count": 8,
+      "valid_count": 8,
+      "sector_avg_pct_change": -3.8747,
+      "sector_amount_weighted_pct_change": -6.4863,
+      "sector_up_count": 1,
+      "sector_up_ratio": 0.125,
+      "long_mainline_score_100": 71.16,
+      "short_mainline_score_100": 24.99,
+      "phase9_score_100": 25.39,
+      "phase9_rank": 102,
+      "long_mainline_rank": 87,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603601",
+        "600176",
+        "002201"
+      ],
+      "leader_names": [
+        "再升科技",
+        "中国巨石",
+        "九鼎新材"
+      ],
+      "leaders": [
+        {
+          "symbol": "603601",
+          "name": "再升科技",
+          "leader_score": 97.1,
+          "combined_leader_score": 93.65,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600176",
+          "name": "中国巨石",
+          "leader_score": 88.5,
+          "combined_leader_score": 81.41,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002201",
+          "name": "九鼎新材",
+          "leader_score": 87.69,
+          "combined_leader_score": 72.19,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "电子-消费电子",
+      "sector_label": "电子-消费电子",
+      "member_count": 29,
+      "valid_count": 29,
+      "sector_avg_pct_change": -0.6182,
+      "sector_amount_weighted_pct_change": -1.2407,
+      "sector_up_count": 7,
+      "sector_up_ratio": 0.2414,
+      "long_mainline_score_100": 71.04,
+      "short_mainline_score_100": 40.5,
+      "phase9_score_100": 29.23,
+      "phase9_rank": 49,
+      "long_mainline_rank": 88,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002947",
+        "603052",
+        "601231"
+      ],
+      "leader_names": [
+        "恒铭达",
+        "可川科技",
+        "环旭电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "002947",
+          "name": "恒铭达",
+          "leader_score": 87.15,
+          "combined_leader_score": 83.94,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603052",
+          "name": "可川科技",
+          "leader_score": 82.46,
+          "combined_leader_score": 78.68,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601231",
+          "name": "环旭电子",
+          "leader_score": 79.07,
+          "combined_leader_score": 76.04,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "人民币贬值受益",
+      "sector_label": "885840",
+      "member_count": 217,
+      "valid_count": 216,
+      "sector_avg_pct_change": -0.8258,
+      "sector_amount_weighted_pct_change": -1.3087,
+      "sector_up_count": 70,
+      "sector_up_ratio": 0.3241,
+      "long_mainline_score_100": 70.49,
+      "short_mainline_score_100": 28.55,
+      "phase9_score_100": 21.95,
+      "phase9_rank": 135,
+      "long_mainline_rank": 89,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "001309",
+        "002384",
+        "605376"
+      ],
+      "leader_names": [
+        "德明利",
+        "东山精密",
+        "博迁新材"
+      ],
+      "leaders": [
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "leader_score": 92.59,
+          "combined_leader_score": 87.72,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002384",
+          "name": "东山精密",
+          "leader_score": 94.75,
+          "combined_leader_score": 81.5,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        },
+        {
+          "symbol": "605376",
+          "name": "博迁新材",
+          "leader_score": 86.17,
+          "combined_leader_score": 78.52,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "国防军工-航天装备Ⅱ",
+      "sector_label": "国防军工-航天装备Ⅱ",
+      "member_count": 5,
+      "valid_count": 5,
+      "sector_avg_pct_change": -3.0647,
+      "sector_amount_weighted_pct_change": -4.057,
+      "sector_up_count": 0,
+      "sector_up_ratio": 0.0,
+      "long_mainline_score_100": 70.48,
+      "short_mainline_score_100": 26.06,
+      "phase9_score_100": 23.99,
+      "phase9_rank": 118,
+      "long_mainline_rank": 90,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600118",
+        "600879",
+        "601698"
+      ],
+      "leader_names": [
+        "中国卫星",
+        "航天电子",
+        "中国卫通"
+      ],
+      "leaders": [
+        {
+          "symbol": "600118",
+          "name": "中国卫星",
+          "leader_score": 97.5,
+          "combined_leader_score": 96.65,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600879",
+          "name": "航天电子",
+          "leader_score": 76.0,
+          "combined_leader_score": 72.79,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选"
+        },
+        {
+          "symbol": "601698",
+          "name": "中国卫通",
+          "leader_score": 72.46,
+          "combined_leader_score": 59.28,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "柔性屏(折叠屏)",
+      "sector_label": "885809",
+      "member_count": 34,
+      "valid_count": 34,
+      "sector_avg_pct_change": -1.6402,
+      "sector_amount_weighted_pct_change": -0.963,
+      "sector_up_count": 7,
+      "sector_up_ratio": 0.2059,
+      "long_mainline_score_100": 70.31,
+      "short_mainline_score_100": 38.87,
+      "phase9_score_100": 29.66,
+      "phase9_rank": 39,
+      "long_mainline_rank": 91,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002149",
+        "603228",
+        "601208"
+      ],
+      "leader_names": [
+        "西部材料",
+        "景旺电子",
+        "东材科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "002149",
+          "name": "西部材料",
+          "leader_score": 91.2,
+          "combined_leader_score": 85.72,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603228",
+          "name": "景旺电子",
+          "leader_score": 85.52,
+          "combined_leader_score": 81.64,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601208",
+          "name": "东材科技",
+          "leader_score": 93.38,
+          "combined_leader_score": 84.86,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "金属铜",
+      "sector_label": "885973",
+      "member_count": 62,
+      "valid_count": 62,
+      "sector_avg_pct_change": -3.7415,
+      "sector_amount_weighted_pct_change": -4.9818,
+      "sector_up_count": 3,
+      "sector_up_ratio": 0.0484,
+      "long_mainline_score_100": 69.19,
+      "short_mainline_score_100": 13.64,
+      "phase9_score_100": 25.64,
+      "phase9_rank": 97,
+      "long_mainline_rank": 92,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "000426",
+        "002842",
+        "000510"
+      ],
+      "leader_names": [
+        "兴业银锡",
+        "翔鹭钨业",
+        "新金路"
+      ],
+      "leaders": [
+        {
+          "symbol": "000426",
+          "name": "兴业银锡",
+          "leader_score": 84.04,
+          "combined_leader_score": 79.64,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002842",
+          "name": "翔鹭钨业",
+          "leader_score": 82.99,
+          "combined_leader_score": 78.58,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "000510",
+          "name": "新金路",
+          "leader_score": 74.99,
+          "combined_leader_score": 74.8,
+          "leader_type": "swing",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "PVDF概念",
+      "sector_label": "885931",
+      "member_count": 10,
+      "valid_count": 10,
+      "sector_avg_pct_change": 0.1372,
+      "sector_amount_weighted_pct_change": 0.5773,
+      "sector_up_count": 5,
+      "sector_up_ratio": 0.5,
+      "long_mainline_score_100": 69.1,
+      "short_mainline_score_100": 51.98,
+      "phase9_score_100": 29.36,
+      "phase9_rank": 44,
+      "long_mainline_rank": 93,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603978",
+        "002522",
+        "603659"
+      ],
+      "leader_names": [
+        "深圳新星",
+        "浙江众成",
+        "璞泰来"
+      ],
+      "leaders": [
+        {
+          "symbol": "603978",
+          "name": "深圳新星",
+          "leader_score": 95.41,
+          "combined_leader_score": 79.97,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        },
+        {
+          "symbol": "002522",
+          "name": "浙江众成",
+          "leader_score": 80.05,
+          "combined_leader_score": 71.53,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        },
+        {
+          "symbol": "603659",
+          "name": "璞泰来",
+          "leader_score": 78.19,
+          "combined_leader_score": 66.48,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "碳纤维",
+      "sector_label": "885650",
+      "member_count": 31,
+      "valid_count": 31,
+      "sector_avg_pct_change": -0.3318,
+      "sector_amount_weighted_pct_change": 1.2193,
+      "sector_up_count": 10,
+      "sector_up_ratio": 0.3226,
+      "long_mainline_score_100": 68.2,
+      "short_mainline_score_100": 36.51,
+      "phase9_score_100": 28.71,
+      "phase9_rank": 54,
+      "long_mainline_rank": 94,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600590",
+        "002600",
+        "000969"
+      ],
+      "leader_names": [
+        "泰豪科技",
+        "领益智造",
+        "安泰科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "600590",
+          "name": "泰豪科技",
+          "leader_score": 76.04,
+          "combined_leader_score": 75.38,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002600",
+          "name": "领益智造",
+          "leader_score": 91.75,
+          "combined_leader_score": 77.52,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        },
+        {
+          "symbol": "000969",
+          "name": "安泰科技",
+          "leader_score": 74.7,
+          "combined_leader_score": 71.78,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "比亚迪概念",
+      "sector_label": "885997",
+      "member_count": 243,
+      "valid_count": 243,
+      "sector_avg_pct_change": -0.0249,
+      "sector_amount_weighted_pct_change": -0.0783,
+      "sector_up_count": 102,
+      "sector_up_ratio": 0.4198,
+      "long_mainline_score_100": 66.41,
+      "short_mainline_score_100": 39.96,
+      "phase9_score_100": 27.84,
+      "phase9_rank": 72,
+      "long_mainline_rank": 95,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "603306",
+        "603228"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "华懋科技",
+        "景旺电子"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 96.42,
+          "combined_leader_score": 87.41,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603306",
+          "name": "华懋科技",
+          "leader_score": 95.2,
+          "combined_leader_score": 79.52,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        },
+        {
+          "symbol": "603228",
+          "name": "景旺电子",
+          "leader_score": 87.81,
+          "combined_leader_score": 78.87,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "industry",
+      "sector_name": "家用电器-家电零部件Ⅱ",
+      "sector_label": "家用电器-家电零部件Ⅱ",
+      "member_count": 13,
+      "valid_count": 13,
+      "sector_avg_pct_change": 0.6394,
+      "sector_amount_weighted_pct_change": 2.9513,
+      "sector_up_count": 7,
+      "sector_up_ratio": 0.5385,
+      "long_mainline_score_100": 66.22,
+      "short_mainline_score_100": 60.39,
+      "phase9_score_100": 27.62,
+      "phase9_rank": 77,
+      "long_mainline_rank": 96,
+      "short_mainline_rank_in_long_pool": 8,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": true,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002290",
+        "002050",
+        "603150"
+      ],
+      "leader_names": [
+        "禾盛新材",
+        "三花智控",
+        "万朗磁塑"
+      ],
+      "leaders": [
+        {
+          "symbol": "002290",
+          "name": "禾盛新材",
+          "leader_score": 93.42,
+          "combined_leader_score": 91.78,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002050",
+          "name": "三花智控",
+          "leader_score": 80.37,
+          "combined_leader_score": 76.02,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "603150",
+          "name": "万朗磁塑",
+          "leader_score": 79.71,
+          "combined_leader_score": 74.53,
+          "leader_type": "swing",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "AI眼镜",
+      "sector_label": "886085",
+      "member_count": 49,
+      "valid_count": 49,
+      "sector_avg_pct_change": -1.3832,
+      "sector_amount_weighted_pct_change": -1.9315,
+      "sector_up_count": 14,
+      "sector_up_ratio": 0.2857,
+      "long_mainline_score_100": 64.77,
+      "short_mainline_score_100": 43.01,
+      "phase9_score_100": 28.88,
+      "phase9_rank": 51,
+      "long_mainline_rank": 97,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "603920",
+        "002980",
+        "600330"
+      ],
+      "leader_names": [
+        "世运电路",
+        "华盛昌",
+        "天通股份"
+      ],
+      "leaders": [
+        {
+          "symbol": "603920",
+          "name": "世运电路",
+          "leader_score": 86.75,
+          "combined_leader_score": 81.3,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002980",
+          "name": "华盛昌",
+          "leader_score": 83.36,
+          "combined_leader_score": 78.74,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600330",
+          "name": "天通股份",
+          "leader_score": 89.64,
+          "combined_leader_score": 81.32,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选/波段活跃候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "新能源汽车",
+      "sector_label": "885431",
+      "member_count": 405,
+      "valid_count": 403,
+      "sector_avg_pct_change": -0.2523,
+      "sector_amount_weighted_pct_change": -1.4974,
+      "sector_up_count": 167,
+      "sector_up_ratio": 0.4144,
+      "long_mainline_score_100": 63.75,
+      "short_mainline_score_100": 34.7,
+      "phase9_score_100": 25.98,
+      "phase9_rank": 94,
+      "long_mainline_rank": 98,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "600105",
+        "601869",
+        "600487"
+      ],
+      "leader_names": [
+        "永鼎股份",
+        "长飞光纤",
+        "亨通光电"
+      ],
+      "leaders": [
+        {
+          "symbol": "600105",
+          "name": "永鼎股份",
+          "leader_score": 95.23,
+          "combined_leader_score": 85.27,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "601869",
+          "name": "长飞光纤",
+          "leader_score": 92.35,
+          "combined_leader_score": 85.03,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600487",
+          "name": "亨通光电",
+          "leader_score": 95.99,
+          "combined_leader_score": 83.54,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "宁德时代概念",
+      "sector_label": "885789",
+      "member_count": 95,
+      "valid_count": 95,
+      "sector_avg_pct_change": -0.4743,
+      "sector_amount_weighted_pct_change": 0.132,
+      "sector_up_count": 39,
+      "sector_up_ratio": 0.4105,
+      "long_mainline_score_100": 63.45,
+      "short_mainline_score_100": 33.71,
+      "phase9_score_100": 25.25,
+      "phase9_rank": 103,
+      "long_mainline_rank": 99,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "002759",
+        "600869",
+        "002080"
+      ],
+      "leader_names": [
+        "天际股份",
+        "远东股份",
+        "中材科技"
+      ],
+      "leaders": [
+        {
+          "symbol": "002759",
+          "name": "天际股份",
+          "leader_score": 81.11,
+          "combined_leader_score": 80.82,
+          "leader_type": "long_term",
+          "leader_tags": "波段先锋/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600869",
+          "name": "远东股份",
+          "leader_score": 86.94,
+          "combined_leader_score": 78.9,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        },
+        {
+          "symbol": "002080",
+          "name": "中材科技",
+          "leader_score": 87.55,
+          "combined_leader_score": 76.87,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心/长期核心候选"
+        }
+      ]
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_type": "concept",
+      "sector_name": "光伏概念",
+      "sector_label": "885531",
+      "member_count": 248,
+      "valid_count": 246,
+      "sector_avg_pct_change": -1.2374,
+      "sector_amount_weighted_pct_change": -2.2994,
+      "sector_up_count": 68,
+      "sector_up_ratio": 0.2764,
+      "long_mainline_score_100": 63.21,
+      "short_mainline_score_100": 32.08,
+      "phase9_score_100": 30.62,
+      "phase9_rank": 30,
+      "long_mainline_rank": 100,
+      "short_mainline_rank_in_long_pool": null,
+      "phase9_rank_in_long_pool": null,
+      "selected_as_long_mainline": true,
+      "selected_as_short_mainline": false,
+      "selected_as_phase9_buy": false,
+      "leader_symbols": [
+        "601208",
+        "600330",
+        "002046"
+      ],
+      "leader_names": [
+        "东材科技",
+        "天通股份",
+        "国机精工"
+      ],
+      "leaders": [
+        {
+          "symbol": "601208",
+          "name": "东材科技",
+          "leader_score": 92.85,
+          "combined_leader_score": 84.56,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "600330",
+          "name": "天通股份",
+          "leader_score": 91.34,
+          "combined_leader_score": 83.27,
+          "leader_type": "long_term",
+          "leader_tags": "双重龙头/长期核心候选/波段活跃候选"
+        },
+        {
+          "symbol": "002046",
+          "name": "国机精工",
+          "leader_score": 90.76,
+          "combined_leader_score": 81.5,
+          "leader_type": "long_term",
+          "leader_tags": "长期核心候选/波段活跃候选"
+        }
+      ]
+    }
+  ]
+}
