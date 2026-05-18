@@ -13,12 +13,20 @@ from time import perf_counter
 import pandas as pd
 
 from .config import load_config
+from .concern_sectors import (
+    ConcernSectorResult,
+    concern_sector_members_path,
+    stock_concern_sectors_path,
+    write_concern_sector_frames_from_files,
+)
 from .daily_returns import write_full_market_daily_returns
 from .full_market_return import alpha158_qlib_return_predictions_path
 from .full_market_risk import barrier_risk_predictions_path, tail_risk_predictions_path
+from .route_watchlists import RouteWatchlistResult, write_route_watchlists_from_files
 from .sector_membership import sector_membership_path, sector_performance_path
 from .sector_leaders import sector_leader_scores_all_path, sector_leaders_path
 from .sector_phase9 import sector_phase9_model_path, sector_phase9_predictions_path
+from .sector_report_cleanup import cleanup_obsolete_daily_reports, cleanup_sector_reports
 from .sector_tracking_workbook import write_sector_daily_tracking_workbook
 from .sector_watchlist import (
     build_sector_tracking_payload_from_files,
@@ -26,15 +34,7 @@ from .sector_watchlist import (
     watchlist_sectors_path,
     write_sector_watchlist,
 )
-from .track_stock import update_track_stock_workbook
 from .trading_calendar import is_trading_day
-from .watchlist import (
-    build_intraday_pool_candidates,
-    build_phase_daily_watchlist_candidates,
-    load_watchlist,
-    write_intraday_pool,
-    write_watchlist_stocks,
-)
 
 
 PICKS_FILENAME = "选股.md"
@@ -46,9 +46,10 @@ class ScreeningResult:
     skipped: bool
     message: str
     report_path: Path | None = None
-    watchlist_path: Path | None = None
-    intraday_pool_path: Path | None = None
-    track_stock_path: Path | None = None
+    a1_watchlist_path: Path | None = None
+    a2_watchlist_path: Path | None = None
+    b_watchlist_path: Path | None = None
+    sector_leader_pool_path: Path | None = None
 
 
 def run_daily_screening(
@@ -107,11 +108,16 @@ def run_daily_screening(
     full_market_returns_path = _run_full_market_daily_returns_stage(8, total_stages, project_root, trade_date)
     _run_project_stage(9, total_stages, "pattern", project_root, ["pattern", "--as-of", trade_date.isoformat()])
     _run_project_stage(10, total_stages, "sector_leaders", project_root, ["analyze-sector-leaders", "--date", trade_date.isoformat(), "--top-n", "10"])
-    _run_phase9_stage(11, total_stages, project_root, trade_date)
-    generated_watchlist_path, watchlist_payload = _run_phase_watchlist_stage(12, total_stages, project_root, trade_date)
-    generated_intraday_pool_path, intraday_pool_payload = _run_intraday_pool_stage(13, total_stages, project_root, trade_date)
-    generated_sector_watchlist_path, sector_watchlist_payload = _run_sector_watchlist_stage(14, total_stages, project_root, trade_date)
-    track_stock_path = _run_track_stock_stage(15, total_stages, project_root, trade_date)
+    concern_result = _run_concern_sector_stage(11, total_stages, project_root, trade_date)
+    _run_phase9_stage(12, total_stages, project_root, trade_date)
+    generated_sector_watchlist_path, sector_watchlist_payload = _run_sector_watchlist_stage(13, total_stages, project_root, trade_date)
+    route_result = _run_route_watchlist_stage(
+        14,
+        total_stages,
+        project_root,
+        trade_date,
+    )
+    _run_sector_report_cleanup_stage(15, total_stages, project_root, trade_date)
 
     macd_path = _macd_report_path(project_root, trade_date)
     atr_path = _atr_report_path(project_root, trade_date)
@@ -127,12 +133,10 @@ def run_daily_screening(
     report_path = _write_run_report(
         project_root,
         trade_date,
-        watchlist_payload,
-        generated_watchlist_path,
-        intraday_pool_payload=intraday_pool_payload,
-        intraday_pool_path=generated_intraday_pool_path,
         sector_watchlist_payload=sector_watchlist_payload,
         sector_watchlist_path=generated_sector_watchlist_path,
+        concern_result=concern_result,
+        route_result=route_result,
         macd_path=macd_path if macd_path.exists() else None,
         atr_path=atr_path if atr_path.exists() else None,
         pattern_path=pattern_path if pattern_path.exists() else None,
@@ -145,17 +149,19 @@ def run_daily_screening(
         sector_leaders_path=sector_leaders_report_path if sector_leaders_report_path.exists() else None,
         sector_leader_scores_all_path=sector_leader_scores_all_report_path if sector_leader_scores_all_report_path.exists() else None,
         phase9_path=phase9_path if phase9_path.exists() else None,
-        track_stock_path=track_stock_path if track_stock_path.exists() else None,
-        filter_summary=watchlist_payload.get("filter_summary") if isinstance(watchlist_payload, dict) else None,
     )
     return ScreeningResult(
         trade_date=trade_date,
         skipped=False,
-        message=f"已完成 {trade_date.isoformat()} 每日筛选，并生成 {generated_watchlist_path}、{generated_intraday_pool_path} 和 {generated_sector_watchlist_path}",
+        message=(
+            f"已完成 {trade_date.isoformat()} 每日筛选，并生成 A1/A2/B 路线 watchlist、"
+            f"{generated_sector_watchlist_path} 和 {route_result.sector_leader_pool_path}"
+        ),
         report_path=report_path,
-        watchlist_path=generated_watchlist_path,
-        intraday_pool_path=generated_intraday_pool_path,
-        track_stock_path=track_stock_path,
+        a1_watchlist_path=route_result.a1_path,
+        a2_watchlist_path=route_result.a2_path,
+        b_watchlist_path=route_result.b_path,
+        sector_leader_pool_path=route_result.sector_leader_pool_path,
     )
 
 
@@ -205,92 +211,38 @@ def _run_full_market_daily_returns_stage(stage_index: int, total_stages: int, pr
     return target
 
 
-def _run_phase_watchlist_stage(
+def _run_concern_sector_stage(
     stage_index: int,
     total_stages: int,
     project_root: Path,
     trade_date: date,
-) -> tuple[Path, dict[str, object]]:
+) -> ConcernSectorResult:
     started_at = perf_counter()
-    print(f"[{stage_index}/{total_stages}] 开始 watchlist_stocks...", flush=True)
-    pattern_path = _pattern_report_path(project_root, trade_date)
-    phase1_path = tail_risk_predictions_path(project_root, trade_date)
-    phase2_path = barrier_risk_predictions_path(project_root, trade_date)
-    phase4_path = alpha158_qlib_return_predictions_path(project_root, trade_date)
-    macd_path = _macd_report_path(project_root, trade_date)
-    atr_path = _atr_report_path(project_root, trade_date)
-
-    payload = build_phase_daily_watchlist_candidates(
-        trade_date=trade_date,
-        pattern_frame=_read_required_csv(pattern_path),
-        phase1_predictions=_read_required_csv(phase1_path),
-        phase2_predictions=_read_required_csv(phase2_path),
-        phase4_predictions=_read_required_csv(phase4_path),
-        macd_frame=_read_optional_csv(macd_path),
-        atr_frame=_read_optional_csv(atr_path),
-        source_files={
-            "pattern": str(pattern_path),
-            "phase1": str(phase1_path),
-            "phase2": str(phase2_path),
-            "phase4": str(phase4_path),
-            "macd": str(macd_path),
-            "atr": str(atr_path),
-        },
-        phase_filter_rate=0.2,
-        phase4_top_n=20,
-    )
-    target = write_watchlist_stocks(project_root=project_root, trade_date=trade_date, picker_payload=payload)
-    written_payload = load_watchlist(project_root=project_root, trade_date=trade_date, kind="stocks")
+    print(f"[{stage_index}/{total_stages}] 开始 concern_sectors...", flush=True)
+    result = write_concern_sector_frames_from_files(project_root=project_root, trade_date=trade_date)
     elapsed = perf_counter() - started_at
-    print(f"[{stage_index}/{total_stages}] watchlist_stocks 完成，用时 {elapsed:.1f}s。", flush=True)
-    return target, written_payload
+    print(
+        f"[{stage_index}/{total_stages}] concern_sectors 完成，关系 {result.relation_count} 条，弱势股 {result.weak_stock_count} 只，用时 {elapsed:.1f}s。",
+        flush=True,
+    )
+    return result
 
 
-def _run_intraday_pool_stage(
+def _run_route_watchlist_stage(
     stage_index: int,
     total_stages: int,
     project_root: Path,
     trade_date: date,
-) -> tuple[Path, dict[str, object]]:
+) -> RouteWatchlistResult:
     started_at = perf_counter()
-    print(f"[{stage_index}/{total_stages}] 开始 intraday_pool_top200...", flush=True)
-    pattern_path = _pattern_report_path(project_root, trade_date)
-    phase1_path = tail_risk_predictions_path(project_root, trade_date)
-    phase2_path = barrier_risk_predictions_path(project_root, trade_date)
-    phase4_path = alpha158_qlib_return_predictions_path(project_root, trade_date)
-    macd_path = _macd_report_path(project_root, trade_date)
-    atr_path = _atr_report_path(project_root, trade_date)
-
-    payload = build_intraday_pool_candidates(
-        trade_date=trade_date,
-        pattern_frame=_read_required_csv(pattern_path),
-        phase1_predictions=_read_required_csv(phase1_path),
-        phase2_predictions=_read_required_csv(phase2_path),
-        phase4_predictions=_read_required_csv(phase4_path),
-        phase7_prediction=pd.DataFrame(),
-        macd_frame=_read_optional_csv(macd_path),
-        atr_frame=_read_optional_csv(atr_path),
-        source_files={
-            "pattern": str(pattern_path),
-            "phase1": str(phase1_path),
-            "phase2": str(phase2_path),
-            "phase4": str(phase4_path),
-            "macd": str(macd_path),
-            "atr": str(atr_path),
-        },
-        pattern_limit=0,
-        p124_top_n=200,
-        pool_size=200,
-    )
-    selection_policy = dict(payload.get("selection_policy", {}))
-    selection_policy["source_scope"] = "daily_p124_top200"
-    selection_policy["purpose"] = "next trading day's ordinary intraday-screening source pool"
-    payload["selection_policy"] = selection_policy
-    target = write_intraday_pool(project_root=project_root, trade_date=trade_date, picker_payload=payload)
-    written_payload = json.loads(target.read_text(encoding="utf-8"))
+    print(f"[{stage_index}/{total_stages}] 开始 route_watchlists...", flush=True)
+    result = write_route_watchlists_from_files(project_root=project_root, trade_date=trade_date)
     elapsed = perf_counter() - started_at
-    print(f"[{stage_index}/{total_stages}] intraday_pool_top200 完成，用时 {elapsed:.1f}s。", flush=True)
-    return target, written_payload
+    print(
+        f"[{stage_index}/{total_stages}] route_watchlists 完成，A1={result.a1_count} A2={result.a2_count} B={result.b_count}，盘中源池 {result.sector_leader_count} 只，用时 {elapsed:.1f}s。",
+        flush=True,
+    )
+    return result
 
 
 def _run_sector_watchlist_stage(
@@ -318,28 +270,26 @@ def _run_sector_watchlist_stage(
     return target, written_payload
 
 
-def _run_track_stock_stage(stage_index: int, total_stages: int, project_root: Path, trade_date: date) -> Path:
+def _run_sector_report_cleanup_stage(stage_index: int, total_stages: int, project_root: Path, trade_date: date) -> None:
     started_at = perf_counter()
-    print(f"[{stage_index}/{total_stages}] 开始 track_stock_sheet2...", flush=True)
-    result = update_track_stock_workbook(project_root=project_root, trade_date=trade_date, mode="daily")
+    print(f"[{stage_index}/{total_stages}] 开始 sector_reports_cleanup...", flush=True)
+    result = cleanup_sector_reports(project_root=project_root, trade_date=trade_date)
+    obsolete = cleanup_obsolete_daily_reports(project_root=project_root)
     elapsed = perf_counter() - started_at
     print(
-        f"[{stage_index}/{total_stages}] track_stock_sheet2 完成，写入 {result.output_rows} 行，用时 {elapsed:.1f}s。",
+        f"[{stage_index}/{total_stages}] sector_reports_cleanup 完成，删除 {len(result.deleted_files) + len(obsolete)} 个文件，用时 {elapsed:.1f}s。",
         flush=True,
     )
-    return result.workbook_path
 
 
 def _write_run_report(
     project_root: Path,
     trade_date: date,
-    watchlist_payload: dict[str, object],
-    watchlist_path: Path,
     *,
-    intraday_pool_payload: dict[str, object],
-    intraday_pool_path: Path,
     sector_watchlist_payload: dict[str, object],
     sector_watchlist_path: Path,
+    concern_result: ConcernSectorResult,
+    route_result: RouteWatchlistResult,
     macd_path: Path | None,
     atr_path: Path | None,
     pattern_path: Path | None,
@@ -352,21 +302,26 @@ def _write_run_report(
     sector_leaders_path: Path | None,
     sector_leader_scores_all_path: Path | None,
     phase9_path: Path | None,
-    track_stock_path: Path | None,
-    filter_summary: object | None,
 ) -> Path:
     target = project_root / "reports" / "daily_screening"
     target.mkdir(parents=True, exist_ok=True)
     report_path = target / f"daily_screening_{trade_date.isoformat()}.json"
     report = {
         "trade_date": trade_date.isoformat(),
-        "source_file": watchlist_payload.get("source_file"),
-        "watchlist_stocks_path": str(watchlist_path),
-        "watchlist_stocks_csv_path": str(watchlist_path.with_suffix(".csv")),
-        "intraday_pool_path": str(intraday_pool_path),
-        "intraday_pool_csv_path": str(intraday_pool_path.with_suffix(".csv")),
         "watchlist_sectors_path": str(sector_watchlist_path),
         "watchlist_sectors_csv_path": str(sector_watchlist_path.with_suffix(".csv")),
+        "stock_concern_sectors_path": str(concern_result.stock_path),
+        "stock_concern_sectors_csv_path": str(concern_result.stock_path),
+        "concern_sector_members_path": str(concern_result.member_path),
+        "concern_sector_members_csv_path": str(concern_result.member_path),
+        "watchlist_a1_recent_mainline_path": str(route_result.a1_path),
+        "watchlist_a1_recent_mainline_csv_path": str(route_result.a1_path.with_suffix(".csv")),
+        "watchlist_a2_rotation_expected_path": str(route_result.a2_path),
+        "watchlist_a2_rotation_expected_csv_path": str(route_result.a2_path.with_suffix(".csv")),
+        "watchlist_b_pattern_path": str(route_result.b_path),
+        "watchlist_b_pattern_csv_path": str(route_result.b_path.with_suffix(".csv")),
+        "watchlist_sector_leader_pool_path": str(route_result.sector_leader_pool_path),
+        "watchlist_sector_leader_pool_csv_path": str(route_result.sector_leader_pool_path.with_suffix(".csv")),
         "macd_path": str(macd_path) if macd_path is not None else None,
         "atr_path": str(atr_path) if atr_path is not None else None,
         "pattern_path": str(pattern_path) if pattern_path is not None else None,
@@ -375,22 +330,21 @@ def _write_run_report(
         "phase4_path": str(phase4_path) if phase4_path is not None else None,
         "full_market_daily_returns_path": str(full_market_daily_returns_path) if full_market_daily_returns_path is not None else None,
         "phase9_path": str(phase9_path) if phase9_path is not None else None,
-        "track_stock_path": str(track_stock_path) if track_stock_path is not None else None,
         "sector_membership_path": str(sector_path) if sector_path is not None else None,
         "sector_performance_path": str(sector_performance_path) if sector_performance_path is not None else None,
         "sector_leaders_path": str(sector_leaders_path) if sector_leaders_path is not None else None,
         "sector_leader_scores_all_path": str(sector_leader_scores_all_path) if sector_leader_scores_all_path is not None else None,
-        "filter_summary": filter_summary,
-        "candidate_count": len(watchlist_payload.get("candidates", []))
-        if isinstance(watchlist_payload.get("candidates"), list)
-        else 0,
-        "intraday_pool_candidate_count": len(intraday_pool_payload.get("candidates", []))
-        if isinstance(intraday_pool_payload.get("candidates"), list)
-        else 0,
         "sector_candidate_count": len(sector_watchlist_payload.get("sectors", []))
         if isinstance(sector_watchlist_payload.get("sectors"), list)
         else 0,
+        "concern_relation_count": concern_result.relation_count,
+        "concern_weak_stock_count": concern_result.weak_stock_count,
+        "a1_candidate_count": route_result.a1_count,
+        "a2_candidate_count": route_result.a2_count,
+        "b_candidate_count": route_result.b_count,
+        "sector_leader_pool_candidate_count": route_result.sector_leader_count,
         "deprecated_phases": ["P3", "P5", "P7", "P8", "P10"],
+        "deprecated_outputs": ["track_stock.xlsx", "watchlist_stocks", "watchlist_mainline_stocks", "intraday_pool"],
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report_path

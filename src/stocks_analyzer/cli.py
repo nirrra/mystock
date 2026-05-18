@@ -12,6 +12,7 @@ import pandas as pd
 
 from .atr import build_atr_export_frame, build_atr_snapshot_row, normalize_atr_summary_frame
 from .config import load_config
+from .concern_sectors import write_concern_sector_frames_from_files
 from .daily_screening import run_daily_screening
 from .daily_screening_backtest import (
     DEFAULT_BACKTEST_STRATEGIES,
@@ -58,6 +59,7 @@ from .rolling_phase_score_validation import (
     format_rolling_phase_strategy_summary,
     validate_rolling_phase_scores,
 )
+from .route_watchlists import write_route_watchlists_from_files
 from .sector_membership import append_sector_display_columns, update_sector_membership
 from .sector_leaders import analyze_sector_leaders
 from .sector_phase9 import (
@@ -81,7 +83,6 @@ from .staged_position_backtest import (
 )
 from .strategies import STRATEGY_NAMES
 from .synthetic_market import build_synthetic_market_index
-from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, update_track_stock_workbook
 from .trend_reporting import save_atr_report, save_macd_report
 from .universe import build_main_board_universe
 
@@ -123,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  python -m stocks_analyzer --project-root . predict-barrier-risk --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . predict-alpha158-qlib-return --date 2026-05-07\n"
             "  python -m stocks_analyzer --project-root . pattern --as-of 2026-05-07\n"
-            "  python -m stocks_analyzer --project-root . track-stock --date 2026-05-07\n"
+            "  python -m stocks_analyzer --project-root . build-route-watchlists --date 2026-05-07\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -224,11 +225,6 @@ def main() -> None:
         print(f"Output: {result.output_path}")
         if result.sector_strength_path is not None:
             print(f"Intraday sector strength: {result.sector_strength_path}")
-        if result.track_stock_path is not None:
-            print(f"Intraday track stock: {result.track_stock_path}")
-            print(f"Tracked symbols: {result.track_stock_count}")
-        if result.track_workbook_path is not None:
-            print(f"Track stock workbook: {result.track_workbook_path}")
         if result.cleaned_report_files:
             print(f"Cleaned report files: {result.cleaned_report_files}")
         if result.missing_intraday_symbols:
@@ -353,23 +349,38 @@ def main() -> None:
         print(result.message)
         if result.report_path:
             print(f"报告文件：{result.report_path}")
-        if result.track_stock_path:
-            print(f"Track stock workbook: {result.track_stock_path}")
         return
 
-    if args.command == "track-stock":
+    if args.command == "build-concern-sectors":
         trade_date = _parse_required_date(args.date) if args.date else date.today()
-        result = update_track_stock_workbook(
-            project_root=project_root,
-            trade_date=trade_date,
-            workbook_path=Path(args.workbook),
-            mode=args.mode,
-        )
-        print("Track stock workbook updated.")
-        print(f"Workbook: {result.workbook_path}")
+        result = write_concern_sector_frames_from_files(project_root=project_root, trade_date=trade_date)
+        print("Concern sector files built.")
+        print(f"Stocks: {result.stock_path}")
+        print(f"Members: {result.member_path}")
         print(f"Trade date: {result.trade_date.isoformat()}")
-        print(f"Tracked symbols: {result.tracked_count}")
-        print(f"{result.output_sheet} rows: {result.output_rows}")
+        print(f"Relations: {result.relation_count}")
+        print(f"Weak stocks: {result.weak_stock_count}")
+        return
+
+    if args.command == "build-route-watchlists":
+        trade_date = _parse_required_date(args.date) if args.date else date.today()
+        result = write_route_watchlists_from_files(project_root=project_root, trade_date=trade_date)
+        print("Route watchlists built.")
+        print(f"Trade date: {result.trade_date.isoformat()}")
+        print(f"A1: {result.a1_path} ({result.a1_count})")
+        print(f"A2: {result.a2_path} ({result.a2_count})")
+        print(f"B: {result.b_path} ({result.b_count})")
+        print(f"Sector leader pool: {result.sector_leader_pool_path} ({result.sector_leader_count})")
+        return
+
+    if args.command == "build-sector-leader-pool":
+        trade_date = _parse_required_date(args.date) if args.date else date.today()
+        result = write_route_watchlists_from_files(project_root=project_root, trade_date=trade_date)
+        print("Sector leader pool built.")
+        print(f"Trade date: {result.trade_date.isoformat()}")
+        print(f"Pool: {result.sector_leader_pool_path}")
+        print(f"Sectors: {result.sector_count}")
+        print(f"Leaders: {result.sector_leader_count}")
         return
 
     if args.command == "update-sector-membership":
@@ -474,7 +485,7 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
     intraday.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
     intraday.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")
 
-    intraday_screening = subparsers.add_parser("intraday-screening", help="用盘后 intraday_pool 加手动跟踪股做盘中快速分析")
+    intraday_screening = subparsers.add_parser("intraday-screening", help="用盘后板块龙头源池做盘中快速分析")
     intraday_screening.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     intraday_screening.add_argument(
         "--data-interface",
@@ -487,7 +498,7 @@ def _add_update_parser(subparsers: argparse._SubParsersAction) -> None:
     intraday_screening.add_argument(
         "--refresh-full-market-pool",
         action="store_true",
-        help="先扫描全市场并生成当天 intraday_pool Top200；后续同日 intraday-screening 会优先使用该池",
+        help="先扫描全市场并生成当天板块龙头源池；后续同日 intraday-screening 会优先使用该池",
     )
     intraday_screening.add_argument("--timeout", type=float, default=15.0, help="单次网络请求超时秒数")
     intraday_screening.add_argument("--chunk-size", type=int, default=50, help="批量请求每批股票数量")
@@ -767,11 +778,6 @@ def _add_daily_parsers(subparsers: argparse._SubParsersAction) -> None:
     daily.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
     daily.add_argument("--start-date", default="20240101", help="update 起始日期，格式 YYYYMMDD")
 
-    track = subparsers.add_parser("track-stock", help="更新 track_stock.xlsx 的 Sheet2/Sheet3")
-    track.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
-    track.add_argument("--workbook", default=DEFAULT_TRACK_STOCK_FILENAME, help="跟踪表路径")
-    track.add_argument("--mode", choices=("daily", "intraday"), default="daily", help="daily 写 Sheet2，intraday 写 Sheet3")
-
     sectors = subparsers.add_parser("update-sector-membership", help="按需更新股票所属行业和概念映射，并计算板块/概念当日表现")
     sectors.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD；默认使用本地日线最新交易日")
     sectors.add_argument("--force-refresh", action="store_true", help="忽略 7 日缓存，强制联网刷新行业/概念映射")
@@ -796,6 +802,15 @@ def _add_daily_parsers(subparsers: argparse._SubParsersAction) -> None:
     sector_leaders.add_argument("--sector-name", default=None, help="只分析名称包含该文本的板块，用于调试")
     sector_leaders.add_argument("--output", default=None, help="自定义明细 CSV 输出路径")
     sector_leaders.add_argument("--progress", action="store_true", help="显示读取和板块计算进度")
+
+    concern = subparsers.add_parser("build-concern-sectors", help="根据龙头指数整理股票真实关切板块")
+    concern.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
+
+    routes = subparsers.add_parser("build-route-watchlists", help="生成 A1/A2/B 三条路线 watchlist 和盘中板块龙头源池")
+    routes.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
+
+    pool = subparsers.add_parser("build-sector-leader-pool", help="生成盘中使用的板块龙头源池")
+    pool.add_argument("--date", default=None, help="目标日期，格式 YYYY-MM-DD，默认今天")
 
 
 def _add_backtest_parser(subparsers: argparse._SubParsersAction) -> None:

@@ -113,6 +113,9 @@ class SectorExposure:
     industries: list[str] = field(default_factory=list)
     concepts: list[str] = field(default_factory=list)
     metrics: list[SectorMetric] = field(default_factory=list)
+    concern_sectors: list[str] = field(default_factory=list)
+    weak_stock: bool | None = None
+    concern_missing: bool = False
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,7 @@ class PostMarketLookupResult:
     pattern: PatternValue
     sectors: SectorExposure
     source_files: dict[str, Path | None]
+    route_hits: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -288,7 +292,7 @@ def find_stock_name_matches(root: Path, query: str) -> list[StockNameMatch]:
         if path is None or not path.exists():
             continue
         for row in iter_csv_rows(path):
-            symbol = normalize_symbol(first_present(row, ("代码", "symbol", "股票代码")))
+            symbol = normalize_symbol(first_present(row, ("编号", "代码", "symbol", "股票代码")))
             name = str(first_present(row, ("名称", "name", "股票名称")) or "").strip()
             if not symbol or not name or symbol in seen:
                 continue
@@ -310,14 +314,13 @@ def candidate_name_sources(root: Path) -> list[tuple[Path | None, str]]:
     sources: list[tuple[Path | None, str]] = []
     for directory, prefix, label in (
         (root / "reports" / "atr", "atr", "最新ATR全市场"),
-        (root / "reports" / "intraday_screening", "intraday_pool_screening", "最新日中候选池"),
-        (root / "reports" / "intraday_screening", "intraday_top20", "最新日中Top20"),
-        (root / "reports" / "intraday_screening", "intraday_top20_previous", "上一轮日中Top20"),
-        (root / "reports" / "intraday_screening", "intraday_track_stock", "日中跟踪股"),
-        (root / "reports" / "intraday_screening", "intraday_screening", "日中全市场"),
-        (root / "reports" / "watchlists", "watchlist_stocks", "最新股票候选池"),
-        (root / "reports" / "watchlists", "watchlist", "最新watchlist"),
-        (root / "reports" / "watchlists", "watchlist_pattern", "最新pattern watchlist"),
+        (root / "reports" / "intraday_screening", "intraday_watchlist_a", "最新日中A池"),
+        (root / "reports" / "intraday_screening", "intraday_watchlist_a1_recent_mainline", "日中A1近期强势"),
+        (root / "reports" / "intraday_screening", "intraday_watchlist_a2_rotation_expected", "日中A2轮转预期"),
+        (root / "reports" / "watchlists", "watchlist_a1_recent_mainline", "盘后A1近期强势"),
+        (root / "reports" / "watchlists", "watchlist_a2_rotation_expected", "盘后A2轮转预期"),
+        (root / "reports" / "watchlists", "watchlist_b_pattern", "盘后B形态符合"),
+        (root / "reports" / "sectors", "stock_concern_sectors", "关切板块"),
         (root / "reports" / "patterns", "patterns_all", "最新pattern结果"),
     ):
         sources.append((find_latest_optional_report_path(directory, prefix), label))
@@ -350,6 +353,10 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         "Phase2": root / "reports" / "full_market_model" / f"barrier_risk_predictions_{trade_date}.csv",
         "Phase4": root / "reports" / "full_market_model" / f"alpha158_qlib_return_predictions_{trade_date}.csv",
         "Pattern": root / "reports" / "patterns" / f"patterns_all_{trade_date}.csv",
+        "A1": root / "reports" / "watchlists" / f"watchlist_a1_recent_mainline_{trade_date}.csv",
+        "A2": root / "reports" / "watchlists" / f"watchlist_a2_rotation_expected_{trade_date}.csv",
+        "B": root / "reports" / "watchlists" / f"watchlist_b_pattern_{trade_date}.csv",
+        "Concern": root / "reports" / "sectors" / f"stock_concern_sectors_{trade_date}.csv",
     }
 
     atr = lookup_row(paths["ATR"], symbol)
@@ -386,6 +393,7 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         )
     pattern = lookup_patterns(paths["Pattern"], symbol)
     sectors = lookup_sector_exposure(root, symbol)
+    route_hits = lookup_route_hits(paths, symbol)
 
     return PostMarketLookupResult(
         trade_date=trade_date,
@@ -401,6 +409,7 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
         phase8=PhaseValue(),
         pattern=pattern,
         sectors=sectors,
+        route_hits=route_hits,
         source_files={key: path if path.exists() else None for key, path in paths.items()},
     )
 
@@ -408,11 +417,9 @@ def lookup_post_market(root: Path, symbol: str) -> PostMarketLookupResult:
 def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
     intraday_dir = root / "reports" / "intraday_screening"
     source_defs = (
-        ("intraday_pool_screening", "日中候选池"),
-        ("intraday_top20", "Top20"),
-        ("intraday_top20_previous", "上一轮Top20"),
-        ("intraday_track_stock", "跟踪股"),
-        ("intraday_screening", "全市场"),
+        ("intraday_watchlist_a", "日中A池"),
+        ("intraday_watchlist_a1_recent_mainline", "日中A1近期强势"),
+        ("intraday_watchlist_a2_rotation_expected", "日中A2轮转预期"),
     )
     latest_reports = find_latest_intraday_report_batch(intraday_dir, source_defs)
     if not latest_reports:
@@ -435,10 +442,10 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
     trade_date = first_present(row, ("intraday_trade_date", "trade_date", "atr_trade_date")) or report_date_from_path(path, "")
     quote_datetime = first_present(row, ("intraday_quote_datetime", "intraday_fetched_at", "intraday_quote_time")) or ""
     generated_at = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-    latest_price = safe_float(first_present(row, ("atr_close", "latest_price", "close", "price")))
-    pct_change_column, pct_change_value = first_present_item(row, ("intraday_pct_change", "涨幅%", "pct_change"))
+    latest_price = safe_float(first_present(row, ("最新价格", "atr_close", "latest_price", "close", "price")))
+    pct_change_column, pct_change_value = first_present_item(row, ("盘中涨幅%", "intraday_pct_change", "涨幅%", "pct_change"))
     pct_change = parse_percent_value(pct_change_value, value_is_percent=pct_change_column in {"intraday_pct_change", "涨幅%"})
-    atr14 = safe_float(first_present(row, ("atr_14", "ATR14", "atr")))
+    atr14 = safe_float(first_present(row, ("ATR14", "atr_14", "atr")))
     atr_pct = parse_atr_percent(
         first_present(row, ("atr_pct_14", "ATR%", "atr_pct")),
         atr14,
@@ -449,19 +456,19 @@ def lookup_intraday(root: Path, symbol: str) -> IntradayLookupResult | None:
     if max_position_pct is None and atr_pct is not None:
         max_position_pct = recommended_position_percent(atr_pct)
 
-    phase1 = PhaseValue(score_100=safe_float(row.get("phase1_score_100")), rank=safe_int(row.get("phase1_rank")), extra={"name": row.get("name")})
+    phase1 = PhaseValue(score_100=safe_float(first_present(row, ("P1风险质量分", "phase1_score_100"))), rank=safe_int(row.get("phase1_rank")), extra={"name": first_present(row, ("股票名称", "name"))})
     phase2 = PhaseValue(
-        score_100=safe_float(row.get("phase2_score_100")),
+        score_100=safe_float(first_present(row, ("P2交易风险分", "phase2_score_100"))),
         rank=safe_int(row.get("phase2_rank")),
         extra={"is_cusum_event": row.get("phase2_is_cusum_event")},
     )
     phase4 = PhaseValue(
-        score_100=safe_float(row.get("phase4_score_100")),
+        score_100=safe_float(first_present(row, ("P4上涨质量分", "phase4_score_100"))),
         rank=safe_int(row.get("phase4_rank")),
         extra={
-            "name": row.get("name"),
-            "phase4_5d_mean": first_present(row, ("phase4_5d_mean",)),
-            "phase4_5d_std": first_present(row, ("phase4_5d_std",)),
+            "name": first_present(row, ("股票名称", "name")),
+            "phase4_5d_mean": first_present(row, ("P4五日均分", "phase4_5d_mean")),
+            "phase4_5d_std": first_present(row, ("P4五日std", "phase4_5d_std")),
         },
     )
     phase8 = PhaseValue(
@@ -558,9 +565,17 @@ def lookup_row(path: Path | None, symbol: str) -> dict[str, str]:
         return {}
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         for row in csv.DictReader(handle):
-            if normalize_symbol(first_present(row, ("代码", "symbol", "股票代码"))) == symbol:
+            if normalize_symbol(first_present(row, ("编号", "代码", "symbol", "股票代码"))) == symbol:
                 return row
     return {}
+
+
+def lookup_route_hits(paths: dict[str, Path | None], symbol: str) -> list[str]:
+    hits: list[str] = []
+    for key, label in (("A1", "A1近期强势"), ("A2", "A2轮转预期"), ("B", "B形态符合")):
+        if lookup_row(paths.get(key), symbol):
+            hits.append(label)
+    return hits
 
 
 def lookup_phase_score(
@@ -737,6 +752,10 @@ def lookup_patterns(path: Path | None, symbol: str) -> PatternValue:
 
 
 def lookup_sector_exposure(root: Path, symbol: str) -> SectorExposure:
+    concern = lookup_concern_sector_exposure(root, symbol)
+    if concern is not None:
+        return concern
+
     membership_path = root / "data" / "sector_membership" / "stock_sector_membership.csv"
     membership_rows = [
         row
@@ -783,6 +802,65 @@ def lookup_sector_exposure(root: Path, symbol: str) -> SectorExposure:
         )
 
     return SectorExposure(industries=industries, concepts=concepts, metrics=metrics)
+
+
+def lookup_concern_sector_exposure(root: Path, symbol: str) -> SectorExposure | None:
+    stock_path = find_latest_optional_report_path(root / "reports" / "sectors", "stock_concern_sectors")
+    if stock_path is None:
+        return None
+    stock_row = lookup_row(stock_path, symbol)
+    if not stock_row:
+        return None
+    member_path = find_latest_optional_report_path(root / "reports" / "sectors", "concern_sector_members")
+    concern_names = [
+        item.strip()
+        for item in str(first_present(stock_row, ("关切板块", "concern_sectors")) or "").split("/")
+        if item.strip()
+    ]
+    weak = str(first_present(stock_row, ("是否弱势股", "weak_stock")) or "").strip().lower() in {"true", "1", "是", "yes"}
+    industries: list[str] = []
+    concepts: list[str] = []
+    metrics: list[SectorMetric] = []
+    seen: set[tuple[str, str]] = set()
+    score_map = load_sector_score_map(root)
+    if member_path is not None:
+        for row in iter_csv_rows(member_path):
+            if normalize_symbol(first_present(row, ("编号", "symbol", "代码"))) != symbol:
+                continue
+            sector_type = normalize_sector_type(first_present(row, ("板块类型", "sector_type")))
+            sector_name = str(first_present(row, ("板块名称", "sector_name")) or "").strip()
+            sector_label = str(first_present(row, ("板块代码", "sector_label")) or "").strip()
+            if not sector_name or is_ignored_sector_name(sector_name):
+                continue
+            if sector_type == "industry":
+                append_unique(industries, sector_name)
+            elif sector_type == "concept":
+                append_unique(concepts, sector_name)
+            key = sector_key(sector_type, sector_label, sector_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            score_row = score_map.get(key, {})
+            metrics.append(
+                SectorMetric(
+                    sector_type=sector_type,
+                    sector_name=sector_name,
+                    sector_label=sector_label,
+                    long_mainline_score=safe_float(score_row.get("long_mainline_score_100")),
+                    short_mainline_score=safe_float(score_row.get("short_mainline_score_100")),
+                    phase9_score=safe_float(score_row.get("phase9_score_100")),
+                    leader_score=safe_float(first_present(row, ("龙头指数", "leader_score"))),
+                    leader_tags=str(first_present(row, ("龙头标签", "leader_tags")) or ""),
+                )
+            )
+    return SectorExposure(
+        industries=industries,
+        concepts=concepts,
+        metrics=metrics,
+        concern_sectors=concern_names,
+        weak_stock=weak,
+        concern_missing=False,
+    )
 
 
 def load_sector_score_map(root: Path) -> dict[tuple[str, str], dict[str, object]]:
@@ -1125,6 +1203,7 @@ def format_result(result: StockLookupResult) -> str:
             f"事件    CUSUM {format_flag(post.phase2.extra.get('is_cusum_event'))}   P4排名 {format_rank(post.phase4.rank)}",
             f"技术    MACD {translate_macd(post.macd.get('macd_cross_state'))}   背离 {translate_macd(post.macd.get('macd_divergence_state'))}   量价 {translate_macd(post.macd.get('volume_price_divergence_state'))}",
             f"Pattern {pattern_text}",
+            f"路线    {('/'.join(post.route_hits) if post.route_hits else '未命中A1/A2/B')}",
         ]
     )
     lines.extend(format_sector_lines(post.sectors))
@@ -1157,6 +1236,10 @@ def format_result(result: StockLookupResult) -> str:
 
 def format_sector_lines(exposure: SectorExposure) -> list[str]:
     lines = ["", "所属板块"]
+    if exposure.weak_stock is True:
+        lines.append("关切    弱势股（龙头指数未达到关切阈值）")
+    elif exposure.concern_sectors:
+        lines.append(f"关切    {trim_text('/'.join(exposure.concern_sectors), 260)}")
     industry_text = "/".join(exposure.industries) if exposure.industries else "无数据"
     concept_text = "/".join(exposure.concepts) if exposure.concepts else "无数据"
     lines.append(f"行业    {trim_text(industry_text, 150)}")

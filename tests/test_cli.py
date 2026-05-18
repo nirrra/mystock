@@ -64,10 +64,6 @@ def test_build_parser_accepts_daily_screening_main_commands() -> None:
     assert daily.date == "2026-05-07"
     assert daily.start_date == "20150101"
 
-    track = parser.parse_args(["track-stock", "--date", "2026-05-07", "--mode", "intraday"])
-    assert track.command == "track-stock"
-    assert track.mode == "intraday"
-
     sectors = parser.parse_args(["update-sector-membership", "--date", "2026-05-15"])
     assert sectors.command == "update-sector-membership"
     assert sectors.date == "2026-05-15"
@@ -82,6 +78,16 @@ def test_build_parser_accepts_daily_screening_main_commands() -> None:
     assert sector_leaders.date == "2026-05-15"
     assert sector_leaders.sector_type == "concept"
     assert sector_leaders.top_n == 5
+
+    concern = parser.parse_args(["build-concern-sectors", "--date", "2026-05-15"])
+    assert concern.command == "build-concern-sectors"
+    assert concern.date == "2026-05-15"
+
+    routes = parser.parse_args(["build-route-watchlists", "--date", "2026-05-15"])
+    assert routes.command == "build-route-watchlists"
+
+    pool = parser.parse_args(["build-sector-leader-pool", "--date", "2026-05-15"])
+    assert pool.command == "build-sector-leader-pool"
 
     backtest = parser.parse_args(
         ["backtest-daily-screening-components", "--start-date", "2026-01-01", "--end-date", "2026-04-30"]

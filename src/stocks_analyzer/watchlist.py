@@ -177,6 +177,10 @@ def watchlist_stocks_path(project_root: Path, trade_date: date) -> Path:
     return watchlists_dir(project_root) / f"watchlist_stocks_{trade_date.isoformat()}.json"
 
 
+def watchlist_mainline_stocks_path(project_root: Path, trade_date: date) -> Path:
+    return watchlists_dir(project_root) / f"watchlist_mainline_stocks_{trade_date.isoformat()}.json"
+
+
 def watchlist_pattern_path(project_root: Path, trade_date: date) -> Path:
     return watchlists_dir(project_root) / f"watchlist_pattern_{trade_date.isoformat()}.json"
 
@@ -1136,6 +1140,19 @@ def write_watchlist_stocks(
     return target
 
 
+def write_watchlist_mainline_stocks(
+    *,
+    project_root: Path,
+    trade_date: date,
+    payload: dict[str, object],
+) -> Path:
+    target = watchlist_mainline_stocks_path(project_root, trade_date)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    _write_watchlist_csv(target.with_suffix(".csv"), payload, kind="mainline_stocks")
+    return target
+
+
 def write_intraday_pool(*, project_root: Path, trade_date: date, picker_payload: dict[str, object]) -> Path:
     target = intraday_pool_path(project_root, trade_date)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -1181,6 +1198,8 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
         rows.append({key: _csv_cell_value(value) for key, value in row.items()})
     if rows:
         frame = pd.DataFrame(rows)
+        if kind == "mainline_stocks":
+            frame = frame.drop(columns=["mainline_matches"], errors="ignore")
         if "symbol" in frame.columns:
             frame["symbol"] = frame["symbol"].map(_format_symbol_for_excel)
         technical_columns = [
@@ -1229,6 +1248,10 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
             "industry_names",
             "concept_names",
         ]
+        mainline_columns = [
+            "matched_mainline_sector",
+            "mainline_leader_score",
+        ]
         if kind == "intraday_pool":
             phase_detail_columns = [
                 "candidate_index",
@@ -1265,6 +1288,7 @@ def _write_watchlist_csv(target: Path, payload: dict[str, object], *, kind: str 
                 "涨幅%",
                 "source",
                 *sector_columns,
+                *mainline_columns,
                 "pattern_match",
                 "pattern_ids",
                 "pattern_id",
@@ -1359,6 +1383,11 @@ def _rename_watchlist_csv_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "source_tags": "来源标签",
         "industry_names": "行业",
         "concept_names": "概念",
+        "matched_mainline_sector": "契合市场主线",
+        "mainline_leader_score": "龙头指数",
+        "mainline_match_reason": "主线入选原因",
+        "mainline_leader_tags": "龙头标签",
+        "mainline_matches": "主线匹配详细",
         "pattern_match": "Pattern命中",
         "pattern_ids": "Pattern编号",
         "pattern_id": "Pattern主编号",

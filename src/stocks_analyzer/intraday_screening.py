@@ -9,9 +9,9 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
-from openpyxl import load_workbook
 
 from .atr import build_atr_snapshot_row
+from .concern_sectors import read_concern_sector_members
 from .full_market_return import predict_alpha158_qlib_return
 from .full_market_risk import predict_barrier_risk, predict_tail_risk
 from .indicators import add_indicators
@@ -25,24 +25,25 @@ from .sector_membership import append_sector_display_columns
 from .sector_tracking_workbook import write_sector_intraday_tracking_workbook
 from .sector_watchlist import build_sector_tracking_payload_from_files
 from .storage import DailyBarsReadError, Storage
-from .track_stock import DEFAULT_TRACK_STOCK_FILENAME, TRACK_INPUT_SHEET, update_track_stock_workbook
+from .route_watchlists import (
+    build_route_watchlists,
+    find_latest_sector_leader_pool_before,
+    watchlist_sector_leader_pool_path,
+    write_sector_leader_pool_payload,
+)
 from .watchlist import (
     _prepare_atr_frame,
     _prepare_macd_frame,
     _prepare_phase4_predictions,
     _prepare_phase_risk_predictions,
     add_centered_risk_scores,
-    build_intraday_pool_candidates,
-    find_latest_intraday_pool_before,
-    find_latest_watchlist_stocks_before,
-    intraday_pool_path,
-    write_intraday_pool,
 )
 
 DEFAULT_INTRADAY_REPORT_KEEP_DATES = 10
 _DATED_REPORT_PATTERNS = (
-    re.compile(r"^intraday_pool_screening_(\d{4}-\d{2}-\d{2})\.csv$"),
-    re.compile(r"^intraday_track_stock_(\d{4}-\d{2}-\d{2})\.csv$"),
+    re.compile(r"^intraday_watchlist_a_(\d{4}-\d{2}-\d{2})\.csv$"),
+    re.compile(r"^intraday_watchlist_a1_recent_mainline_(\d{4}-\d{2}-\d{2})\.csv$"),
+    re.compile(r"^intraday_watchlist_a2_rotation_expected_(\d{4}-\d{2}-\d{2})\.csv$"),
     re.compile(r"^intraday_sector_strength_(\d{4}-\d{2}-\d{2})\.csv$"),
 )
 
@@ -52,12 +53,11 @@ class IntradayScreeningResult:
     trade_date: date
     source_pool_path: Path
     output_path: Path
-    track_stock_path: Path | None
-    track_workbook_path: Path | None
     sector_strength_path: Path | None
+    a1_path: Path | None
+    a2_path: Path | None
     candidate_count: int
     pool_candidate_count: int
-    track_stock_count: int
     intraday_updated_count: int
     missing_intraday_symbols: list[str]
     cleaned_report_files: int
@@ -125,11 +125,9 @@ def run_intraday_screening(
     candidates = pool_candidates
     if limit is not None:
         candidates = candidates[: max(int(limit), 0)]
-    tracked_symbols = _load_tracked_symbols(project_root)
-    candidates = _merge_tracked_candidates(storage=storage, candidates=candidates, tracked_symbols=tracked_symbols)
     symbols = [candidate["symbol"] for candidate in candidates]
     if not symbols:
-        raise RuntimeError(f"No previous intraday-pool symbols found in {source_pool_path}")
+        raise RuntimeError(f"No sector leader pool symbols found in {source_pool_path}")
 
     if not skip_intraday_update and not refresh_full_market_pool:
         update_result = run_intraday_update(
@@ -156,7 +154,7 @@ def run_intraday_screening(
         output_dir=cache_dir,
         file_tag="pool",
     )
-    output_path = output if output is not None else output_dir / f"intraday_pool_screening_{trade_date.isoformat()}.csv"
+    output_path = output if output is not None else output_dir / f"intraday_watchlist_a_{trade_date.isoformat()}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _format_intraday_output_for_csv(analysis.frame).to_csv(output_path, index=False, encoding="utf-8-sig")
     sector_strength_path = _save_intraday_sector_strength(
@@ -164,18 +162,18 @@ def run_intraday_screening(
         project_root=project_root,
         trade_date=trade_date,
         frame=analysis.frame,
+        source_pool_payload=pool_payload,
     )
-    track_stock_path = _save_intraday_track_stock(output_dir=output_dir, trade_date=trade_date, frame=analysis.frame)
-    track_workbook = update_track_stock_workbook(
-        project_root=project_root,
+    a1_path, a2_path = _save_intraday_route_watchlists(
+        output_dir=output_dir,
         trade_date=trade_date,
-        mode="intraday",
-        intraday_frame=analysis.frame,
+        frame=analysis.frame,
+        sector_strength_path=sector_strength_path,
     )
     cleaned_report_files = _cleanup_intraday_screening_reports(
         output_dir,
         keep_dates=report_keep_dates,
-        preserve_paths=(output_path, track_stock_path, sector_strength_path),
+        preserve_paths=(output_path, sector_strength_path, a1_path, a2_path),
     )
 
     intraday = _load_intraday_snapshot_frame(storage, symbols=symbols)
@@ -184,12 +182,11 @@ def run_intraday_screening(
         trade_date=trade_date,
         source_pool_path=source_pool_path,
         output_path=output_path,
-        track_stock_path=track_stock_path,
-        track_workbook_path=track_workbook.workbook_path,
         sector_strength_path=sector_strength_path,
+        a1_path=a1_path,
+        a2_path=a2_path,
         candidate_count=len(analysis.frame),
         pool_candidate_count=len(pool_candidates),
-        track_stock_count=len(tracked_symbols),
         intraday_updated_count=updated_count,
         missing_intraday_symbols=sorted(set(missing_update_symbols + missing_intraday)),
         cleaned_report_files=cleaned_report_files,
@@ -234,15 +231,12 @@ class _IntradayOverlayStorage:
 
 
 def _load_previous_intraday_pool(project_root: Path, trade_date: date) -> tuple[Path, dict[str, object]]:
-    try:
-        _, path = find_latest_intraday_pool_before(project_root=project_root, trade_date=trade_date)
-    except FileNotFoundError:
-        _, path = find_latest_watchlist_stocks_before(project_root=project_root, trade_date=trade_date)
+    _, path = find_latest_sector_leader_pool_before(project_root=project_root, trade_date=trade_date)
     return path, json.loads(path.read_text(encoding="utf-8"))
 
 
 def _load_intraday_pool_for_screening(project_root: Path, trade_date: date) -> tuple[Path, dict[str, object]]:
-    today_path = intraday_pool_path(project_root, trade_date)
+    today_path = watchlist_sector_leader_pool_path(project_root, trade_date)
     if today_path.exists():
         payload = json.loads(today_path.read_text(encoding="utf-8"))
         if _is_intraday_full_market_pool(payload):
@@ -297,18 +291,20 @@ def _refresh_full_market_intraday_pool(
         output_dir=cache_dir,
         file_tag="full_market",
     )
-    pattern_path, pattern_frame = _load_latest_pattern_frame(project_root=project_root, trade_date=trade_date)
-    payload = build_intraday_pool_candidates(
+    route_inputs = analysis.frame.copy()
+    route_inputs["daily_return_pct"] = pd.to_numeric(route_inputs.get("intraday_pct_change"), errors="coerce")
+    route_inputs["涨幅%"] = route_inputs["daily_return_pct"]
+    route_inputs["limit_up_excluded_by_daily_return"] = route_inputs["daily_return_pct"].gt(9.9).fillna(False)
+    sector_payload = _load_latest_sector_watchlist(project_root=project_root, trade_date=trade_date)
+    sector_date = _sector_payload_date(sector_payload, fallback=trade_date)
+    concern_members = read_concern_sector_members(project_root=project_root, trade_date=sector_date)
+    payloads = build_route_watchlists(
         trade_date=trade_date,
-        pattern_frame=pattern_frame,
-        phase1_predictions=analysis.phase1,
-        phase2_predictions=analysis.phase2,
-        phase4_predictions=analysis.phase4,
-        phase7_prediction=pd.DataFrame(),
-        macd_frame=analysis.macd,
-        atr_frame=analysis.atr,
+        project_root=project_root,
+        stock_scores=route_inputs,
+        sector_payload=sector_payload,
+        concern_members=concern_members,
         source_files={
-            "pattern": str(pattern_path) if pattern_path is not None else "",
             "phase1": str(analysis.phase1_path),
             "phase2": str(analysis.phase2_path),
             "phase4": str(analysis.phase4_path),
@@ -316,18 +312,16 @@ def _refresh_full_market_intraday_pool(
             "atr": "intraday_overlay",
         },
     )
+    payload = payloads["sector_leader_pool"]
     selection_policy = dict(payload.get("selection_policy", {}))
     selection_policy["source_scope"] = "intraday_full_market"
     selection_policy["full_market_scan_symbols"] = int(len(full_market_candidates))
     selection_policy["full_market_pool_date"] = trade_date.isoformat()
+    selection_policy["full_market_intraday_updated"] = int(updated_count)
+    selection_policy["full_market_intraday_missing"] = int(len(missing_update_symbols))
     payload["selection_policy"] = selection_policy
-    filter_summary = dict(payload.get("filter_summary", {}))
-    filter_summary["full_market_scan_symbols"] = int(len(full_market_candidates))
-    filter_summary["full_market_intraday_updated"] = int(updated_count)
-    filter_summary["full_market_intraday_missing"] = int(len(missing_update_symbols))
-    payload["filter_summary"] = filter_summary
 
-    target = write_intraday_pool(project_root=project_root, trade_date=trade_date, picker_payload=payload)
+    target = write_sector_leader_pool_payload(project_root=project_root, trade_date=trade_date, payload=payload)
     written_payload = json.loads(target.read_text(encoding="utf-8"))
     return target, written_payload, updated_count, missing_update_symbols, len(full_market_candidates)
 
@@ -354,7 +348,6 @@ def _full_market_candidates(storage: Storage, *, limit: int | None) -> list[dict
             "prev_pattern_ids": "",
             "prev_patterns": "",
             "prev_reason": "",
-            "track_stock": False,
         }
         for index, row in enumerate(universe.to_dict("records"), start=1)
     ]
@@ -417,6 +410,15 @@ def _previous_pool_candidates(payload: dict[str, object], *, limit: int | None) 
                 "prev_phase2_score_100": raw.get("phase2_score_100"),
                 "prev_phase4_score_100": raw.get("phase4_score_100"),
                 "prev_watchlist_streak": raw.get("连续上榜天数"),
+                "pool_route": raw.get("pool_route"),
+                "matched_mainline_sector": raw.get("matched_mainline_sector"),
+                "source_sectors": raw.get("source_sectors") or raw.get("concern_sectors"),
+                "sector_type": raw.get("sector_type"),
+                "sector_label": raw.get("sector_label"),
+                "leader_score": raw.get("leader_score"),
+                "long_mainline_score_100": raw.get("long_mainline_score_100"),
+                "short_mainline_score_100": raw.get("short_mainline_score_100"),
+                "phase9_score_100": raw.get("phase9_score_100"),
             }
         )
     candidates = sorted(candidates, key=lambda item: int(item["prev_rank"]))
@@ -456,101 +458,6 @@ def _candidate_universe(candidates: list[dict[str, object]]) -> pd.DataFrame:
             for candidate in candidates
         ]
     )
-
-
-def _load_tracked_symbols(project_root: Path) -> list[str]:
-    path = project_root / DEFAULT_TRACK_STOCK_FILENAME
-    if not path.exists():
-        return []
-    try:
-        workbook = load_workbook(path, read_only=True, data_only=True)
-    except OSError:
-        return []
-    try:
-        if TRACK_INPUT_SHEET not in workbook.sheetnames:
-            return []
-        sheet = workbook[TRACK_INPUT_SHEET]
-        header_values = [str(cell.value or "").strip().lower() for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-        symbol_column = 1
-        has_symbol_header = False
-        for index, value in enumerate(header_values, start=1):
-            if value in {"symbol", "code", "股票代码", "代码", "证券代码"}:
-                symbol_column = index
-                has_symbol_header = True
-                break
-        start_row = 2 if has_symbol_header else 1
-        symbols: list[str] = []
-        seen: set[str] = set()
-        for row in sheet.iter_rows(min_row=start_row, min_col=symbol_column, max_col=symbol_column, values_only=True):
-            symbol = normalize_symbol(row[0] if row else "")
-            if not symbol or symbol in seen:
-                continue
-            symbols.append(symbol)
-            seen.add(symbol)
-        return symbols
-    finally:
-        workbook.close()
-
-
-def _merge_tracked_candidates(
-    *,
-    storage: Storage,
-    candidates: list[dict[str, object]],
-    tracked_symbols: list[str],
-) -> list[dict[str, object]]:
-    tracked = {normalize_symbol(symbol) for symbol in tracked_symbols if normalize_symbol(symbol)}
-    if not tracked:
-        return candidates
-    result = [dict(candidate) for candidate in candidates]
-    by_symbol = {str(candidate.get("symbol", "")): candidate for candidate in result}
-    for candidate in result:
-        candidate["track_stock"] = str(candidate.get("symbol", "")) in tracked
-
-    missing = [symbol for symbol in tracked_symbols if normalize_symbol(symbol) not in by_symbol]
-    if not missing:
-        return result
-
-    universe_names = _universe_name_lookup(storage)
-    for symbol in missing:
-        normalized = normalize_symbol(symbol)
-        if not normalized:
-            continue
-        result.append(
-            {
-                "symbol": normalized,
-                "name": universe_names.get(normalized, ""),
-                "prev_rank": pd.NA,
-                "universe_rank": pd.NA,
-                "prev_source": "",
-                "prev_source_tags": "",
-                "prev_pattern_match": False,
-                "prev_pattern_id": "",
-                "prev_pattern_ids": "",
-                "prev_patterns": "",
-                "prev_reason": "",
-                "prev_phase1_score_100": pd.NA,
-                "prev_phase2_score_100": pd.NA,
-                "prev_phase4_score_100": pd.NA,
-                "prev_watchlist_streak": pd.NA,
-                "track_stock": True,
-            }
-        )
-    return result
-
-
-def _universe_name_lookup(storage: Storage) -> dict[str, str]:
-    try:
-        universe = storage.load_universe().copy()
-    except FileNotFoundError:
-        return {}
-    if "symbol" not in universe.columns:
-        return {}
-    universe["symbol"] = universe["symbol"].map(normalize_symbol)
-    return {
-        str(row.get("symbol", "")): str(row.get("name", "") or "")
-        for row in universe.to_dict("records")
-        if str(row.get("symbol", ""))
-    }
 
 
 def _run_candidate_analysis(
@@ -635,27 +542,19 @@ def _concat_frames(*frames: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(available, ignore_index=True)
 
 
-def _save_intraday_track_stock(*, output_dir: Path, trade_date: date, frame: pd.DataFrame) -> Path | None:
-    track = _select_intraday_track_stock(frame)
-    if track.empty:
-        return None
-    target = output_dir / f"intraday_track_stock_{trade_date.isoformat()}.csv"
-    track.to_csv(target, index=False, encoding="utf-8-sig")
-    return target
-
-
 def _save_intraday_sector_strength(
     *,
     output_dir: Path,
     project_root: Path,
     trade_date: date,
     frame: pd.DataFrame,
+    source_pool_payload: dict[str, object],
 ) -> Path | None:
     sector_payload = _load_latest_sector_watchlist(project_root=project_root, trade_date=trade_date)
     sector_date = _sector_payload_date(sector_payload, fallback=trade_date)
     _ensure_intraday_sector_phase9_predictions(project_root=project_root, trade_date=sector_date)
     tracking_payload = build_sector_tracking_payload_from_files(project_root=project_root, trade_date=sector_date)
-    sectors = tracking_payload.get("sectors") if isinstance(tracking_payload, dict) else []
+    sectors = source_pool_payload.get("sectors") if isinstance(source_pool_payload, dict) else []
     if not isinstance(sectors, list) or not sectors:
         return None
     if frame.empty or "symbol" not in frame.columns:
@@ -669,10 +568,13 @@ def _save_intraday_sector_strength(
     for item in sectors:
         if not isinstance(item, dict):
             continue
-        leader_symbols = item.get("leader_symbols")
-        if not isinstance(leader_symbols, list):
-            leader_symbols = []
-        normalized_symbols = [normalize_symbol(symbol) for symbol in leader_symbols if normalize_symbol(symbol)]
+        leaders = item.get("leaders")
+        if isinstance(leaders, list) and leaders:
+            normalized_symbols = [normalize_symbol(leader.get("symbol")) for leader in leaders if isinstance(leader, dict)]
+            leader_names = [str(leader.get("name") or "") for leader in leaders if isinstance(leader, dict)]
+        else:
+            normalized_symbols = [normalize_symbol(symbol) for symbol in item.get("leader_symbols", []) if normalize_symbol(symbol)] if isinstance(item.get("leader_symbols"), list) else []
+            leader_names = item.get("leader_names", []) if isinstance(item.get("leader_names"), list) else []
         leader_pct = [pct_by_symbol[symbol] for symbol in normalized_symbols if symbol in pct_by_symbol and pd.notna(pct_by_symbol[symbol])]
         rows.append(
             {
@@ -682,8 +584,9 @@ def _save_intraday_sector_strength(
                 "长期主线指数": item.get("long_mainline_score_100"),
                 "短期主线指数": item.get("short_mainline_score_100"),
                 "P9买入分": item.get("phase9_score_100"),
+                "来源路线": item.get("pool_reason"),
                 "龙头编号": "/".join(normalized_symbols),
-                "龙头名称": "/".join(item.get("leader_names", []) if isinstance(item.get("leader_names"), list) else []),
+                "龙头名称": "/".join(leader_names),
                 "龙头盘中平均涨幅%": round(float(pd.Series(leader_pct).mean()), 4) if leader_pct else pd.NA,
                 "有效龙头数": len(leader_pct),
             }
@@ -696,6 +599,8 @@ def _save_intraday_sector_strength(
         ascending=[False, False],
         na_position="last",
     )
+    output_frame["盘中强度排名"] = output_frame["龙头盘中平均涨幅%"].rank(method="min", ascending=False).astype("Int64")
+    output_frame["P9排名"] = pd.to_numeric(output_frame["P9买入分"], errors="coerce").rank(method="min", ascending=False).astype("Int64")
     output_frame.to_csv(
         target,
         index=False,
@@ -756,6 +661,75 @@ def _ensure_intraday_sector_phase9_predictions(*, project_root: Path, trade_date
     return result.output_path
 
 
+def _save_intraday_route_watchlists(
+    *,
+    output_dir: Path,
+    trade_date: date,
+    frame: pd.DataFrame,
+    sector_strength_path: Path | None,
+) -> tuple[Path | None, Path | None]:
+    if frame.empty or sector_strength_path is None or not sector_strength_path.exists():
+        return None, None
+    sectors = pd.read_csv(sector_strength_path)
+    if sectors.empty or "板块名称" not in sectors.columns:
+        return None, None
+    a1_sectors = sectors.sort_values(
+        ["龙头盘中平均涨幅%", "P9买入分"],
+        ascending=[False, False],
+        na_position="last",
+    ).head(10)["板块名称"].astype(str).tolist()
+    a2_sectors = sectors.sort_values(
+        ["P9买入分", "龙头盘中平均涨幅%"],
+        ascending=[False, False],
+        na_position="last",
+    ).head(10)["板块名称"].astype(str).tolist()
+    a1 = _select_intraday_a_route(frame, selected_sectors=a1_sectors, route_label="近期强势")
+    a2 = _select_intraday_a_route(frame, selected_sectors=a2_sectors, route_label="轮转预期")
+    a1_path = output_dir / f"intraday_watchlist_a1_recent_mainline_{trade_date.isoformat()}.csv"
+    a2_path = output_dir / f"intraday_watchlist_a2_rotation_expected_{trade_date.isoformat()}.csv"
+    _format_intraday_output_for_csv(a1).to_csv(a1_path, index=False, encoding="utf-8-sig")
+    _format_intraday_output_for_csv(a2).to_csv(a2_path, index=False, encoding="utf-8-sig")
+    return a1_path, a2_path
+
+
+def _select_intraday_a_route(frame: pd.DataFrame, *, selected_sectors: list[str], route_label: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame.head(0).copy()
+    result = frame.copy()
+    sector_text = result.get("matched_mainline_sector", pd.Series("", index=result.index)).fillna("").astype(str)
+    source_sectors = result.get("source_sectors", pd.Series("", index=result.index)).fillna("").astype(str)
+    selected = set(selected_sectors)
+    sector_match = sector_text.isin(selected) | source_sectors.map(
+        lambda text: any(item and item in selected for item in str(text).split("/"))
+    )
+    phase1 = pd.to_numeric(_frame_series(result, "phase1_score_100"), errors="coerce")
+    phase2 = pd.to_numeric(_frame_series(result, "phase2_score_100"), errors="coerce")
+    mask = (
+        sector_match
+        & phase1.gt(20)
+        & phase2.gt(20)
+        & pd.to_numeric(_frame_series(result, "intraday_pct_change"), errors="coerce").le(9.9).fillna(True)
+    )
+    if route_label == "轮转预期":
+        mask = mask & phase1.gt(40) & phase2.gt(40)
+    result = result[mask].copy()
+    if result.empty:
+        return result
+    result["intraday_route"] = route_label
+    result = _sort_intraday_pool(
+        result,
+        leading_columns=["phase9_score_100" if route_label == "近期强势" else "intraday_pool_score"],
+        leading_ascending=[False],
+    )
+    return result.reset_index(drop=True)
+
+
+def _frame_series(frame: pd.DataFrame, column: str, default: object = pd.NA) -> pd.Series:
+    if column in frame.columns:
+        return frame[column]
+    return pd.Series([default] * len(frame), index=frame.index)
+
+
 def _sector_type_cn(value: object) -> str:
     text = str(value or "")
     if text == "industry":
@@ -763,17 +737,6 @@ def _sector_type_cn(value: object) -> str:
     if text == "concept":
         return "概念"
     return text
-
-
-def _select_intraday_track_stock(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty or "track_stock" not in frame.columns:
-        return frame.head(0).copy()
-    result = frame[frame["track_stock"].fillna(False).astype(bool)].copy()
-    if result.empty:
-        return result
-    result = _add_intraday_pool_score(result)
-    result = _sort_intraday_pool(result)
-    return result.reset_index(drop=True)
 
 
 def _add_intraday_pool_score(frame: pd.DataFrame) -> pd.DataFrame:
@@ -790,11 +753,7 @@ def _add_intraday_pool_score(frame: pd.DataFrame) -> pd.DataFrame:
 def _add_intraday_selection_source(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
     base_source = result.get("prev_source", pd.Series("", index=result.index)).fillna("").astype(str)
-    source = base_source.where(base_source.str.strip().ne(""), "intraday_pool")
-    if "track_stock" in result.columns:
-        tracked = result["track_stock"].fillna(False).astype(bool)
-        source = source.mask(tracked & base_source.str.strip().ne(""), source + "+track_stock")
-        source = source.mask(tracked & base_source.str.strip().eq(""), "track_stock")
+    source = base_source.where(base_source.str.strip().ne(""), "sector_leader_pool")
     result["intraday_selection_source"] = source
     return result
 
@@ -1171,7 +1130,6 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "phase4_name",
         "phase4_model_name",
         "phase4_model_version",
-        "track_stock",
         "prev_rank",
         "universe_rank",
         "intraday_quote_datetime",
@@ -1193,6 +1151,10 @@ def _order_output_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "symbol",
         "name",
         "intraday_selection_source",
+        "pool_route",
+        "source_sectors",
+        "matched_mainline_sector",
+        "leader_score",
         "industry_names",
         "concept_names",
         "intraday_pct_change",
@@ -1234,6 +1196,10 @@ def _format_intraday_output_for_csv(frame: pd.DataFrame) -> pd.DataFrame:
                 "编号",
                 "股票名称",
                 "来源",
+                "来源路线",
+                "关切板块",
+                "契合主线",
+                "龙头指数",
                 "盘中涨幅%",
                 "P1风险质量分",
                 "P2交易风险分",
@@ -1261,6 +1227,10 @@ def _format_intraday_output_for_csv(frame: pd.DataFrame) -> pd.DataFrame:
         "symbol": "编号",
         "name": "股票名称",
         "intraday_selection_source": "来源",
+        "pool_route": "来源路线",
+        "source_sectors": "关切板块",
+        "matched_mainline_sector": "契合主线",
+        "leader_score": "龙头指数",
         "intraday_pct_change": "盘中涨幅%",
         "phase1_score_100": "P1风险质量分",
         "phase2_score_100": "P2交易风险分",
@@ -1280,7 +1250,6 @@ def _format_intraday_output_for_csv(frame: pd.DataFrame) -> pd.DataFrame:
         "prev_source": "上一轮来源",
         "prev_reason": "Pattern理由",
         "prev_patterns": "Pattern详细",
-        "track_stock": "跟踪股票",
         "intraday_source": "行情源",
         "intraday_quote_datetime": "行情时间",
         "atr_close": "最新价格",
@@ -1298,6 +1267,10 @@ def _format_intraday_output_for_csv(frame: pd.DataFrame) -> pd.DataFrame:
         "编号",
         "股票名称",
         "来源",
+        "来源路线",
+        "关切板块",
+        "契合主线",
+        "龙头指数",
         "盘中涨幅%",
         "P1风险质量分",
         "P2交易风险分",
