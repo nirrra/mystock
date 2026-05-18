@@ -752,10 +752,21 @@ def lookup_patterns(path: Path | None, symbol: str) -> PatternValue:
 
 
 def lookup_sector_exposure(root: Path, symbol: str) -> SectorExposure:
+    membership = lookup_membership_sector_exposure(root, symbol)
     concern = lookup_concern_sector_exposure(root, symbol)
     if concern is not None:
-        return concern
+        return SectorExposure(
+            industries=concern.industries or membership.industries,
+            concepts=concern.concepts or membership.concepts,
+            metrics=concern.metrics or membership.metrics,
+            concern_sectors=concern.concern_sectors,
+            weak_stock=concern.weak_stock,
+            concern_missing=concern.concern_missing,
+        )
+    return membership
 
+
+def lookup_membership_sector_exposure(root: Path, symbol: str) -> SectorExposure:
     membership_path = root / "data" / "sector_membership" / "stock_sector_membership.csv"
     membership_rows = [
         row
