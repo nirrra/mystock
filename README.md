@@ -6,6 +6,25 @@
 
 更完整的模型、回测和实现细节见 [项目详细说明](docs/项目详细说明.md)。
 
+## 项目流程
+
+```mermaid
+flowchart LR
+    A[更新全市场] --> B[计算 P1/P2/P4]
+    B --> C[识别 Pattern]
+    B --> D[分析主线板块]
+    D --> E[整理关切板块]
+    E --> F[A1 近期强势]
+    E --> G[A2 轮转预期]
+    C --> H[B 形态符合]
+    F --> I[盘后选股]
+    G --> I
+    H --> I
+    E --> J[盘中龙头池]
+    J --> K[盘中更新]
+    K --> L[盘中选股]
+```
+
 ## 快速入口
 
 | 想看什么 | 入口 |
@@ -20,8 +39,8 @@
 | 盘中主线跟踪 | [reports/sectors/sector_mainline_intraday_tracking.xlsx](reports/sectors/sector_mainline_intraday_tracking.xlsx) |
 | 盘中板块强度 | [reports/intraday_screening/intraday_sector_strength_YYYY-MM-DD.csv](reports/intraday_screening/) |
 | 盘中 A1/A2 股票池 | [reports/intraday_screening/intraday_watchlist_a_YYYY-MM-DD.csv](reports/intraday_screening/) |
-| 盘后选股 | [选股.md](选股.md) |
-| 盘中选股 | [选股-日中.md](选股-日中.md) |
+| **盘后选股** | [选股.md](选股.md) |
+| **盘中选股** | [选股-日中.md](选股-日中.md) |
 | 全市场 Pattern 结果 | [reports/patterns/patterns_all_YYYY-MM-DD.csv](reports/patterns/) |
 | 单股参数工具 | [stock_parameter_tool.exe](stock_parameter_tool.exe) |
 
